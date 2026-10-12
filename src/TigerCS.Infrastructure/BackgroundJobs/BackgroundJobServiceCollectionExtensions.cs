@@ -239,7 +239,8 @@ public static class BackgroundJobServiceCollectionExtensions
         }
     }
 
-    /// <summary>Registers the recurring reload of the CRM owner feed while <c>CollectionsSource:CrmOwners:Enabled</c> is true; removes it otherwise.</summary>
+    /// <summary>Registers the recurring reload of the CRM owner feed while <c>
+    /// </c> is true; removes it otherwise.</summary>
     public static void UseTigerCsRecurringCollectionsCrmOwnersRefresh(
         this IServiceProvider services, BackgroundJobOptions backgroundJobOptions, TigerCS.Application.Modules.Collections.CollectionsCrmOwnersOptions crmOptions)
     {

@@ -331,6 +331,78 @@
         <member name="M:TigerCS.Domain.Modules.Collections.AccountBalance.#ctor(System.String,System.Nullable{System.Decimal},System.Nullable{System.Decimal},System.Nullable{System.Decimal},System.Nullable{System.Decimal},System.Nullable{System.Decimal},System.Nullable{System.Decimal},System.Nullable{System.Decimal},System.Nullable{System.Decimal},System.Nullable{System.Decimal},System.Nullable{System.DateOnly},TigerCS.Domain.Modules.Collections.NextPayment,TigerCS.Domain.Modules.Collections.BalanceConsistency,System.Collections.Generic.IReadOnlyList{System.String})">
             <summary>An account's figures, all in <see cref="P:TigerCS.Domain.Modules.Collections.AccountBalance.Currency"/>, all derived only from what the source reported. Null — never zero — when the source data is invalid.</summary>
         </member>
+        <member name="T:TigerCS.Domain.Modules.Collections.CollectionsCampaignFlags">
+            <summary>Unit-level review reasons of a campaign candidate (bit mask). The remaining reasons (stale source, coverage, currency, release gates) do
+            not depend on the unit and are added by the application.</summary>
+        </member>
+        <member name="T:TigerCS.Domain.Modules.Collections.CollectionsCampaignPolicy">
+            <summary>The 7 October 2026 communication table, with thresholds evaluated per unit.
+            Values are the source's remaining principal, never the original plan or the customer's total balance.</summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.Collections.CollectionsCampaignPolicy.StageRange(TigerCS.Domain.Modules.Collections.CollectionsCampaignStage,System.DateOnly)">
+            <summary>
+            The due-date range a stage looks at: instalments due on or after <c>From</c> (null = no lower bound) and before <c>ToExclusive</c>.
+            Shared by the in-memory evaluation and the SQL campaign engine so both use one definition.
+            </summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.Collections.CollectionsCampaignPolicy.Threshold(TigerCS.Domain.Modules.Collections.CollectionsCampaignStage)">
+            <summary>A stage amount qualifies when the unit's total remaining stage amount is strictly greater than this.</summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.Collections.CollectionsCampaignPolicy.Qualifying(System.Collections.Generic.IEnumerable{TigerCS.Domain.Modules.Collections.CampaignInstalment},TigerCS.Domain.Modules.Collections.CollectionsCampaignStage,System.DateOnly)">
+            <summary>The instalments that count for <paramref name="stage"/> on <paramref name="businessDate"/> (calendar-month conventions).</summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.Collections.CollectionsCampaignPolicy.DefaultDateTo(TigerCS.Domain.Modules.Collections.CollectionsCampaignStage,System.DateOnly)">
+            <summary>Default "To" of the due-date window: month end for the whole-month stages, otherwise the preview date.</summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.Collections.CollectionsCampaignPolicy.RangeNotes(TigerCS.Domain.Modules.Collections.CollectionsCampaignStage,System.DateOnly,System.DateOnly,System.DateOnly)">
+            <summary>
+            Flags (without changing eligibility) where the due-date window excludes instalments the confirmed stage rule would
+            otherwise qualify. The window is an additional reviewer filter; the communication policy above is unchanged.
+            </summary>
+        </member>
+        <member name="T:TigerCS.Domain.Modules.Collections.CollectionsContactNormalizer">
+            <summary>
+            Phone and e-mail normalisation used by campaigns. It is the single definition: the in-memory evaluation calls it directly and the SQL campaign
+            engine reads its results from <c>dbo.CollectionsContactNorm</c>, which the application fills with this code. Bump <see cref="F:TigerCS.Domain.Modules.Collections.CollectionsContactNormalizer.Version"/> whenever
+            either rule changes so stored normalisations are recomputed.
+            </summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.Collections.CollectionsContactNormalizer.NormalizePhone(System.String)">
+            <summary>The callable E.164 number of the source value, or an empty string when it cannot be confirmed (the review workflow's rule).</summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.Collections.CollectionsContactNormalizer.NormalizeEmail(System.String)">
+            <summary>The address itself when it is a plain, valid address; an empty string otherwise.</summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.Collections.CollectionsDateRanges.LastSixMonths(System.DateOnly)">
+            <summary>
+            "Last 6 months": six calendar months before the preview date through the preview date, both included. Crosses a year
+            boundary naturally (2026-03-15 -> 2025-09-15..2026-03-15); a shorter target month clamps (2026-08-31 -> 2026-02-28).
+            </summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.Collections.CollectionsDateRanges.IsSupported(System.DateOnly,System.DateOnly)">
+            <summary>Sanity bounds of the date inputs. 1 January is only the DEFAULT From, never a minimum.</summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.Collections.CollectionsDateRanges.Month(System.Int32,System.Int32)">
+            <summary>First and last day of a calendar month (handles leap February and year changes).</summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.Collections.CollectionsDateRanges.TryAsCalendarMonth(System.DateOnly,System.DateOnly,System.Int32@,System.Int32@)">
+            <summary>True when the range is exactly one whole calendar month (the Month / Year selectors then show it).</summary>
+        </member>
+        <member name="T:TigerCS.Domain.Modules.Collections.CollectionsPaymentFilter">
+            <summary>
+            Which instalments the Receivables list shows by PAYMENT status (separate from the date-based Due/Overdue classification).
+            Outstanding = remaining balance &gt; 0 (unpaid + partially paid + rows whose status the source cannot tell apart).
+            </summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.Collections.CollectionsPaymentFilters.MinimumApplies(TigerCS.Domain.Modules.Collections.CollectionsPaymentFilter)">
+            <summary>
+            The minimum-outstanding filter compares the REMAINING balance, which is 0 for a paid row; for Fully paid and All it is therefore switched off
+            (it would silently hide the very rows those views exist to show).
+            </summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.Collections.CollectionsPaymentFilters.Classify(System.Decimal,System.Nullable{System.Decimal},System.Nullable{System.Decimal},System.String,System.Boolean)">
+            <summary>Payment status of one instalment. Mirrors the SQL publish step; "Unknown" means the source cannot tell and nothing is guessed.</summary>
+        </member>
         <member name="F:TigerCS.Domain.Modules.Collections.ReminderTrigger.Scheduled">
             <summary>The designated scheduler queued it when the window opened.</summary>
         </member>
@@ -420,6 +492,16 @@
         </member>
         <member name="M:TigerCS.Domain.Modules.Collections.CollectionsReminderEvent.LinkTicket(System.Int64,System.String,System.Boolean,System.DateTime)">
             <summary>Links the ticket. Idempotent for the same ticket; a different ticket for a linked event is refused.</summary>
+        </member>
+        <member name="T:TigerCS.Domain.Modules.Collections.CollectionsTowerNumber">
+            <summary>
+            Tower number of a PACT unit code. <c>TP124-1001</c> and <c>124-1001</c> are tower <c>124</c>; <c>TP136-C-402</c> and
+            <c>136-C-402</c> are tower <c>136</c>. Mirrors SQL <c>dbo.fn_CollectionsTowerNumber</c> exactly (trim, drop ONE optional
+            leading "TP", take the text before the first hyphen, trim; blank => null). ProjectCode is never used: it is blank in PACT output.
+            </summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.Collections.CollectionsTowerNumber.Matches(System.String,System.String)">
+            <summary>Tower numbers compare as trimmed, case-insensitive text (the seed table may store them as numbers or text).</summary>
         </member>
         <member name="T:TigerCS.Domain.Modules.Collections.FinancialAccountSnapshot">
              <summary>
@@ -671,6 +753,52 @@
         <member name="F:TigerCS.Domain.Modules.Collections.FinancialPaymentStatus.Rejected">
             <summary>Rejected by verification.</summary>
         </member>
+        <member name="T:TigerCS.Domain.Modules.Collections.UnpaidInstalmentFact">
+            <summary>
+            One unpaid instalment, <b>already established as unpaid</b> by the caller from
+            EDSM rows whose meaning the EDSM owners have confirmed (see
+            <c>CollectionsNextPaymentOptions</c>). This type carries no interpretation of
+            its own: <paramref name="RemainingAmount"/> is what is still unpaid, never the
+            original scheduled amount.
+            </summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.Collections.UnpaidInstalmentFact.#ctor(System.Int32,System.Int64,System.Nullable{System.Int64},System.String,System.DateOnly,System.Decimal)">
+            <summary>
+            One unpaid instalment, <b>already established as unpaid</b> by the caller from
+            EDSM rows whose meaning the EDSM owners have confirmed (see
+            <c>CollectionsNextPaymentOptions</c>). This type carries no interpretation of
+            its own: <paramref name="RemainingAmount"/> is what is still unpaid, never the
+            original scheduled amount.
+            </summary>
+        </member>
+        <member name="T:TigerCS.Domain.Modules.Collections.NextPaymentSelection">
+            <summary>The unpaid instalments falling due on the earliest upcoming date, grouped by unit (a null unit id is one group).</summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.Collections.NextPaymentSelection.#ctor(System.DateOnly,System.Decimal,System.Collections.Generic.IReadOnlyList{TigerCS.Domain.Modules.Collections.NextPaymentUnitLine},System.Int32)">
+            <summary>The unpaid instalments falling due on the earliest upcoming date, grouped by unit (a null unit id is one group).</summary>
+        </member>
+        <member name="T:TigerCS.Domain.Modules.Collections.NextPaymentCalculator">
+             <summary>
+             Deterministic selection of the next <i>upcoming</i> unpaid instalment for one
+             (company, tenant).
+            
+             <list type="bullet">
+             <item><description><b>Upcoming means strictly after the business date.</b> An instalment due
+             today or earlier is due/overdue, which EDSM's payment-summary already reports in
+             <c>dueAmount</c> (<c>ChequeDueDate ≤ today</c> for owned companies, contract §3.4). It is
+             excluded here and only counted in <see cref="P:TigerCS.Domain.Modules.Collections.NextPaymentSelection.OnOrBeforeTodayExcluded"/>,
+             so overdue money is never presented as, or added to, the next payment.</description></item>
+             <item><description><b>Earliest date wins; nothing else is chosen between.</b> All unpaid
+             instalments on that date are summed (two units due the same day are one payment date with two
+             lines, not a silent pick of one).</description></item>
+             <item><description>Instalments with no remaining amount (≤ 0) are ignored; amounts are
+             rounded to 2 dp once, after summing. Units are ordered by unit id (null last) so output is stable.</description></item>
+             </list>
+             </summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.Collections.NextPaymentCalculator.SelectNext(System.Collections.Generic.IEnumerable{TigerCS.Domain.Modules.Collections.UnpaidInstalmentFact},System.DateOnly)">
+            <returns>The selection, or null when no unpaid instalment falls after <paramref name="businessDate"/>.</returns>
+        </member>
         <member name="T:TigerCS.Domain.Modules.Collections.ReminderType">
             <summary>
             The three ordinary payment reminders the Collections FAQ describes. Legal
@@ -785,6 +913,172 @@
         <member name="M:TigerCS.Domain.Modules.Collections.ReminderPolicy.IsSuccessTerminal(TigerCS.Domain.Modules.Collections.ChannelStatus)">
             <summary>A delivery that reached the customer — final; nothing later moves it.</summary>
         </member>
+        <member name="T:TigerCS.Domain.Modules.Collections.Review.CampaignReminderType">
+            <summary>The five Genesys contact-list reminder types, mapped one-to-one onto the approved campaign stages.</summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.Collections.Review.CampaignReminderTypes.DefaultLabel(TigerCS.Domain.Modules.Collections.Review.CampaignReminderType)">
+            <summary>Default ReminderType label written to Genesys; overridable by configuration after checking the supplied templates.</summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.Collections.Review.AmountPrecision.Exact">
+            <summary>Exactly representable in fils (two decimals).</summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.Collections.Review.AmountPrecision.FloatingPointNoise">
+            <summary>A floating-point source value within tolerance of a fils amount; normalized to that amount.</summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.Collections.Review.AmountPrecision.Unresolved">
+            <summary>More than two decimals that cannot be explained as floating-point noise: the source must be corrected.</summary>
+        </member>
+        <member name="T:TigerCS.Domain.Modules.Collections.Review.MoneyResult">
+            <param name="Value">The amount in fils precision, or null when the precision is Unresolved.</param>
+            <param name="Raw">The value exactly as read from the source.</param>
+            <param name="Precision">How the value relates to a two-decimal amount.</param>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.Collections.Review.MoneyResult.#ctor(System.Nullable{System.Decimal},System.Decimal,TigerCS.Domain.Modules.Collections.Review.AmountPrecision)">
+            <param name="Value">The amount in fils precision, or null when the precision is Unresolved.</param>
+            <param name="Raw">The value exactly as read from the source.</param>
+            <param name="Precision">How the value relates to a two-decimal amount.</param>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.Collections.Review.MoneyResult.Value">
+            <summary>The amount in fils precision, or null when the precision is Unresolved.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.Collections.Review.MoneyResult.Raw">
+            <summary>The value exactly as read from the source.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.Collections.Review.MoneyResult.Precision">
+            <summary>How the value relates to a two-decimal amount.</summary>
+        </member>
+        <member name="T:TigerCS.Domain.Modules.Collections.Review.MoneyNormalizer">
+            <summary>
+            Monetary values are decimal throughout. Two-decimal rounding is applied only where it provably loses nothing:
+            a decimal source with more than two places is <b>unresolved</b> (never rounded to look clean), and a
+            floating-point source is snapped to fils only when it lies within the float tolerance of one — which is
+            representation noise, not money. A remainder that snaps to zero is a settled instalment.
+            </summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.Collections.Review.MoneyNormalizer.Format(System.Decimal)">
+            <summary>Invariant, culture-independent, always two decimals, no thousands separator (the Genesys AmountDue format).</summary>
+        </member>
+        <member name="T:TigerCS.Domain.Modules.Collections.Review.PaymentStatusRules">
+            <summary>
+            Payment status comes only from verified source fields. The deployed PACT report reports <c>Paid</c> or
+            <c>Installment</c> and nothing else, and <c>Installment</c> cannot separate unpaid from partially paid, so with
+            the deployed procedures every open balance is <see cref="F:TigerCS.Domain.Modules.Collections.Review.ReviewPaymentStatus.Unknown"/>. The reviewed V2 report
+            also returns the instalment's PlanAmount: a remainder equal to the plan is Unpaid, a smaller positive remainder is
+            PartiallyPaid. A due date never decides payment status.
+            </summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.Collections.Review.PaymentStatusRules.AmountsAddUp(System.Decimal,System.Decimal,System.Decimal)">
+            <summary>original = paid + remaining, to the source's four-decimal precision.</summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.Collections.Review.PaymentStatusRules.Combine(System.Collections.Generic.IReadOnlyCollection{TigerCS.Domain.Modules.Collections.Review.ReviewPaymentStatus})">
+            <summary>One unit combines several instalments: all must be known, otherwise Unknown; mixed unpaid/partial is PartiallyPaid.</summary>
+        </member>
+        <member name="T:TigerCS.Domain.Modules.Collections.Review.PhoneResult">
+            <summary>The outcome of normalizing one raw source phone value to international (E.164) format.</summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.Collections.Review.PhoneResult.#ctor(System.String,TigerCS.Domain.Modules.Collections.Review.PhoneRejection,System.Boolean)">
+            <summary>The outcome of normalizing one raw source phone value to international (E.164) format.</summary>
+        </member>
+        <member name="T:TigerCS.Domain.Modules.Collections.Review.PhoneNormalizer">
+            <summary>
+            Converts the free-text mobile values stored in PACT to E.164. Rules, in order:
+            separators (space - . ( ) / \ ) are removed; "00" becomes "+"; a bare UAE national form is repaired
+            (0501234567, 501234567 with the leading zero lost to a spreadsheet, 971501234567, 9710501234567 with a
+            stray trunk zero). Two different numbers in one field are never guessed between. Nothing is invented: a value
+            that cannot be confirmed is rejected with a reason the reviewer can read.
+            </summary>
+        </member>
+        <member name="T:TigerCS.Domain.Modules.Collections.Review.CollectionsReviewRun">
+            <summary>
+            One explicit refresh of the review data: the financial source is read once, every record is validated and stored, and
+            the review screen then queries these stored rows. The page never reads PACT.
+            </summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.Collections.Review.CollectionsReviewRun.SourceReadAtUtc">
+            <summary>When the financial source was actually read (the "last refresh" users see).</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.Collections.Review.CollectionsReviewRun.IsActive">
+            <summary>True while Queued or Running; a unique filtered index allows only one active run at a time.</summary>
+        </member>
+        <member name="T:TigerCS.Domain.Modules.Collections.Review.CollectionsReviewRecord">
+            <summary>One unit and one reminder type: the grain at which amounts are quoted and contacts are created. Balances of different units are never merged.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.Collections.Review.CollectionsReviewRecord.RecordKey">
+            <summary>SHA-256 of company, tenant, unit and monthly stage cycle: the stable identity used to detect repeat sends.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.Collections.Review.CollectionsReviewRecord.Reasons">
+            <summary>Semicolon separated reason codes (needs-review, exclusions and warnings).</summary>
+        </member>
+        <member name="T:TigerCS.Domain.Modules.Collections.Review.CollectionsDispatch">
+            <summary>An approved, frozen list of records to upload to Genesys, with who approved it and what was approved.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.Collections.Review.CollectionsDispatch.Fingerprint">
+            <summary>Hash of the approved list (record keys, amounts, contacts). Confirming a different list is refused.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.Collections.Review.CollectionsDispatch.ApprovedTotalsJson">
+            <summary>JSON object of totals by currency at approval, e.g. {"AED":"1200.50"}.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.Collections.Review.CollectionsDispatch.Phase">
+            <summary>Human-readable progress of the running job ("Reading company 4", "Uploading batch 2 of 3").</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.Collections.Review.CollectionsDispatch.RevalidationMs">
+            <summary>How long the pre-send revalidation took (source reads + validation), for capacity planning.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.Collections.Review.CollectionsDispatch.LeaseOwner">
+            <summary>Held by the worker that is revalidating/sending; an expired lease means that worker died and another may continue.</summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.Collections.Review.DispatchItemStatus.Approved">
+            <summary>Approved and waiting for revalidation/upload. Counts as "already sent" for duplicate prevention.</summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.Collections.Review.DispatchItemStatus.UploadedToGenesys">
+            <summary>Accepted by the Genesys contact list. Says nothing about a call or message having happened.</summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.Collections.Review.DispatchItemStatus.UnknownOutcome">
+            <summary>The upload outcome is unknown (timeout/5xx). Blocks re-sending until reconciled.</summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.Collections.Review.DispatchItemStatus.Excluded">
+            <summary>Removed at dispatch time (paid, balance changed...). Never uploaded.</summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.Collections.Review.DispatchItemStatus.Released">
+            <summary>The dispatch stopped before upload; the record is free to be approved again.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.Collections.Review.CollectionsDispatchItem.BatchPosition">
+            <summary>Position inside the batch request, used to match the contact ids Genesys returns.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.Collections.Review.CollectionsDispatchItem.VoiceEligible">
+            <summary>Frozen at approval: a valid international phone and Ready status. Only voice-eligible records are ever uploaded as callable.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.Collections.Review.CollectionsDispatchItem.BalanceCheckedAtUtc">
+            <summary>Last time the suppression sweep compared this uploaded contact with the current balance.</summary>
+        </member>
+        <member name="T:TigerCS.Domain.Modules.Collections.Review.ContactSuppressionStatus">
+            <summary>What was done to stop an uploaded contact being dialled after its balance changed.</summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.Collections.Review.ContactSuppressionStatus.Suppressed">
+            <summary>Genesys confirmed the contact is no longer callable (callable=false) or no longer exists.</summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.Collections.Review.ContactSuppressionStatus.Failed">
+            <summary>Genesys rejected the update; the contact may still be dialled. Needs attention.</summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.Collections.Review.ContactSuppressionStatus.Unconfirmed">
+            <summary>The update's outcome is unknown (timeout/5xx). Retried by the next sweep.</summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.Collections.Review.GenesysBatchStatus.ConfirmedNotUploaded">
+            <summary>An operator confirmed in Genesys that nothing was created, so the batch may be re-submitted.</summary>
+        </member>
+        <member name="T:TigerCS.Domain.Modules.Collections.Review.CollectionsGenesysBatch">
+            <summary>One POST to /contactlists/{id}/contacts: a single reminder type, at most 1,000 contacts.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.Collections.Review.CollectionsGenesysBatch.Error">
+            <summary>A safe, non-sensitive failure description (never a token, secret or response body).</summary>
+        </member>
+        <member name="T:TigerCS.Domain.Modules.Collections.Review.ReviewReasons">
+            <summary>
+            The single catalogue of validation reasons: stable codes (filterable) with the plain-language explanation shown to
+            reviewers. A needs-review reason is a data problem a person could resolve; an exclusion is a policy decision that
+            keeps the record out of a send; a warning is shown but does not block.
+            </summary>
+        </member>
         <member name="T:TigerCS.Domain.Modules.CustomerVerification.ContactReference">
             <summary>
             CRM cache row for a unit's contacts (owner/tenant/representative) —
@@ -799,6 +1093,148 @@
         </member>
         <member name="T:TigerCS.Domain.Modules.CustomerVerification.ContactType">
             <summary>MVP-Data-Dictionary.md §2.7 (ContactReferences.ContactType).</summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.CustomerVerification.ContactType.Buyer">
+            <summary>
+            A CRM <b>Buyer</b> (<c>GetBuyerByPhone</c>'s <c>customerType = 1</c>) —
+            recorded exactly as CRM labels it. Deliberately not <see cref="F:TigerCS.Domain.Modules.CustomerVerification.ContactType.Owner"/>:
+            what "Buyer" means for ownership has not been confirmed by CRM, so
+            TigerCS does not infer it. Created only by the buyer-lookup cache path
+            (<c>CrmBuyerVerificationCache</c>); the agent-desk flows never produce it.
+            </summary>
+        </member>
+        <member name="T:TigerCS.Domain.Modules.CustomerVerification.CrmDocumentDeliveryRequest">
+             <summary>
+             One request to send a customer a copy of a CRM document, and what became of
+             it — the idempotency record that stops Genesys retries sending a document
+             twice, and the durable trail of who was sent what.
+            
+             <para>
+             <b>Unique per (caller, idempotency key)</b> — a database index, so two
+             concurrent identical requests cannot both claim the send. The row holds
+             identifiers and status only: never the document, never the recipient's
+             address (only a masked form for support), never the customer's phone.
+             </para>
+             </summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.CustomerVerification.CrmDocumentDeliveryRequest.CallerEmployeeId">
+            <summary>The integration account that made the request (the Genesys service account).</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.CustomerVerification.CrmDocumentDeliveryRequest.Fingerprint">
+            <summary>SHA-256 over the request's meaning (session, type, record, channel). The same key with a different fingerprint is a client bug and is refused.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.CustomerVerification.CrmDocumentDeliveryRequest.CrmRecordId">
+            <summary>The CRM record that was (or is being) sent. Always a record the verified customer owns.</summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.CustomerVerification.CrmDocumentDeliveryRequest.IsStale(System.DateTime,System.TimeSpan)">
+            <summary>An in-progress claim whose worker evidently died: older than <paramref name="staleAfter"/>, so a retry may take it over.</summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.CustomerVerification.CrmDocumentDeliveryRequest.Restart(System.DateTime)">
+            <summary>Claims a retry of a failed (or abandoned) attempt. Refused for a Sent request — that one is final.</summary>
+        </member>
+        <member name="T:TigerCS.Domain.Modules.CustomerVerification.CrmDocumentType">
+            <summary>
+            The four customer document copies the chatbot may ask CRM to send. Values
+            are stored (<c>CrmDocumentDeliveryRequests.DocumentType</c>) — never
+            renumber.
+            </summary>
+        </member>
+        <member name="T:TigerCS.Domain.Modules.CustomerVerification.DocumentDeliveryChannel">
+            <summary>How a document copy reaches the customer. Only <see cref="F:TigerCS.Domain.Modules.CustomerVerification.DocumentDeliveryChannel.Email"/> has an integration; the others are recognised so the API can say precisely what is missing.</summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.CustomerVerification.DocumentDeliveryStatus.InProgress">
+            <summary>A send has been claimed and is running (or its process died — see <see cref="M:TigerCS.Domain.Modules.CustomerVerification.CrmDocumentDeliveryRequest.IsStale(System.DateTime,System.TimeSpan)"/>).</summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.CustomerVerification.DocumentDeliveryStatus.Sent">
+            <summary>The delivery channel accepted the message. Terminal: a replay answers Sent and sends nothing.</summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.CustomerVerification.DocumentDeliveryStatus.Failed">
+            <summary>The attempt failed. A retry with the same key may try again.</summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.CustomerVerification.OtpChallengeStatus.Pending">
+            <summary>A code has been sent and may still be entered.</summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.CustomerVerification.OtpChallengeStatus.Verified">
+            <summary>The correct code was entered; the challenge is spent (single use) and a session was created from it.</summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.CustomerVerification.OtpChallengeStatus.Locked">
+            <summary>Too many wrong codes. Final — a new challenge is needed.</summary>
+        </member>
+        <member name="T:TigerCS.Domain.Modules.CustomerVerification.OtpChannel">
+            <summary>How the code reaches the customer. Both channels share one challenge model, one verification path and one resulting session.</summary>
+        </member>
+        <member name="T:TigerCS.Domain.Modules.CustomerVerification.OtpDeliveryState">
+            <summary>What is known about the message that carried the current code.</summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.CustomerVerification.OtpDeliveryState.NotSent">
+            <summary>Recorded before the provider is called; also what remains if the process dies mid-send.</summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.CustomerVerification.OtpDeliveryState.Accepted">
+            <summary>The provider's response was verified as acceptance (an SMS gateway's acceptance is not handset delivery).</summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.CustomerVerification.OtpDeliveryState.Rejected">
+            <summary>The provider refused the message.</summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.CustomerVerification.OtpDeliveryState.Failed">
+            <summary>The message was not accepted (provider unreachable or erroring).</summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.CustomerVerification.OtpDeliveryState.Unconfirmed">
+            <summary>Timeout or unreadable answer: the message may or may not have been sent. Never retried automatically.</summary>
+        </member>
+        <member name="T:TigerCS.Domain.Modules.CustomerVerification.CustomerOtpChallenge">
+             <summary>
+             One server-issued email one-time-code challenge for a CRM buyer: the proof
+             behind an OTP-verified session.
+            
+             <para>
+             <b>Bound at creation, never rebound:</b> the requesting integration account
+             (<see cref="P:TigerCS.Domain.Modules.CustomerVerification.CustomerOtpChallenge.CallerEmployeeId"/>), CRM's customer and lead
+             (<see cref="P:TigerCS.Domain.Modules.CustomerVerification.CustomerOtpChallenge.CrmCustomerId"/>, <see cref="P:TigerCS.Domain.Modules.CustomerVerification.CustomerOtpChallenge.CrmLeadId"/>), the cached unit and
+             contact, and the masked destination. The code goes to the email CRM returned
+             for that customer — a destination is never a field of any request.
+             </para>
+            
+             <para>
+             <b>The code is never stored.</b> Only a salted HMAC (<see cref="P:TigerCS.Domain.Modules.CustomerVerification.CustomerOtpChallenge.CodeHash"/>)
+             is; it is compared in constant time. Expiry, a wrong-attempt budget, a resend
+             budget with a minimum interval, and single use are all enforced here, in the
+             domain, and <see cref="P:TigerCS.Domain.Modules.CustomerVerification.CustomerOtpChallenge.Status"/>/<see cref="P:TigerCS.Domain.Modules.CustomerVerification.CustomerOtpChallenge.FailedAttempts"/>/<see cref="P:TigerCS.Domain.Modules.CustomerVerification.CustomerOtpChallenge.SendCount"/> are
+             concurrency tokens so parallel guesses cannot dodge the budget or spend a
+             code twice.
+             </para>
+             </summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.CustomerVerification.CustomerOtpChallenge.Channel">
+            <summary>Email (default, and every row created before SMS existed) or Sms.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.CustomerVerification.CustomerOtpChallenge.Language">
+            <summary>Language of the message ("en"/"ar"); only SMS uses it.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.CustomerVerification.CustomerOtpChallenge.DeliveryState">
+            <summary>What is known about the current code's message. Not a concurrency token: recording it never competes with a verify.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.CustomerVerification.CustomerOtpChallenge.VerificationSessionId">
+            <summary>The session created from this challenge, once verified.</summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.CustomerVerification.CustomerOtpChallenge.NextResendAllowedAtUtc(System.TimeSpan)">
+            <summary>When a resend becomes allowed.</summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.CustomerVerification.CustomerOtpChallenge.RecordResend(System.Byte[],System.Byte[],System.DateTime,System.TimeSpan,System.String)">
+            <summary>
+            A resend replaces the code: the previous one stops working, the expiry
+            restarts, and the wrong-attempt count resets to zero — otherwise a
+            customer who mistyped twice and asked again would start short.
+            The send budget (<see cref="P:TigerCS.Domain.Modules.CustomerVerification.CustomerOtpChallenge.SendCount"/>) is never reset.
+            </summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.CustomerVerification.CustomerOtpChallenge.Verify(System.Boolean,System.DateTime,System.Int32)">
+            <summary>
+            Checks a submitted code. <paramref name="codeMatches"/> is the
+            constant-time comparison result, computed by the caller (which owns the
+            HMAC key); everything stateful happens here: a wrong code spends an
+            attempt (locking at <paramref name="maxAttempts"/>), the right one spends
+            the challenge for good.
+            </summary>
         </member>
         <member name="T:TigerCS.Domain.Modules.CustomerVerification.UnitReference">
             <summary>
@@ -885,6 +1321,27 @@
             (S-07) — a pilot-scoped, module-local substitute for the generalized
             IdempotencyRecords mechanism (ADR-0014 / backlog S-05), which has not
             been built yet. Null when the caller didn't supply one.
+            </summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.CustomerVerification.VerificationSession.ProofChallengeId">
+            <summary>
+            The one-time-code challenge that <b>proved</b> this session, when it was
+            created by the server-side OTP flow. Null for every agent-confirmed
+            session. A session without it is only ever as strong as someone's
+            assertion; the chatbot document flow refuses such a session.
+            </summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.CustomerVerification.VerificationSession.CrmBuyerCustomerId">
+            <summary>CRM's customer id the proof was bound to (OTP sessions only).</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.CustomerVerification.VerificationSession.CrmBuyerLeadId">
+            <summary>CRM's lead id of the unit the proof was bound to (OTP sessions only) — the customer/unit/lead relationship, preserved.</summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.CustomerVerification.VerificationSession.AttachOtpProof(System.Guid,System.Int32,System.Int32)">
+            <summary>
+            Records the server-verified proof behind this session: the OTP challenge
+            and the CRM customer/lead it was bound to. Must be called before
+            <see cref="M:TigerCS.Domain.Modules.CustomerVerification.VerificationSession.Confirm(System.DateTime,TigerCS.Domain.Modules.CustomerVerification.VerificationMethod)"/>; the only caller is the OTP verification service.
             </summary>
         </member>
         <member name="M:TigerCS.Domain.Modules.CustomerVerification.VerificationSession.EffectiveStatus(System.DateTime)">
@@ -1141,6 +1598,19 @@
             section, not only here. All other names match the documents verbatim.
             </summary>
         </member>
+        <member name="F:TigerCS.Domain.Modules.IdentityAndAccess.Roles.ReadOnly">
+            <summary>
+            Roles that are read-only by agreed management decision: Chairman/CEO
+            (views all tickets, dashboard and executive reports; receives Level 4
+            escalations but initiates nothing) and Reporting User ("no ticket
+            actions"). A caller holding <i>only</i> these roles may never mutate
+            anything; a caller who additionally holds a working role keeps that
+            role's authority (a user may hold several roles).
+            </summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.IdentityAndAccess.Roles.IsReadOnlyCaller(System.Collections.Generic.IReadOnlyCollection{System.String})">
+            <summary>True when the caller holds at least one role and every role it holds is read-only.</summary>
+        </member>
         <member name="F:TigerCS.Domain.Modules.IdentityAndAccess.Roles.Descriptions">
             <summary>High-level descriptions for GET /api/roles (MVP-API-Contracts.md §1.5).</summary>
         </member>
@@ -1263,6 +1733,52 @@
             an expected outcome (most phone-only tickets have no email) never
             inflates the dead-letter count operators are alerted on.
             </summary>
+        </member>
+        <member name="T:TigerCS.Domain.Modules.SlaAndEscalation.AppliedSlaPolicy">
+            <summary>
+            The facts about which SLA policy produced a period's due timestamps,
+            snapshotted onto <see cref="T:TigerCS.Domain.Modules.SlaAndEscalation.TicketSlaInstance"/> so that pause/resume math
+            and the explanation panel keep describing what actually happened even if
+            the configuration is edited afterwards.
+            </summary>
+            <param name="ResolutionClockBasis">The basis the Resolution due timestamp was computed on — what the pause extension must use.</param>
+            <param name="RequestTypeSlaPolicyId">The request-type row that governed the due dates; null when the per-priority policy did.</param>
+            <param name="PausesOnPendingCustomerOverride">The request type's explicit pause flag (null = inherit the global rule).</param>
+            <param name="RequestTypeSlaNote">Why a configured request-type SLA was NOT applied (exact reason), or null.</param>
+            <param name="AppliedFirstResponseTargetMinutes">The effective First Response target in minutes (display only).</param>
+            <param name="AppliedResolutionTargetMinutes">The effective Resolution target in minutes (display only); 0 for an immediate SLA.</param>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.SlaAndEscalation.AppliedSlaPolicy.#ctor(TigerCS.Domain.Modules.SlaAndEscalation.SlaClockBasis,System.Nullable{System.Int32},System.Nullable{System.Boolean},System.String,System.Nullable{System.Int32},System.Nullable{System.Int32})">
+            <summary>
+            The facts about which SLA policy produced a period's due timestamps,
+            snapshotted onto <see cref="T:TigerCS.Domain.Modules.SlaAndEscalation.TicketSlaInstance"/> so that pause/resume math
+            and the explanation panel keep describing what actually happened even if
+            the configuration is edited afterwards.
+            </summary>
+            <param name="ResolutionClockBasis">The basis the Resolution due timestamp was computed on — what the pause extension must use.</param>
+            <param name="RequestTypeSlaPolicyId">The request-type row that governed the due dates; null when the per-priority policy did.</param>
+            <param name="PausesOnPendingCustomerOverride">The request type's explicit pause flag (null = inherit the global rule).</param>
+            <param name="RequestTypeSlaNote">Why a configured request-type SLA was NOT applied (exact reason), or null.</param>
+            <param name="AppliedFirstResponseTargetMinutes">The effective First Response target in minutes (display only).</param>
+            <param name="AppliedResolutionTargetMinutes">The effective Resolution target in minutes (display only); 0 for an immediate SLA.</param>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.SlaAndEscalation.AppliedSlaPolicy.ResolutionClockBasis">
+            <summary>The basis the Resolution due timestamp was computed on — what the pause extension must use.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.SlaAndEscalation.AppliedSlaPolicy.RequestTypeSlaPolicyId">
+            <summary>The request-type row that governed the due dates; null when the per-priority policy did.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.SlaAndEscalation.AppliedSlaPolicy.PausesOnPendingCustomerOverride">
+            <summary>The request type's explicit pause flag (null = inherit the global rule).</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.SlaAndEscalation.AppliedSlaPolicy.RequestTypeSlaNote">
+            <summary>Why a configured request-type SLA was NOT applied (exact reason), or null.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.SlaAndEscalation.AppliedSlaPolicy.AppliedFirstResponseTargetMinutes">
+            <summary>The effective First Response target in minutes (display only).</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.SlaAndEscalation.AppliedSlaPolicy.AppliedResolutionTargetMinutes">
+            <summary>The effective Resolution target in minutes (display only); 0 for an immediate SLA.</summary>
         </member>
         <member name="T:TigerCS.Domain.Modules.SlaAndEscalation.BusinessCalendar">
              <summary>
@@ -1393,6 +1909,42 @@
             select and route on, not the SLA math that later attaches to it.
             </summary>
         </member>
+        <member name="T:TigerCS.Domain.Modules.SlaAndEscalation.PriorityDowngradeRequestStatus">
+            <summary>MVP-ERD.md section 2.27 lifecycle of a <see cref="T:TigerCS.Domain.Modules.SlaAndEscalation.PriorityDowngradeRequest"/>.</summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.SlaAndEscalation.PriorityDowngradeRequestStatus.Expired">
+            <summary>A Pending request past <see cref="P:TigerCS.Domain.Modules.SlaAndEscalation.PriorityDowngradeRequest.ExpiresAtUtc"/>; it can no longer be decided.</summary>
+        </member>
+        <member name="T:TigerCS.Domain.Modules.SlaAndEscalation.PriorityDowngradeRequest">
+             <summary>
+             MVP-ERD.md section 2.27 / MVP-API-Contracts.md section 5.6 (Finding
+             DR-05) - separates "an agent asks for a priority decrease" from "a
+             Department Head approves it" into two actions by two independently
+             authenticated actors. <b>A downgrade never takes effect on request</b>
+             (ISSUE-023 Option B): creating this row changes neither the ticket's
+             priority nor its SLA period.
+            
+             <para>
+             <b>Decider identity.</b> <see cref="P:TigerCS.Domain.Modules.SlaAndEscalation.PriorityDowngradeRequest.DecidedByEmployeeId"/> is set only by
+             <see cref="M:TigerCS.Domain.Modules.SlaAndEscalation.PriorityDowngradeRequest.Approve(System.Guid,System.DateTime)"/>/<see cref="M:TigerCS.Domain.Modules.SlaAndEscalation.PriorityDowngradeRequest.Reject(System.Guid,System.DateTime,System.String)"/> from the authenticated caller;
+             no request field carries it. <see cref="P:TigerCS.Domain.Modules.SlaAndEscalation.PriorityDowngradeRequest.RequestedByEmployeeId"/> may never
+             equal the decider (separation of duties; the contract is silent, so
+             self-approval is forbidden and this is documented as a decision).
+             </para>
+             </summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.SlaAndEscalation.PriorityDowngradeRequest.CurrentPriorityId">
+            <summary>The ticket's priority when the request was made. Approval is refused (stale) if the ticket's priority differs by then.</summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.SlaAndEscalation.PriorityDowngradeRequest.Create(System.Int64,System.Byte,System.Byte,System.String,System.Guid,System.DateTime,System.DateTime)">
+            <summary>Creates a Pending request. The reason is required; the new priority must be a genuine decrease (a numerically larger id).</summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.SlaAndEscalation.PriorityDowngradeRequest.IsExpiredAt(System.DateTime)">
+            <summary>True when still Pending but past its expiry - the state a read reports as Expired.</summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.SlaAndEscalation.PriorityDowngradeRequest.EffectiveStatusAt(System.DateTime)">
+            <summary>The status a reader should see: a Pending request past expiry is reported Expired even before the sweep persists it.</summary>
+        </member>
         <member name="T:TigerCS.Domain.Modules.SlaAndEscalation.PriorityLevel">
             <summary>
             The fixed MVP priority set (MVP-Data-Dictionary.md §2.6 — "PK — fixed
@@ -1400,6 +1952,119 @@
             <see cref="P:TigerCS.Domain.Modules.SlaAndEscalation.Priority.PriorityId"/> exactly so a raw <c>PriorityId</c> can
             be cast to/compared against this enum without a lookup.
             </summary>
+        </member>
+        <member name="T:TigerCS.Domain.Modules.SlaAndEscalation.RequestTypeSlaStatus">
+            <summary>Whether a request-type SLA row governs a ticket's due dates.</summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.SlaAndEscalation.RequestTypeSlaStatus.NoPolicy">
+            <summary>No active request-type row exists for this (request type, priority) — the per-priority policy applies, and there is nothing to explain.</summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.SlaAndEscalation.RequestTypeSlaStatus.Applied">
+            <summary>The row is unambiguous and its durations replace the per-priority ones.</summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.SlaAndEscalation.RequestTypeSlaStatus.NotApplied">
+            <summary>A row exists but cannot be enforced yet; the per-priority policy applies and <see cref="P:TigerCS.Domain.Modules.SlaAndEscalation.RequestTypeSlaEvaluation.Reason"/> says exactly why.</summary>
+        </member>
+        <member name="T:TigerCS.Domain.Modules.SlaAndEscalation.RequestTypeSlaEvaluation">
+            <summary>
+            The outcome of evaluating one <see cref="T:TigerCS.Domain.Modules.WorkflowConfiguration.RequestTypeSlaPolicy"/> row.
+            </summary>
+            <param name="Status">Applied, NotApplied (with a reason) or NoPolicy.</param>
+            <param name="Reason">When <see cref="F:TigerCS.Domain.Modules.SlaAndEscalation.RequestTypeSlaStatus.NotApplied"/>: the exact, user-facing reason. Null otherwise.</param>
+            <param name="PolicyId">The row evaluated; null for <see cref="F:TigerCS.Domain.Modules.SlaAndEscalation.RequestTypeSlaStatus.NoPolicy"/>.</param>
+            <param name="ClockBasis">The row's explicit clock basis when applied.</param>
+            <param name="FirstResponse">Applied First Response duration, or null (priority policy supplies it). Never set from a range.</param>
+            <param name="Resolution">Applied Resolution duration; <see cref="F:System.TimeSpan.Zero"/> when <paramref name="ResolutionIsImmediate"/>.</param>
+            <param name="ResolutionIsImmediate">The row is the document's "Immediately": resolution due = clock start.</param>
+            <param name="PausesOnPendingCustomerOverride">The row's explicit pause flag (true/false), or null = inherit the global rule. Reported for any active row, applied or not — see <see cref="T:TigerCS.Domain.Modules.SlaAndEscalation.RequestTypeSlaEnforcement"/>.</param>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.SlaAndEscalation.RequestTypeSlaEvaluation.#ctor(TigerCS.Domain.Modules.SlaAndEscalation.RequestTypeSlaStatus,System.String,System.Nullable{System.Int32},System.Nullable{TigerCS.Domain.Modules.SlaAndEscalation.SlaClockBasis},System.Nullable{System.TimeSpan},System.Nullable{System.TimeSpan},System.Boolean,System.Nullable{System.Boolean})">
+            <summary>
+            The outcome of evaluating one <see cref="T:TigerCS.Domain.Modules.WorkflowConfiguration.RequestTypeSlaPolicy"/> row.
+            </summary>
+            <param name="Status">Applied, NotApplied (with a reason) or NoPolicy.</param>
+            <param name="Reason">When <see cref="F:TigerCS.Domain.Modules.SlaAndEscalation.RequestTypeSlaStatus.NotApplied"/>: the exact, user-facing reason. Null otherwise.</param>
+            <param name="PolicyId">The row evaluated; null for <see cref="F:TigerCS.Domain.Modules.SlaAndEscalation.RequestTypeSlaStatus.NoPolicy"/>.</param>
+            <param name="ClockBasis">The row's explicit clock basis when applied.</param>
+            <param name="FirstResponse">Applied First Response duration, or null (priority policy supplies it). Never set from a range.</param>
+            <param name="Resolution">Applied Resolution duration; <see cref="F:System.TimeSpan.Zero"/> when <paramref name="ResolutionIsImmediate"/>.</param>
+            <param name="ResolutionIsImmediate">The row is the document's "Immediately": resolution due = clock start.</param>
+            <param name="PausesOnPendingCustomerOverride">The row's explicit pause flag (true/false), or null = inherit the global rule. Reported for any active row, applied or not — see <see cref="T:TigerCS.Domain.Modules.SlaAndEscalation.RequestTypeSlaEnforcement"/>.</param>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.SlaAndEscalation.RequestTypeSlaEvaluation.Status">
+            <summary>Applied, NotApplied (with a reason) or NoPolicy.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.SlaAndEscalation.RequestTypeSlaEvaluation.Reason">
+            <summary>When <see cref="F:TigerCS.Domain.Modules.SlaAndEscalation.RequestTypeSlaStatus.NotApplied"/>: the exact, user-facing reason. Null otherwise.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.SlaAndEscalation.RequestTypeSlaEvaluation.PolicyId">
+            <summary>The row evaluated; null for <see cref="F:TigerCS.Domain.Modules.SlaAndEscalation.RequestTypeSlaStatus.NoPolicy"/>.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.SlaAndEscalation.RequestTypeSlaEvaluation.ClockBasis">
+            <summary>The row's explicit clock basis when applied.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.SlaAndEscalation.RequestTypeSlaEvaluation.FirstResponse">
+            <summary>Applied First Response duration, or null (priority policy supplies it). Never set from a range.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.SlaAndEscalation.RequestTypeSlaEvaluation.Resolution">
+            <summary>Applied Resolution duration; <see cref="F:System.TimeSpan.Zero"/> when <paramref name="ResolutionIsImmediate"/>.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.SlaAndEscalation.RequestTypeSlaEvaluation.ResolutionIsImmediate">
+            <summary>The row is the document's "Immediately": resolution due = clock start.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.SlaAndEscalation.RequestTypeSlaEvaluation.PausesOnPendingCustomerOverride">
+            <summary>The row's explicit pause flag (true/false), or null = inherit the global rule. Reported for any active row, applied or not — see <see cref="T:TigerCS.Domain.Modules.SlaAndEscalation.RequestTypeSlaEnforcement"/>.</summary>
+        </member>
+        <member name="T:TigerCS.Domain.Modules.SlaAndEscalation.RequestTypeSlaEnforcement">
+             <summary>
+             Decides, as a pure function, which request-type SLA rows are enforced.
+            
+             <para>
+             <b>Only the unambiguous subset is enforced</b>; everything else falls back
+             to the per-priority policy and says why (never a silent guess). A row is
+             enforced only when ALL of these hold:
+             </para>
+             <list type="number">
+               <item><description>it is active;</description></item>
+               <item><description><see cref="P:TigerCS.Domain.Modules.WorkflowConfiguration.RequestTypeSlaPolicy.Trigger"/> is <see cref="F:TigerCS.Domain.Modules.WorkflowConfiguration.SlaTriggerType.TicketCreated"/> (the other triggers need event plumbing that does not exist);</description></item>
+               <item><description><see cref="P:TigerCS.Domain.Modules.WorkflowConfiguration.RequestTypeSlaPolicy.ClockBasis"/> is explicitly set (null = business vs. calendar days, weekend and holiday treatment all undecided);</description></item>
+               <item><description>every duration it uses is a single value — Target equal to Maximum, or only one of them set. A range (Target &lt; Maximum) is NOT enforced: which bound is "target" and which is "breach" is undecided;</description></item>
+               <item><description>for a business-hours basis, an active calendar exists to count against.</description></item>
+             </list>
+            
+             <para>
+             <b>Units.</b> Minutes and Hours are what they say, counted on the row's
+             clock (business minutes under BusinessHours, calendar minutes under
+             TwentyFourSeven). Days under TwentyFourSeven is 24 h x n. Days under
+             BusinessHours is n x the calendar's business-day length of business time —
+             the same convention the per-priority policy uses for "3 business days"
+             (<c>SlaReferenceData.BusinessMinutesPerDay</c>), walked by
+             <see cref="T:TigerCS.Domain.Modules.SlaAndEscalation.SlaDueDateCalculator"/> so non-working days and holidays are
+             skipped.
+             </para>
+            
+             <para>
+             <b>Immediate.</b> <c>IsImmediate</c> ("Immediately") yields a resolution
+             due equal to the clock start. It is documented, deterministic, and means
+             the deadline is already due: the next check flags it unless the ticket is
+             resolved at that instant.
+             </para>
+            
+             <para>
+             <b>Pause flag.</b> <see cref="P:TigerCS.Domain.Modules.WorkflowConfiguration.RequestTypeSlaPolicy.PausesOnPendingCustomer"/>
+             <c>true</c>/<c>false</c> is explicit configuration independent of how the
+             durations are interpreted, so it is reported for every active row, even one
+             whose durations are not enforced. <c>null</c> inherits the approved global
+             rule. <c>PausesOnPendingInternal</c> is never read (undecided).
+             </para>
+             </summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.SlaAndEscalation.RequestTypeSlaEnforcement.Evaluate(TigerCS.Domain.Modules.WorkflowConfiguration.RequestTypeSlaPolicy,System.Nullable{System.TimeSpan})">
+            <param name="policy">The (request type, priority) row, or null.</param>
+            <param name="businessDayLength">The active calendar's working-day length, or null when no calendar is configured.</param>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.SlaAndEscalation.RequestTypeSlaEnforcement.TrySingle(System.Nullable{System.Int32},System.Nullable{System.Int32},System.Int32@)">
+            <summary>A single value: only one bound set, or both set and equal. Target &lt; Maximum is a range.</summary>
         </member>
         <member name="T:TigerCS.Domain.Modules.SlaAndEscalation.SlaChangeReason">
              <summary>
@@ -1515,7 +2180,24 @@
             <param name="clockBasis">Which of §3/§4's two rules applies.</param>
             <param name="calendar">Consulted only under <see cref="F:TigerCS.Domain.Modules.SlaAndEscalation.SlaClockBasis.BusinessHours"/>; may be null for a Critical-tier computation.</param>
         </member>
-        <member name="M:TigerCS.Domain.Modules.SlaAndEscalation.SlaDueDateCalculator.ComputeBusinessHoursDueAtUtc(System.DateTime,System.Int32,TigerCS.Domain.Modules.SlaAndEscalation.BusinessCalendarSnapshot)">
+        <member name="M:TigerCS.Domain.Modules.SlaAndEscalation.SlaDueDateCalculator.ComputeDueAtUtc(System.DateTime,System.TimeSpan,TigerCS.Domain.Modules.SlaAndEscalation.SlaClockBasis,TigerCS.Domain.Modules.SlaAndEscalation.BusinessCalendarSnapshot)">
+            <summary>
+            The same computation for a duration that is not a whole number of
+            minutes — used by SLA pause/resume (a remaining business time with
+            seconds in it) and by request-type SLAs (hours, business days).
+            </summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.SlaAndEscalation.SlaDueDateCalculator.BusinessTimeBetween(System.DateTime,System.DateTime,TigerCS.Domain.Modules.SlaAndEscalation.BusinessCalendarSnapshot)">
+            <summary>
+            The business time (inside the window, on working non-holiday dates)
+            between two instants — the inverse of the business-hours walk, used to
+            know how much of a Resolution target was still unspent when a pause
+            began. Calendar-local arithmetic, so a DST-observing zone could be an
+            hour out on a transition day; the approved Asia/Dubai calendar has no
+            DST.
+            </summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.SlaAndEscalation.SlaDueDateCalculator.ComputeBusinessHoursDueAtUtc(System.DateTime,System.TimeSpan,TigerCS.Domain.Modules.SlaAndEscalation.BusinessCalendarSnapshot)">
             <summary>
             SLA-Architecture.md §4's walk. A start event outside the window (an
             evening, a Friday, a holiday) consumes nothing until the next working
@@ -1581,6 +2263,89 @@
             passing that gate, so the pairing is rejected outright rather than left to
             the authorization check alone.
             </summary>
+        </member>
+        <member name="T:TigerCS.Domain.Modules.SlaAndEscalation.SlaPauseCalculator">
+             <summary>
+             The pause/resume due-timestamp math (SLA-Architecture.md §8: "due
+             timestamps extended by the paused duration"), as a pure function.
+            
+             <list type="bullet">
+               <item><description>
+                 <b>24/7 clock</b> — due + the wall-clock paused duration. Exactly the
+                 approved wording.
+               </description></item>
+               <item><description>
+                 <b>Business-hours clock</b> — the business time still unspent at the
+                 moment of the pause is measured, then re-walked from the resume
+                 moment. A pause that only spanned a night, a weekend or a holiday
+                 therefore does not push the deadline out by time the clock was not
+                 counting anyway; a pause wholly inside working hours equals the
+                 wall-clock paused duration. (Adding the raw wall-clock pause to a
+                 business-hours due date would over-credit the customer-wait.)
+               </description></item>
+             </list>
+            
+             <para>
+             The result is never earlier than the original due, so a pause can only
+             loosen a deadline by the time it stopped the clock — it cannot rewind one,
+             and it cannot un-breach anything (breach flags are one-way elsewhere).
+             </para>
+             </summary>
+        </member>
+        <member name="T:TigerCS.Domain.Modules.SlaAndEscalation.SlaPauseReason">
+            <summary>
+            Why a Resolution SLA clock was paused (ISSUE-018, SLA-Architecture.md §6).
+            </summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.SlaAndEscalation.SlaPauseReason.PendingCustomer">
+            <summary>The ticket is in Pending Customer (ISSUE-018b — approved).</summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.SlaAndEscalation.SlaPauseReason.PendingThirdPartyLegacy">
+            <summary>
+            Legacy only: the ticket is in the retired Pending Third Party status
+            (ISSUE-018c — approved to pause). No new ticket can enter that status;
+            the value exists so a ticket that was already in it is handled the
+            same way rather than crashing or silently running the clock.
+            </summary>
+        </member>
+        <member name="T:TigerCS.Domain.Modules.SlaAndEscalation.SlaPauseRules">
+             <summary>
+             The approved SLA pause/resume rules (ISSUE-018a–d, SLA-Architecture.md §6)
+             as pure functions, so they can be asserted without a repository.
+            
+             <list type="bullet">
+               <item><description>(a) The Critical SLA never pauses, whatever the status.</description></item>
+               <item><description>(b) A non-Critical Resolution SLA pauses while the ticket is Pending Customer and resumes when it returns to work.</description></item>
+               <item><description>(c) Pending Third Party is retired, but a legacy ticket in it pauses the same way (approved B) rather than crashing or silently running.</description></item>
+               <item><description>(d) The First Response SLA never pauses — and in particular cannot pause once the first human response is recorded.</description></item>
+             </list>
+            
+             <para>
+             Not decided here (listed, not guessed): whether any <i>other</i> pending
+             reason (pending-internal) pauses, and the per-request-type
+             <c>PausesOnPendingInternal</c> flag, which is deliberately ignored.
+             </para>
+             </summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.SlaAndEscalation.SlaPauseRules.FirstResponseCanPause">
+            <summary>The First Response clock never pauses (ISSUE-018d, fixed) — a constant so a test can pin it.</summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.SlaAndEscalation.SlaPauseRules.IsPausingStatus(TigerCS.Domain.Modules.Ticketing.TicketStatus)">
+            <summary>The statuses in which a pause-eligible Resolution clock is stopped.</summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.SlaAndEscalation.SlaPauseRules.ResolutionPauses(System.Byte,TigerCS.Domain.Modules.Ticketing.TicketStatus,System.Nullable{System.Boolean})">
+            <summary>
+            Whether the Resolution clock of a period at <paramref name="priorityId"/>
+            pauses while the ticket is in <paramref name="status"/>.
+            </summary>
+            <param name="priorityId">The SLA period's priority (Critical never pauses).</param>
+            <param name="status">The ticket's current status.</param>
+            <param name="requestTypePausesOnPendingCustomer">
+            The per-request-type override: <c>true</c>/<c>false</c> is explicit
+            configuration, <c>null</c> inherits the approved global rule (b). It
+            concerns Pending Customer only; Critical is never pausable even when
+            it says <c>true</c>.
+            </param>
         </member>
         <member name="T:TigerCS.Domain.Modules.SlaAndEscalation.SlaPolicy">
              <summary>
@@ -1703,7 +2468,7 @@
              first. Backlog S-14's priority upgrade will be the third. The filtered
              unique index in the EF configuration enforces the one-current-period
              invariant at the database, so it cannot be violated by a future code path
-             either — which is exactly why <see cref="M:TigerCS.Domain.Modules.SlaAndEscalation.TicketSlaInstance.OpenReopenCycle(System.Int64,System.Byte,System.DateTime,System.DateTime,System.Boolean,System.DateTime)"/> cannot be
+             either — which is exactly why <see cref="M:TigerCS.Domain.Modules.SlaAndEscalation.TicketSlaInstance.OpenReopenCycle(System.Int64,System.Byte,System.DateTime,System.DateTime,System.Boolean,System.DateTime,TigerCS.Domain.Modules.SlaAndEscalation.AppliedSlaPolicy)"/> cannot be
              called without <see cref="M:TigerCS.Domain.Modules.SlaAndEscalation.TicketSlaInstance.EndPeriod(System.DateTime)"/> having run on the predecessor.
              </para>
             
@@ -1731,7 +2496,19 @@
         <member name="P:TigerCS.Domain.Modules.SlaAndEscalation.TicketSlaInstance.ApprovedByEmployeeId">
             <summary>Required only for <see cref="F:TigerCS.Domain.Modules.SlaAndEscalation.SlaChangeReason.Downgrade"/>, which no pilot code path can produce (MVP-Implementation-Backlog.md §0 hard-disables downgrades). Never client-supplied on any endpoint (Finding DR-05).</summary>
         </member>
-        <member name="M:TigerCS.Domain.Modules.SlaAndEscalation.TicketSlaInstance.OpenInitialPeriod(System.Int64,System.Byte,System.DateTime,System.DateTime,System.DateTime)">
+        <member name="P:TigerCS.Domain.Modules.SlaAndEscalation.TicketSlaInstance.ResolutionClockBasis">
+            <summary>The basis the Resolution due timestamp was computed on. Null = legacy row; use the priority policy's basis.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.SlaAndEscalation.TicketSlaInstance.RequestTypeSlaPolicyId">
+            <summary>The request-type SLA row that governed the due dates; null when the per-priority policy did.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.SlaAndEscalation.TicketSlaInstance.PausesOnPendingCustomerOverride">
+            <summary>The request type's explicit Pending Customer pause flag at the time the period opened. Null = inherit the approved global rule.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.SlaAndEscalation.TicketSlaInstance.RequestTypeSlaNote">
+            <summary>Exact reason a configured request-type SLA was not applied, or null.</summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.SlaAndEscalation.TicketSlaInstance.OpenInitialPeriod(System.Int64,System.Byte,System.DateTime,System.DateTime,System.DateTime,TigerCS.Domain.Modules.SlaAndEscalation.AppliedSlaPolicy)">
             <summary>
             Opens a ticket's first SLA period. The only factory this increment
             exposes: <see cref="F:TigerCS.Domain.Modules.SlaAndEscalation.SlaChangeReason.Upgrade"/> rows belong to backlog
@@ -1740,7 +2517,7 @@
             could be called by accident.
             </summary>
         </member>
-        <member name="M:TigerCS.Domain.Modules.SlaAndEscalation.TicketSlaInstance.OpenReopenCycle(System.Int64,System.Byte,System.DateTime,System.DateTime,System.Boolean,System.DateTime)">
+        <member name="M:TigerCS.Domain.Modules.SlaAndEscalation.TicketSlaInstance.OpenReopenCycle(System.Int64,System.Byte,System.DateTime,System.DateTime,System.Boolean,System.DateTime,TigerCS.Domain.Modules.SlaAndEscalation.AppliedSlaPolicy)">
              <summary>
              Opens the successor period the approved Reopen rule requires: a new
              <b>Resolution</b> cycle starting at the reopen moment, while the First
@@ -1753,7 +2530,7 @@
              missed stays missed (the flag is carried, so the sweep never re-flags
              it), and a target still pending keeps its original deadline rather than
              being generously pushed out. That is why this factory — unlike
-             <see cref="M:TigerCS.Domain.Modules.SlaAndEscalation.TicketSlaInstance.OpenInitialPeriod(System.Int64,System.Byte,System.DateTime,System.DateTime,System.DateTime)"/> — does NOT require
+             <see cref="M:TigerCS.Domain.Modules.SlaAndEscalation.TicketSlaInstance.OpenInitialPeriod(System.Int64,System.Byte,System.DateTime,System.DateTime,System.DateTime,TigerCS.Domain.Modules.SlaAndEscalation.AppliedSlaPolicy)"/> — does NOT require
              <paramref name="carriedFirstResponseDueAtUtc"/> to fall on or after the
              period start: for a reopened ticket that timestamp is deliberately
              historical.
@@ -1765,6 +2542,31 @@
              <param name="carriedFirstResponseDueAtUtc">The predecessor period's First Response deadline, copied unchanged.</param>
              <param name="carriedFirstResponseBreached">The predecessor period's First Response breach flag, copied unchanged.</param>
              <param name="resolutionDueAtUtc">The newly computed Resolution deadline for this cycle.</param>
+             <param name="applied">Snapshot of the policy that produced the deadline, or null for none.</param>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.SlaAndEscalation.TicketSlaInstance.ExtendResolutionDue(System.DateTime)">
+            <summary>
+            Moves the Resolution deadline later by a closed pause (SLA-Architecture.md
+            §8). Only ever later: a pause cannot shorten a deadline. Refused after a
+            Resolution breach so a recorded breach is never made to look like it
+            never happened. First Response is never moved.
+            </summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.SlaAndEscalation.TicketSlaInstance.OpenDowngradePeriod(System.Int64,System.Byte,System.DateTime,System.DateTime,System.Boolean,System.DateTime,System.Guid)">
+             <summary>
+             Opens the successor period of an <b>approved priority downgrade</b>
+             (ISSUE-023 Option B; SLA-Architecture.md section 7). The approver is
+             recorded on the row (<see cref="P:TigerCS.Domain.Modules.SlaAndEscalation.TicketSlaInstance.ApprovedByEmployeeId"/>, copied from
+             the request's decider, never client-supplied: Finding DR-05).
+            
+             <para>
+             As with <see cref="M:TigerCS.Domain.Modules.SlaAndEscalation.TicketSlaInstance.OpenReopenCycle(System.Int64,System.Byte,System.DateTime,System.DateTime,System.Boolean,System.DateTime,TigerCS.Domain.Modules.SlaAndEscalation.AppliedSlaPolicy)"/>, First Response is carried
+             verbatim (due timestamp and breach flag), so a downgrade can never
+             restart, loosen or erase the first-response result. The Resolution
+             deadline is the newly computed one; the predecessor's breach flags stay
+             on the predecessor row, untouched.
+             </para>
+             </summary>
         </member>
         <member name="M:TigerCS.Domain.Modules.SlaAndEscalation.TicketSlaInstance.EndPeriod(System.DateTime)">
             <summary>
@@ -1784,6 +2586,50 @@
             detection from a repeat without inspecting the flag itself.
             </summary>
             <returns><c>true</c> if this call is what flipped the flag.</returns>
+        </member>
+        <member name="T:TigerCS.Domain.Modules.SlaAndEscalation.TicketSlaPausePeriod">
+             <summary>
+             MVP-Data-Dictionary.md <c>TicketSlaPausePeriods</c> — one row per time the
+             Resolution SLA clock of a ticket's SLA period was paused (ISSUE-018,
+             SLA-Architecture.md §6/§8). History, never deleted and never edited after
+             it is closed: elapsed time, breaches and SLA history are never erased
+             (ISSUE-023's guarantee), so a pause is recorded beside the period rather
+             than rewriting it.
+            
+             <para>
+             <b>At most one open pause per ticket</b> (filtered unique index on
+             <c>ResumedAtUtc IS NULL</c>): a repeated Pending Customer entry or a
+             duplicate resume can neither double-count nor leave two open rows.
+             </para>
+            
+             <para>
+             Only the <b>Resolution</b> clock pauses. First Response never pauses
+             (<see cref="F:TigerCS.Domain.Modules.SlaAndEscalation.SlaPauseRules.FirstResponseCanPause"/>), so no row ever refers
+             to it.
+             </para>
+             </summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.SlaAndEscalation.TicketSlaPausePeriod.ResumedAtUtc">
+            <summary>Null while the pause is open (the clock is stopped).</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.SlaAndEscalation.TicketSlaPausePeriod.ResolutionDueBeforeAtUtc">
+            <summary>The Resolution due timestamp when the pause began — held, unchanged, for the whole pause.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.SlaAndEscalation.TicketSlaPausePeriod.ResolutionDueAfterAtUtc">
+            <summary>The Resolution due timestamp after this pause was closed out (extended by the paused time). Null while open.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.SlaAndEscalation.TicketSlaPausePeriod.EndedByResolution">
+            <summary>True when the pause ended because the ticket was Resolved/Closed rather than returned to work.</summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.SlaAndEscalation.TicketSlaPausePeriod.DurationAsOf(System.DateTime)">
+            <summary>Wall-clock length of the pause; for an open pause, measured to <paramref name="asOfUtc"/>.</summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.SlaAndEscalation.TicketSlaPausePeriod.Close(System.DateTime,System.DateTime,System.Boolean)">
+            <summary>
+            Closes the pause. One-way and not repeatable: a second call throws, so
+            callers test <see cref="P:TigerCS.Domain.Modules.SlaAndEscalation.TicketSlaPausePeriod.IsOpen"/> (the application service does) and a
+            duplicate resume is a no-op there, never a second close here.
+            </summary>
         </member>
         <member name="T:TigerCS.Domain.Modules.Ticketing.Channel">
              <summary>
@@ -2576,6 +3422,24 @@
              </para>
              </summary>
         </member>
+        <member name="M:TigerCS.Domain.Modules.Ticketing.Ticket.ChangePriority(System.Byte,System.Boolean)">
+             <summary>
+             Changes an already-classified ticket's priority.
+            
+             <para>
+             <b>A bare priority decrease is never permitted</b> (ISSUE-023
+             Option B; MVP-API-Contracts.md §3.4/§5.6): a downgrade takes effect
+             only through an approved <c>PriorityDowngradeRequest</c>, so this
+             throws <see cref="T:TigerCS.Domain.Modules.Ticketing.PriorityDowngradeRequiresApprovalException"/> unless
+             <paramref name="downgradeApproved"/> is true, which only the approval
+             service passes, inside the same transaction that replaces the SLA
+             period. Priority ids rise as urgency falls (1=Critical ... 4=Low), so
+             a "decrease" in priority is a numerically larger id.
+             </para>
+            
+             <para>This method does not touch the SLA period; the caller owns that.</para>
+             </summary>
+        </member>
         <member name="M:TigerCS.Domain.Modules.Ticketing.Ticket.PinWorkflowVersion(System.Int32)">
             <summary>
             Pins the workflow version the ticket follows — write-once, at creation,
@@ -2597,7 +3461,7 @@
              (requires an already-assigned owner) and InProgress↔PendingCustomer.
              Resolved/Closed are reached only via <see cref="M:TigerCS.Domain.Modules.Ticketing.Ticket.Resolve(TigerCS.Domain.Modules.Ticketing.ResolutionOutcome,System.Nullable{System.Int64})"/>/
              <see cref="M:TigerCS.Domain.Modules.Ticketing.Ticket.Close"/>, and Closed returns to InProgress only via
-             <see cref="M:TigerCS.Domain.Modules.Ticketing.Ticket.Reopen(System.Int32)"/> — deliberately distinct operations, not reachable
+             <see cref="M:TigerCS.Domain.Modules.Ticketing.Ticket.Reopen(System.Int32,System.Boolean)"/> — deliberately distinct operations, not reachable
              through this method.
             
              <para>
@@ -2637,10 +3501,32 @@
              </para>
              </summary>
         </member>
+        <member name="M:TigerCS.Domain.Modules.Ticketing.Ticket.CloseForCustomerInactivity">
+             <summary>
+             Chatbot inactivity closure: the customer never answered the chatbot, so
+             the ticket is closed <b>without</b> anyone having worked or confirmed
+             it. The lifecycle still requires Resolved before Closed, so this
+             performs both transitions in one step and returns the status the ticket
+             held before — the caller writes the two history rows (old→Resolved,
+             Resolved→Closed) and the resolution row, with outcome
+             <see cref="F:TigerCS.Domain.Modules.Ticketing.ResolutionOutcome.Cancelled"/>: the honest outcome,
+             because nothing here says the customer's issue was resolved.
+            
+             <para>
+             Deliberately narrower than <see cref="M:TigerCS.Domain.Modules.Ticketing.Ticket.Resolve(TigerCS.Domain.Modules.Ticketing.ResolutionOutcome,System.Nullable{System.Int64})"/> in what it will
+             <i>not</i> do: a ticket with a human owner is refused
+             (<see cref="T:TigerCS.Domain.Modules.Ticketing.TicketNotEligibleForResolutionException"/>) — the human has
+             taken it, so a silent customer is theirs to follow up. It is the only
+             path that resolves an <see cref="F:TigerCS.Domain.Modules.Ticketing.TicketStatus.Open"/> ticket, because a
+             chatbot ticket nobody has been assigned cannot be moved to InProgress
+             (<see cref="M:TigerCS.Domain.Modules.Ticketing.Ticket.ChangeStatus(TigerCS.Domain.Modules.Ticketing.TicketStatus)"/> requires an owner).
+             </para>
+             </summary>
+        </member>
         <member name="M:TigerCS.Domain.Modules.Ticketing.Ticket.Close">
             <summary>MVP-API-Contracts.md §3.10 — the final, CS-layer-only close, distinct from Resolve. Requires a current TicketResolutions row (enforced by the caller — this method only enforces the TicketStatus precondition).</summary>
         </member>
-        <member name="M:TigerCS.Domain.Modules.Ticketing.Ticket.Reopen(System.Int32)">
+        <member name="M:TigerCS.Domain.Modules.Ticketing.Ticket.Reopen(System.Int32,System.Boolean)">
              <summary>
              FR-RES-04 / MVP-API-Contracts.md §3.11 — Reopen is a domain event,
              not a status value: a <b>Closed</b> ticket returns to InProgress in a
@@ -2686,6 +3572,13 @@
              </para>
              </summary>
              <param name="targetDepartmentId">The department that takes responsibility for the reopened work.</param>
+             <param name="closedForCustomerInactivity">
+             The one carve-out from the Resolved-only rule: the caller has read the
+             current resolution and it is the chatbot inactivity closure
+             (<see cref="P:TigerCS.Domain.Modules.Ticketing.TicketResolution.ClosedForCustomerInactivity"/>), so a
+             <b>Cancelled</b> outcome is reopenable for this closure — and only this
+             one. Rejected, Duplicate and every other Cancelled stay final.
+             </param>
         </member>
         <member name="M:TigerCS.Domain.Modules.Ticketing.Ticket.RestartSlaClockForReopen">
              <summary>
@@ -2822,6 +3715,25 @@
              <see cref="M:TigerCS.Domain.Modules.Ticketing.Ticket.Classify(System.Int32,System.Byte)"/>.
              </para>
              </summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.Ticketing.Ticket.PauseSla">
+            <summary>
+            SLA pause (ISSUE-018): <see cref="F:TigerCS.Domain.Modules.Ticketing.SlaState.Running"/> becomes
+            <see cref="F:TigerCS.Domain.Modules.Ticketing.SlaState.Paused"/>. Narrow like <see cref="M:TigerCS.Domain.Modules.Ticketing.Ticket.StartSlaClock"/>:
+            a Breached, Met or NotApplicable ticket is left alone, so a pause can
+            never hide a recorded breach. The pause row itself is the application
+            service's job.
+            </summary>
+            <returns>True when this call changed the state.</returns>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.Ticketing.Ticket.ResumeSla">
+            <summary>
+            SLA resume: <see cref="F:TigerCS.Domain.Modules.Ticketing.SlaState.Paused"/> becomes
+            <see cref="F:TigerCS.Domain.Modules.Ticketing.SlaState.Running"/>; every other state (notably a sticky
+            Breached recorded during the pause by the First Response clock) is
+            left as it is.
+            </summary>
+            <returns>True when this call changed the state.</returns>
         </member>
         <member name="M:TigerCS.Domain.Modules.Ticketing.Ticket.EnsureNotClosed">
             <summary>Closed-ticket immutability (PR correction): every mutating method above calls this first — a Closed ticket accepts no further Assign/Transfer/ChangeStatus/Resolve/Close.</summary>
@@ -3380,6 +4292,12 @@
              </para>
              </summary>
         </member>
+        <member name="T:TigerCS.Domain.Modules.Ticketing.PriorityDowngradeRequiresApprovalException">
+            <summary>MVP-API-Contracts.md section 3.4: a priority decrease without an approved downgrade request is refused (downgrade-requires-approval).</summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.Ticketing.PriorityDowngradeRequiresApprovalException.#ctor(System.Int64,System.Byte,System.Byte)">
+            <summary>MVP-API-Contracts.md section 3.4: a priority decrease without an approved downgrade request is refused (downgrade-requires-approval).</summary>
+        </member>
         <member name="T:TigerCS.Domain.Modules.Ticketing.TicketInteraction">
              <summary>
              One customer interaction associated with a ticket — a ticket accumulates
@@ -3493,6 +4411,26 @@
         <member name="P:TigerCS.Domain.Modules.Ticketing.TicketInteraction.EndReason">
             <summary>Why the conversation ended, as reported (e.g. "AgentDisconnect", "CustomerDisconnect", "Timeout") — free text until the Genesys contract fixes an enumeration; null when not reported.</summary>
         </member>
+        <member name="P:TigerCS.Domain.Modules.Ticketing.TicketInteraction.AwaitingCustomerReplySinceUtc">
+            <summary>
+            Chatbot inactivity timer: when the chatbot asked the customer a
+            question and began waiting for the reply, as recorded by TigerCS (the
+            server clock, never a client-supplied time). Null whenever the
+            interaction is <b>not</b> waiting on the customer — the customer
+            replied, a human took over, the conversation ended, or it was never a
+            chatbot exchange. It is the persisted deadline source for the
+            background job, so the timeout survives restarts; it is also an EF
+            concurrency token, so a reply that clears it while the job is closing
+            the ticket makes the job's write lose rather than close a ticket the
+            customer just answered.
+            </summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.Ticketing.TicketInteraction.AwaitingCustomerReplyReportedByEmployeeId">
+            <summary>The integration account that reported the prompt. The inactivity closure is attributed to it in the audit trail and on the resolution row (which needs a real user) — the closure itself is flagged as a system action.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.Ticketing.TicketInteraction.InactivityClosedAtUtc">
+            <summary>When the inactivity timeout closed this interaction's ticket, or null. Write-once: it is what makes a repeated timeout run a no-op.</summary>
+        </member>
         <member name="P:TigerCS.Domain.Modules.Ticketing.TicketInteraction.CreatedAtUtc">
             <summary>When this row was recorded by Ticketing (creation/audit timestamp), as distinct from <see cref="P:TigerCS.Domain.Modules.Ticketing.TicketInteraction.InteractionStartedAtUtc"/> — Genesys' own clock.</summary>
         </member>
@@ -3521,6 +4459,27 @@
             an ended chat is not a closed ticket — the ticket keeps following the
             existing TigerCS workflow.
             </summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.Ticketing.TicketInteraction.BeginAwaitingCustomerReply(System.DateTime,System.Guid)">
+            <summary>
+            The chatbot sent a message that needs a customer reply: start the
+            inactivity timer. <b>Idempotent — a repeated delivery never restarts
+            the timer</b>: while the interaction is already waiting this returns
+            false and changes nothing, so a retried webhook cannot postpone the
+            deadline. A new timer starts only after
+            <see cref="M:TigerCS.Domain.Modules.Ticketing.TicketInteraction.CancelAwaitingCustomerReply"/> (the customer replied) and
+            the chatbot asks again. Refused (false) for an ended interaction or
+            one already closed by inactivity.
+            </summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.Ticketing.TicketInteraction.CancelAwaitingCustomerReply">
+            <summary>The customer replied, a human took over, or human follow-up was requested: stop waiting. Returns true when a timer was actually running.</summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.Ticketing.TicketInteraction.IsInactivityTimeoutDue(System.DateTime,System.TimeSpan)">
+            <summary>True when the timer has been running for strictly longer than <paramref name="timeout"/> at <paramref name="nowUtc"/> — "more than 5 minutes", not "5 minutes or more".</summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.Ticketing.TicketInteraction.RecordInactivityClosure(System.DateTime)">
+            <summary>Records that the timeout closed the ticket and stops the timer. Write-once.</summary>
         </member>
         <member name="M:TigerCS.Domain.Modules.Ticketing.TicketInteraction.RecordAgentIfAbsent(System.String,System.String)">
             <summary>
@@ -3710,12 +4669,25 @@
             overwriting the old one (MVP-ERD.md §2.14's Reopen-driven history model).
             </summary>
         </member>
+        <member name="P:TigerCS.Domain.Modules.Ticketing.TicketResolution.ClosedForCustomerInactivity">
+            <summary>
+            True only for the resolution written by the chatbot inactivity closure
+            (<see cref="M:TigerCS.Domain.Modules.Ticketing.TicketResolution.ForCustomerInactivity(System.Int64,System.String,System.Guid,System.DateTime)"/>). Set by the server alone — no
+            request field reaches it — and per resolve cycle: a reopen archives
+            this row, and a later, manual Cancelled gets its own row with the flag
+            false. It is the single fact that lets a <b>Cancelled</b> ticket be
+            reopened (see <c>ReopenPolicy</c>); every other Cancelled ticket stays final.
+            </summary>
+        </member>
         <member name="M:TigerCS.Domain.Modules.Ticketing.TicketResolution.Archive">
             <summary>
             Reopen (FR-RES-04): this resolution is no longer the ticket's live
             outcome — it becomes history, never deleted. One-way by design; the
             next resolve cycle creates a new row rather than reviving this one.
             </summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.Ticketing.TicketResolution.ForCustomerInactivity(System.Int64,System.String,System.Guid,System.DateTime)">
+            <summary>The resolution row of a chatbot inactivity closure: outcome Cancelled, flagged so the closure stays recognisable — and, uniquely among Cancelled tickets, reopenable.</summary>
         </member>
         <member name="T:TigerCS.Domain.Modules.Ticketing.TicketStatus">
              <summary>
@@ -3818,7 +4790,7 @@
             sub-machine: Open→InProgress, InProgress↔PendingCustomer, and the
             legacy PendingThirdParty→InProgress escape. Resolved and Closed are
             reached only through <see cref="M:TigerCS.Domain.Modules.Ticketing.Ticket.Resolve(TigerCS.Domain.Modules.Ticketing.ResolutionOutcome,System.Nullable{System.Int64})"/>/<see cref="M:TigerCS.Domain.Modules.Ticketing.Ticket.Close"/>,
-            and Closed returns to InProgress only through <see cref="M:TigerCS.Domain.Modules.Ticketing.Ticket.Reopen(System.Int32)"/>
+            and Closed returns to InProgress only through <see cref="M:TigerCS.Domain.Modules.Ticketing.Ticket.Reopen(System.Int32,System.Boolean)"/>
             — all three stay dedicated lifecycle operations rather than generic
             status changes, so none of them appears here.
             </summary>
