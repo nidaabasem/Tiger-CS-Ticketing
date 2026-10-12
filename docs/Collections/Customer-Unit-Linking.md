@@ -11,7 +11,7 @@ A phone number only *finds the customer*; money is never looked up by phone.
    * no mapping row -> `MatchFailed / ProjectMappingMissing` (no amounts are looked up, none are implied)
    * several codes for one CRM project -> `ProjectMappingAmbiguous`
    * the tower exists in both companies and the mapping does not name one -> `CompanyMappingAmbiguous` (nothing is chosen)
-4. **Financials = the PACT account of that company + unit** (the same snapshot read as the Receivables page and the unit Payment Summary, `usp_Collections_GetUnitReceivables`): only unpaid instalments due **today or earlier (Asia/Dubai)**, `Total = Due + Overdue`. It does not matter whether the CRM phone exists in PACT.
+4. **Financials = the PACT account of that company + unit** (the same snapshot read as the Receivables page and the unit Payment Summary, `usp_Collections_GetUnitReceivables`): every unpaid instalment of that unit, classified with the one current-Dubai-month rule (`CollectionsDueMonth`): Overdue before the month, Due inside it, later months *Not yet due*. The Payment tab's figures are described in [Unit-Payment-Summary.md](Unit-Payment-Summary.md). It does not matter whether the CRM phone exists in PACT.
 5. **Contact.** CRM name/mobile/email first; PACT fills a missing field; two different people are never merged (`ContactSourceConflict` -> review); several CRM owners of the unit -> `CrmCustomerAmbiguous`; CRM owner data naming a different customer -> `CrmOwnershipConflict`. A missing mobile never blocks the match.
 6. **Only when CRM holds no eligible customer** is PACT searched by phone (`v1/contracts/{mobile}`): companies 4/32 go through the same unit read, restricted to that contract's tenant (a former tenant of the same unit is not mixed in); **company 7 (Leasing)** is listed per contract. Ended contracts (`contractEndDate` < today) and cancelled apartment codes (`*`) are excluded.
 7. **More than one customer / unit / contract = a list with `selectionRequired`.** The first is never taken. `selectionId` is `crm:{crmUnitId}` or `pact:{company}:{tenant}:{unitId}:{contract}`.
@@ -20,11 +20,16 @@ A phone number only *finds the customer*; money is never looked up by phone.
 
 | `financialStatus` | Meaning |
 | --- | --- |
-| `Available` | Amounts due today or earlier; `due`, `overdue`, `total`. |
+| `Available` | Amounts due before the end of the current Dubai month (Overdue: before its first day; Due: inside it); `due`, `overdue`, `total`. |
 | `NoDues` | **Confirmed zero**: PACT holds the unit and nothing is due. |
 | `NoFinancialData` | Nothing usable (`PactHoldsNoRecord`, `CompanySnapshotNotLoaded`, `LeasingReceivablesSourceMissing`, `CompanyNotSupported`). **Not zero**: amounts are null. |
 | `MatchFailed` | Failed or ambiguous match (`ProjectMappingMissing/Ambiguous`, `CompanyMappingAmbiguous`, `UnitCode…`, `CompanyMissing`, several PACT accounts). No amounts. |
 | `SourceError` | A source could not be read (`PactUnavailable`, `ProjectMappingUnreadable`). Retry; no amounts. |
+
+### Comparing the screens (what must match and what need not)
+
+For the **same unit and the same scope** (all months, current Dubai month rule), **Due and Overdue must be identical** on Receivables, Campaigns and the Payment tab (`due` / `overdue`, and the cards *Due This Month* / *Overdue*). **Total** in Collections is `Due + Overdue`.
+The Payment tab's **Remaining Balance is every unpaid payment, future ones included** (`payments.remainingBalance`, from the schedule table), so it is **not** required to equal Due + Overdue; it equals them only when nothing is due after this month. Cards and the schedule table are computed from the same rows (Due card = sum of the *Due* rows, Overdue card = sum of the *Overdue* rows, Remaining = sum of all rows). *Total Amount* and *Paid Amount* are `Unavailable` (the snapshot holds only unpaid remainders). Example: Due 4,000, Overdue 1,000, Remaining 16,500 is consistent (11,500 is not yet due).
 
 ## Entry points (all reuse the service)
 

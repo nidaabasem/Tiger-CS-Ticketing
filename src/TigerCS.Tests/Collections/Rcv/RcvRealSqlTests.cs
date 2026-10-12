@@ -74,7 +74,7 @@ public sealed partial class RcvRealSqlTests
     private static async Task Seed()
     {
         await Reset();
-        // D1 owns two apartments. A: 60 + 60 (two small payments = 120 > 100). B: exactly 100, due today, plus a payment due in November (future: never read).
+        // D1 owns two apartments. A: 60 + 60 (two small payments = 120 > 100). B: exactly 100, due today, plus a payment due in November (the next month: neither Due nor Overdue, never read).
         await Pact(4, "TP101-101", "D1", "Dina One", "+971500000001", "dina@example.test", 1011, "A1", "2026-09-15", 60);
         await Pact(4, "TP101-101", "D1", "Dina One", "+971500000001", "dina@example.test", 1011, "A2", "2026-10-01", 60);
         await Pact(4, "TP101-102", "D1", "Dina One", "+971500000001", "dina@example.test", 1012, "B1", "2026-10-11", 100);
@@ -101,10 +101,9 @@ public sealed partial class RcvRealSqlTests
     }
 
     // ---- 1. fetch, validate, publish, per company ----
-    [Fact]
+    [SqlFact]
     public async Task Refresh_LoadsEachCompanyFromItsOwnProcedure_KeepsThemApart_AndCountsWhatItLeftOut()
     {
-        if (string.IsNullOrWhiteSpace(ConnectionString)) return;
         await Seed();
         Assert.Equal(2, await Scalar<int>("SELECT COUNT(*) FROM dbo.CollectionsRcvCompany WHERE CurrentRunId IS NOT NULL AND LastStatus = 'Succeeded'"));
         // Dubai: 12 PACT rows with a positive amount... minus the cancelled (E1), the three invalid units (F1-F3); the settled one (C3) and the future November one stay out / in as shown.
@@ -119,10 +118,9 @@ public sealed partial class RcvRealSqlTests
         Assert.Equal(2, await Scalar<int>("SELECT COUNT(*) FROM dbo.CollectionsRcvLine WHERE CompanyId = 32 AND Mobile = '' AND Email = ''"));   // rows without a mobile or e-mail are kept
     }
 
-    [Fact]
+    [SqlFact]
     public async Task ARefreshOfOneCompany_NeverTouchesTheOther()
     {
-        if (string.IsNullOrWhiteSpace(ConnectionString)) return;
         await Seed();
         var dubaiRun = await Scalar<string>("SELECT CAST(CurrentRunId AS varchar(40)) FROM dbo.CollectionsRcvCompany WHERE CompanyId = 4");
         var result = await Refresher().RefreshAsync("Retry", 32, default);
@@ -133,10 +131,9 @@ public sealed partial class RcvRealSqlTests
     }
 
     // ---- 2. what the Receivables page shows ----
-    [Fact]
+    [SqlFact]
     public async Task TheDefaultView_ListsEachApartmentOnce_WithDueOverdueAndTotal_NewestFirst_AndHidesWhatMustNotShow()
     {
-        if (string.IsNullOrWhiteSpace(ConnectionString)) return;
         await Seed();
         var page = await Page();           // Minimum Total 100 (strictly greater)
         var keys = page.Units.Select(Key).ToList();
@@ -149,7 +146,7 @@ public sealed partial class RcvRealSqlTests
         Assert.Equal(120m, a.RemainingTotal);                                              // 60 + 60: two small payments make one apartment above 100
         Assert.Equal(["A2", "A1"], a.Instalments.Select(i => i.VoucherNumber));            // details newest first
         Assert.All(page.Units, u => Assert.Equal(u.RemainingTotal, u.Instalments.Sum(i => i.RemainingAmount)));   // details add up to the row's Total
-        Assert.All(page.Units, u => Assert.All(u.Instalments, i => Assert.True(i.DueDate <= Today)));              // nothing in the future
+        Assert.All(page.Units, u => Assert.All(u.Instalments, i => Assert.True(i.DueDate < new DateOnly(2026, 11, 1))));   // nothing from the next month on
         Assert.Equal(page.Totals.UnitCount, page.Units.Count);
         Assert.Equal(page.Totals.RemainingTotal, page.Units.Sum(u => u.RemainingTotal));
         Assert.Equal(page.Totals.Count, page.Units.Sum(u => u.InstalmentCount));
@@ -159,10 +156,9 @@ public sealed partial class RcvRealSqlTests
         Assert.Equal(100m, d1.Units.Single(u => u.UnitCode == "TP101-102").RemainingTotal);        // the 500 due in November is not in it
     }
 
-    [Fact]
+    [SqlFact]
     public async Task MinimumTotal_IsStrictlyGreater_AppliesToTheApartmentSum_AndClearingShowsEverythingDueOrOverdue()
     {
-        if (string.IsNullOrWhiteSpace(ConnectionString)) return;
         await Seed();
         Assert.DoesNotContain("4:D1:TP101-102", (await Page(minTotal: 100m)).Units.Select(Key));        // a sum of exactly 100 is hidden
         Assert.Contains("4:D1:TP101-102", (await Page(minTotal: 99.99m)).Units.Select(Key));
@@ -177,29 +173,27 @@ public sealed partial class RcvRealSqlTests
         Assert.Equal(cleared.Units.Select(Key), paged);                                                 // and in the same, stable order
     }
 
-    [Fact]
-    public async Task DueAndOverdue_AreComparedWithToday_NotWithTheMonth_AndTheStatusFilterAppliesToThePayments()
+    [SqlFact]
+    public async Task DueAndOverdue_AreComparedWithTheCurrentMonth_NotWithTheDay_AndTheStatusFilterAppliesToThePayments()
     {
-        if (string.IsNullOrWhiteSpace(ConnectionString)) return;
         await Seed();
         var all = await Page(minTotal: null);
         var b = all.Units.Single(u => u.UnitCode == "TP101-102");
         Assert.All(b.Instalments, i => Assert.Equal("Due", i.Classification));                          // due ON today
         var a = all.Units.Single(u => u.UnitCode == "TP101-101" && u.CompanyId == 4);
-        Assert.All(a.Instalments, i => Assert.Equal("Overdue", i.Classification));                      // 15 Sep and 1 Oct are before today, though 1 Oct is in the same month
+        Assert.Equal([("A2", "Due"), ("A1", "Overdue")], a.Instalments.Select(i => (i.VoucherNumber, i.Classification)));   // 1 Oct is inside the current month (Due) though it is before today; 15 Sep is Overdue
         var due = await Page(minTotal: null, status: "due");
-        Assert.Equal(["32:S2:TP140-302", "4:D1:TP101-102"], due.Units.Select(Key).Order());              // only apartments with a payment due today, and ONLY that payment
-        Assert.Equal(175m, due.Totals.DueRemaining); Assert.Equal(0m, due.Totals.OverdueRemaining);
+        Assert.Equal(["32:S1:TP101-101", "32:S2:TP127-301", "32:S2:TP140-302", "4:D1:TP101-101", "4:D1:TP101-102"], due.Units.Select(Key).Order());   // apartments with a payment due in October, and ONLY those payments
+        Assert.Equal(525m, due.Totals.DueRemaining); Assert.Equal(0m, due.Totals.OverdueRemaining);      // 60 + 100 + 40 + 250 + 75
         var overdue = await Page(minTotal: null, status: "overdue");
         Assert.DoesNotContain("4:D1:TP101-102", overdue.Units.Select(Key));
         Assert.Equal(0m, overdue.Totals.DueRemaining);
         Assert.Equal(all.Totals.RemainingTotal, due.Totals.RemainingTotal + overdue.Totals.RemainingTotal);   // Due + Overdue = everything
     }
 
-    [Fact]
-    public async Task TheMonthFilter_UsesTheDueDate_AllMonthsReachesPreviousYears_AndTheCurrentMonthStopsAtToday()
+    [SqlFact]
+    public async Task TheMonthFilter_UsesTheDueDate_AllMonthsReachesPreviousYears_AndTheCurrentMonthStopsAtTheMonthEnd()
     {
-        if (string.IsNullOrWhiteSpace(ConnectionString)) return;
         await Seed();
         var allMonths = await Page(minTotal: null);
         var d2 = allMonths.Units.Single(u => u.UnitCode == "TP102-201");
@@ -208,19 +202,18 @@ public sealed partial class RcvRealSqlTests
         var september = await Page(minTotal: null, from: new DateOnly(2026, 9, 1), to: new DateOnly(2026, 9, 30));
         Assert.Equal(50m, september.Units.Single(u => u.UnitCode == "TP102-201").RemainingTotal);       // that month's payments only, totals computed from them
         Assert.Equal(60m, september.Units.Single(u => u.UnitCode == "TP101-101" && u.CompanyId == 4).RemainingTotal);
-        var october = await Page(minTotal: null, from: new DateOnly(2026, 10, 1), to: new DateOnly(2026, 10, 31));   // To is capped at today by the procedure
-        Assert.DoesNotContain(october.Units.SelectMany(u => u.Instalments), i => i.DueDate > Today);
+        var october = await Page(minTotal: null, from: new DateOnly(2026, 10, 1), to: new DateOnly(2026, 10, 31));   // To is capped at the end of the current month by the procedure
+        Assert.DoesNotContain(october.Units.SelectMany(u => u.Instalments), i => i.DueDate > new DateOnly(2026, 10, 31));
         Assert.Equal(60m, october.Units.Single(u => u.UnitCode == "TP101-101" && u.CompanyId == 4).RemainingTotal);
         var november = await Page(minTotal: null, from: new DateOnly(2026, 11, 1), to: new DateOnly(2026, 11, 30));
-        Assert.Empty(november.Units);                                                                   // nothing is due in a future month yet
+        Assert.Empty(november.Units);                                                                   // next month is neither Due nor Overdue
         var y2025 = await Page(minTotal: null, from: new DateOnly(2025, 1, 1), to: new DateOnly(2025, 12, 31));
         Assert.Equal(["4:D2:TP102-201"], y2025.Units.Select(Key));
     }
 
-    [Fact]
+    [SqlFact]
     public async Task Search_FindsByNameMobileTowerAndApartment_AndNeverCrossesCompanies()
     {
-        if (string.IsNullOrWhiteSpace(ConnectionString)) return;
         await Seed();
         Assert.Equal(["4:D5:TP105-501"], (await Page(minTotal: null, search: "Dalia")).Units.Select(Key));
         Assert.Equal(["4:D2:TP102-201"], (await Page(minTotal: null, search: "971500000002")).Units.Select(Key));
@@ -237,10 +230,9 @@ public sealed partial class RcvRealSqlTests
     }
 
     // ---- 3. Campaigns, Payment Summary and the status share the same rows ----
-    [Fact]
+    [SqlFact]
     public async Task TheCampaignRows_AreTheSamePayments_WithTheSameExclusions()
     {
-        if (string.IsNullOrWhiteSpace(ConnectionString)) return;
         await Seed();
         var snapshot = await Source().ReadAsync(new PactReceivablesRequest(new DateOnly(2000, 1, 1), Today), default);
         Assert.Equal(10, snapshot.Items.Count);                                                          // 8 Dubai (incl. the November one) - wait: the window ends today, so 7 + 3 Sharjah
@@ -252,10 +244,9 @@ public sealed partial class RcvRealSqlTests
         Assert.Single(sharjah.Snapshot!.Companies);
     }
 
-    [Fact]
-    public async Task TheWindowRead_AppliesNoMonthClassification_DueIsTodayAndOverdueIsBeforeToday()
+    [SqlFact]
+    public async Task TheWindowRead_AppliesNoClassificationOfItsOwn_CampaignsClassifyAgainstTheCurrentMonth()
     {
-        if (string.IsNullOrWhiteSpace(ConnectionString)) return;
         await Seed();
         var any = await Source().ReadAsync(new PactReceivablesRequest(new DateOnly(2000, 1, 1), Today), default);
         // The old month classification (Class / AsOfDate: "Due" = anything in the as-of month) must not filter anything any more: the same rows come back whatever they ask for.
@@ -264,25 +255,90 @@ public sealed partial class RcvRealSqlTests
             var read = await Source().ReadAsync(new PactReceivablesRequest(new DateOnly(2000, 1, 1), Today, Class: cls, AsOfDate: new DateOnly(2026, 9, 1)), default);
             Assert.Equal(any.Items.Count, read.Items.Count);
         }
-        // What the callers in scope do with those rows: Campaigns classify by the Dubai DAY - 1 Oct is Overdue even though it is in the current month; Due is only what is due TODAY.
+        // What the callers in scope do with those rows: Campaigns classify against the Dubai MONTH - 1 Oct is Due (inside the current month); Overdue is only what is due before 1 Oct.
         var service = CampaignService(Source());
         var manager = new CollectionsCaller(Guid.NewGuid(), [Roles.CsManager], []);
         var report = (await service.PreviewAsync(manager, "CurrentMonthReminder", dateFrom: new DateOnly(2000, 1, 1), minTotal: null)).Value!;
         var a = report.Items.Single(i => i.CompanyId == 4 && i.UnitCode == "TP101-101");
-        Assert.Equal((0m, 120m), (a.DueAmount, a.OverdueAmount));                                          // 15 Sep and 1 Oct: both before today (11 Oct)
+        Assert.Equal((60m, 60m), (a.DueAmount, a.OverdueAmount));                                          // 1 Oct is Due (this month), 15 Sep is Overdue
         var b = report.Items.Single(i => i.CompanyId == 4 && i.UnitCode == "TP101-102");
         Assert.Equal((100m, 0m), (b.DueAmount, b.OverdueAmount));                                          // due exactly today
     }
 
-    [Fact]
+    private static async Task<PactInstalmentUnitsPage> PageAt(DateOnly today, string search, string? status = null, DateOnly? to = null, DateOnly? from = null) =>
+        await Source().ReadInstalmentUnitsAsync(new PactInstalmentsRequest(from ?? new DateOnly(2000, 1, 1), to ?? new DateOnly(2099, 12, 31), today, 0m, "outstanding", search, null, 1, 100, null, null, status, true, null), default);
+
+    [SqlFact]
+    public async Task TheRestOfTheCurrentMonth_IsDue_EvenWithNoMinimumTotal_AndTheNextMonthIsNeverRead()
+    {
+        await Seed();
+        // D6 (Dubai): 30 Sep 10 (Overdue), 20 Oct 70 and 31 Oct 30 (still to come: Due), 1 Nov 900 (next month: neither). The snapshot stores all four (the whole window 2000-2099 is loaded).
+        await Pact(4, "TP106-601", "D6", "Dora Six", "+971500000006", "dora@example.test", 6011, "K1", "2026-09-30", 10);
+        await Pact(4, "TP106-601", "D6", "Dora Six", "+971500000006", "dora@example.test", 6011, "K2", "2026-10-20", 70);
+        await Pact(4, "TP106-601", "D6", "Dora Six", "+971500000006", "dora@example.test", 6011, "K3", "2026-10-31", 30);
+        await Pact(4, "TP106-601", "D6", "Dora Six", "+971500000006", "dora@example.test", 6011, "K4", "2026-11-01", 900);
+        Assert.Equal("Succeeded", (await Refresher().RefreshAsync("Test", null, default)).Status);
+        Assert.Equal(4, await Scalar<int>("SELECT COUNT(*) FROM dbo.CollectionsRcvLine WHERE UnitCode = 'TP106-601'"));       // nothing was dropped while loading the snapshot
+        var d6 = (await PageAt(Today, "TP106-601")).Units.Single();
+        Assert.Equal(110m, d6.RemainingTotal);                                                          // 10 + 70 + 30; the 900 of 1 Nov is in neither
+        Assert.Equal([("K3", "Due"), ("K2", "Due"), ("K1", "Overdue")], d6.Instalments.Select(i => (i.VoucherNumber, i.Classification)));
+        var due = await PageAt(Today, "TP106-601", status: "due");
+        Assert.Equal(100m, due.Totals.DueRemaining); Assert.Equal(0m, due.Totals.OverdueRemaining);     // the status filter applies to the payments
+        var overdue = await PageAt(Today, "TP106-601", status: "overdue");
+        Assert.Equal((0m, 10m), (overdue.Totals.DueRemaining, overdue.Totals.OverdueRemaining));
+        var october = await PageAt(Today, "TP106-601", from: new DateOnly(2026, 10, 1), to: new DateOnly(2026, 10, 31));   // Month/Year narrows only
+        Assert.Equal((100m, 0m), (october.Totals.DueRemaining, october.Totals.OverdueRemaining));
+        var september = await PageAt(Today, "TP106-601", from: new DateOnly(2026, 9, 1), to: new DateOnly(2026, 9, 30));
+        Assert.Equal((0m, 10m), (september.Totals.DueRemaining, september.Totals.OverdueRemaining));       // still Overdue against October
+        Assert.Empty((await PageAt(Today, "TP106-601", from: new DateOnly(2026, 11, 1), to: new DateOnly(2026, 11, 30))).Units);
+        // The day of the month never matters: the same rows classify the same on the 1st and on the 31st.
+        foreach (var day in new[] { 1, 31 })
+        {
+            var onDay = await PageAt(new DateOnly(2026, 10, day), "TP106-601");
+            Assert.Equal((100m, 10m), (onDay.Totals.DueRemaining, onDay.Totals.OverdueRemaining));
+        }
+    }
+
+    [SqlFact]
+    public async Task DecemberToJanuary_TheNextMonthStartIsTheFirstOfJanuary_AndJanuaryLooksBackAtDecember()
+    {
+        await Seed();
+        await Pact(4, "TP107-701", "D7", "Dana Seven", "+971500000007", "dana@example.test", 7011, "M1", "2026-11-30", 5);
+        await Pact(4, "TP107-701", "D7", "Dana Seven", "+971500000007", "dana@example.test", 7011, "M2", "2026-12-31", 7);
+        await Pact(4, "TP107-701", "D7", "Dana Seven", "+971500000007", "dana@example.test", 7011, "M3", "2027-01-01", 9);
+        await Pact(4, "TP107-701", "D7", "Dana Seven", "+971500000007", "dana@example.test", 7011, "M4", "2027-01-31", 11);
+        await Pact(4, "TP107-701", "D7", "Dana Seven", "+971500000007", "dana@example.test", 7011, "M5", "2027-02-01", 13);
+        Assert.Equal("Succeeded", (await Refresher().RefreshAsync("Test", null, default)).Status);
+        var december = await PageAt(new DateOnly(2026, 12, 20), "TP107-701");
+        Assert.Equal((7m, 5m, 12m), (december.Totals.DueRemaining, december.Totals.OverdueRemaining, december.Totals.RemainingTotal));          // 1 Jan 2027 onwards is excluded
+        var january = await PageAt(new DateOnly(2027, 1, 10), "TP107-701");
+        Assert.Equal((20m, 12m, 32m), (january.Totals.DueRemaining, january.Totals.OverdueRemaining, january.Totals.RemainingTotal));            // 31 Dec is Overdue, 1 Feb is excluded
+    }
+
+    [SqlFact]
+    public async Task PartlyPaidCountsItsRemainder_AndAFullyPaidInstalmentNeverEntersTheSnapshotOrTheTotals()
+    {
+        await Seed();
+        // PACT returns the REMAINING amount: 600 left of a part-paid September instalment (Overdue) and 400 left of a part-paid coming October one (Due); a fully paid one returns 0.
+        await Pact(4, "TP108-801", "D8", "Dalal Eight", "+971500000008", "dalal@example.test", 8011, "N1", "2026-09-10", 600);
+        await Pact(4, "TP108-801", "D8", "Dalal Eight", "+971500000008", "dalal@example.test", 8011, "N2", "2026-10-25", 400);
+        await Pact(4, "TP108-801", "D8", "Dalal Eight", "+971500000008", "dalal@example.test", 8011, "N3", "2026-10-05", 0, "Paid");
+        Assert.Equal("Succeeded", (await Refresher().RefreshAsync("Test", null, default)).Status);
+        Assert.Equal(0, await Scalar<int>("SELECT COUNT(*) FROM dbo.CollectionsRcvLine WHERE UnitCode = 'TP108-801' AND VoucherNumber = 'N3'"));
+        var page = await PageAt(Today, "TP108-801");
+        Assert.Equal((400m, 600m, 1000m), (page.Totals.DueRemaining, page.Totals.OverdueRemaining, page.Totals.RemainingTotal));
+    }
+
+    [SqlFact]
     public async Task ThePaymentSummaryRead_FindsAUnitByItsKey_PerCompany_AndNeverByContact()
     {
-        if (string.IsNullOrWhiteSpace(ConnectionString)) return;
         await Seed();
         var unit = await Source().ReadUnitAsync("TP101-101", null, Today, default);
         Assert.Equal([4, 32], unit.Identities.Select(i => i.CompanyId).Order());
         Assert.Equal(["A2", "A1"], unit.Instalments.Where(i => i.CompanyId == 4).Select(i => i.VoucherNumber));
-        Assert.DoesNotContain(unit.Instalments, i => i.DueDate > Today);
+        // Every unpaid instalment is returned, future months included (Remaining Balance / Not yet due); the application classifies them with the one month rule.
+        var later = await Source().ReadUnitAsync("TP101-102", 4, Today, default);
+        Assert.Contains(later.Instalments, i => i.VoucherNumber == "B2" && i.DueDate == new DateOnly(2026, 11, 15));
         var dubaiOnly = await Source().ReadUnitAsync("TP101-101", 4, Today, default);
         Assert.Equal([4], dubaiOnly.Identities.Select(i => i.CompanyId));
         Assert.Empty((await Source().ReadUnitAsync("TP103-513*", null, Today, default)).Identities);       // a cancelled apartment has no summary
@@ -295,23 +351,22 @@ public sealed partial class RcvRealSqlTests
             new(options, new FakeDepartmentRepository()), new(options, new FakeTimeProvider(new DateTime(2026, 10, 11, 5, 0, 0, DateTimeKind.Utc))), source, NullLogger<CollectionsCampaignAppService>.Instance);
     }
 
-    [Fact]
+    [SqlFact]
     public async Task Campaigns_ListTheSameUnitsWithTheSameAmounts_KeepContactlessUnits_AndOrderNewestFirst()
     {
-        if (string.IsNullOrWhiteSpace(ConnectionString)) return;
         await Seed();
         var service = CampaignService(Source());
         var manager = new CollectionsCaller(Guid.NewGuid(), [Roles.CsManager], []);
         var from = new DateOnly(2000, 1, 1);
-        // Current-month stage (1-31 Oct, nothing after today): D1's apartment A (60 on 1 Oct, 60 overdue from September), Sharjah's contactless TP127-301 (250, 5 Oct).
+        // Current-month stage (1-31 Oct, the whole month): D1's apartment A (60 on 1 Oct, 60 overdue from September), Sharjah's contactless TP127-301 (250, 5 Oct).
         var current = (await service.PreviewAsync(manager, "CurrentMonthReminder", dateFrom: from, minTotal: 100m)).Value!;
         Assert.Equal(["TP127-301", "TP101-101"], current.Items.Select(i => i.UnitCode));                    // newest payment first (5 Oct, then 1 Oct)
         var contactless = current.Items[0];
         Assert.Equal((32, "", ""), (contactless.CompanyId, contactless.Phone, contactless.Email));          // no mobile and no e-mail: the receivable is still listed ...
         Assert.Contains("NoValidContact", contactless.Reason);                                               // ... and the reason says why it cannot be sent
-        Assert.Equal((0m, 250m, 250m), (contactless.DueAmount, contactless.OverdueAmount, contactless.TotalAmount));
+        Assert.Equal((250m, 0m, 250m), (contactless.DueAmount, contactless.OverdueAmount, contactless.TotalAmount));      // 5 Oct: inside the current month
         var a = current.Items[1];
-        Assert.Equal((4, "Dina One", 0m, 120m, 120m), (a.CompanyId, a.CustomerName, a.DueAmount, a.OverdueAmount, a.TotalAmount));
+        Assert.Equal((4, "Dina One", 60m, 60m, 120m), (a.CompanyId, a.CustomerName, a.DueAmount, a.OverdueAmount, a.TotalAmount));
         // The Receivables page shows the same apartment with the same figures.
         var page = (await Page(minTotal: 100m)).Units.Single(u => u.CompanyId == 4 && u.UnitCode == "TP101-101");
         Assert.Equal(a.TotalAmount, page.RemainingTotal);
@@ -332,10 +387,9 @@ public sealed partial class RcvRealSqlTests
         Assert.Equal(current.TotalCount, export.RowCount);
     }
 
-    [Fact]
+    [SqlFact]
     public async Task TheApartmentListApi_StillWorksOnTheNewSource_AndOnlyListsWhatIsOwed()
     {
-        if (string.IsNullOrWhiteSpace(ConnectionString)) return;
         await Seed();
         var options = new CollectionsOptions { Enabled = true };
         var service = new PactReceivableCustomersAppService(options, new PactReceivablesOptions { Enabled = true, DefaultMinOutstandingAmount = 0m },
@@ -345,10 +399,9 @@ public sealed partial class RcvRealSqlTests
         Assert.Contains(report.Items, c => c.TenantId == "D5" && c.UnitCode == "TP105-501");
     }
 
-    [Fact]
+    [SqlFact]
     public async Task TheCrmContact_IsPreferred_AndAnAmbiguousCrmUnitIsFlagged_WithoutHidingTheReceivable()
     {
-        if (string.IsNullOrWhiteSpace(ConnectionString)) return;
         await Seed();
         var run = Guid.NewGuid();
         await Exec($"INSERT dbo.CollectionsCrmUnitOwner (RunId, UnitKey, CompanyId, ProjectCode, UnitNumber, LeadId, LeadStatus, CrmCustomerId, CrmUnitId, ProjectId, FullName, Mobile, Email, PhoneNorm, EmailNorm) VALUES " +
@@ -371,10 +424,9 @@ public sealed partial class RcvRealSqlTests
         finally { await Exec("UPDATE dbo.CollectionsCrmOwnerState SET CurrentRunId = NULL WHERE Id = 1; DELETE FROM dbo.CollectionsCrmUnitOwner;"); }
     }
 
-    [Fact]
+    [SqlFact]
     public async Task Leasing_Company7_IsNeverLoadedNorRead_ItStaysAPaymentSummaryByPhoneFeature()
     {
-        if (string.IsNullOrWhiteSpace(ConnectionString)) return;
         await Seed();
         await using (var connection = new SqlConnection(ConnectionString))
         {
@@ -391,10 +443,9 @@ public sealed partial class RcvRealSqlTests
     }
 
     // ---- 4. state, failure and isolation ----
-    [Fact]
+    [SqlFact]
     public async Task BeforeTheFirstLoad_EveryCompanyIsNotLoaded_NeverZero()
     {
-        if (string.IsNullOrWhiteSpace(ConnectionString)) return;
         await Reset();
         var page = await Page();
         Assert.True(page.Snapshot.NothingLoaded);
@@ -402,10 +453,9 @@ public sealed partial class RcvRealSqlTests
         Assert.All(page.Snapshot.Companies, c => { Assert.False(c.HasSnapshot); Assert.Equal("Missing", c.Freshness); Assert.False(c.RefreshInProgress); });
     }
 
-    [Fact]
+    [SqlFact]
     public async Task AFailingCompany_KeepsItsLastGoodSnapshot_RecordsTheRealError_AndLeavesTheOtherCompanyAlone()
     {
-        if (string.IsNullOrWhiteSpace(ConnectionString)) return;
         await Seed();
         var before = await Page(minTotal: null);
         await Exec("CREATE OR ALTER PROCEDURE dbo.p32AccountReceivables @StartDate datetime, @EndDate datetime, @MinAmount int AS THROW 51000, N'PACT said no', 1;", "PACTRPT");
@@ -429,10 +479,9 @@ public sealed partial class RcvRealSqlTests
 
     private static Task Reset2() => Exec("CREATE OR ALTER PROCEDURE dbo.p32AccountReceivables @StartDate datetime, @EndDate datetime, @MinAmount int AS EXEC dbo.FakeReceivables 32, @StartDate, @EndDate, @MinAmount;", "PACTRPT");
 
-    [Fact]
+    [SqlFact]
     public async Task ARowOfAnotherCompany_FailsTheAttempt_NothingIsPublished()
     {
-        if (string.IsNullOrWhiteSpace(ConnectionString)) return;
         await Reset();
         await Pact(4, "TP101-101", "D1", "Dina One", "+971500000001", "dina@example.test", 1011, "A1", "2026-09-15", 60);
         await Exec("UPDATE dbo.FakeEdgeRows SET CompanyId = 4", "PACTRPT");
@@ -449,10 +498,9 @@ public sealed partial class RcvRealSqlTests
         finally { await Reset2(); }
     }
 
-    [Fact]
+    [SqlFact]
     public async Task ASuddenlyMuchSmallerResult_IsRefused_AndThePreviousSnapshotStays()
     {
-        if (string.IsNullOrWhiteSpace(ConnectionString)) return;
         await Reset();
         for (var i = 1; i <= 300; i++) await Pact(4, $"TP101-{i}", "T" + i, "Customer " + i, "+9715000" + i.ToString("D5"), "", 10000 + i, "V" + i, "2026-09-01", 100 + i);
         Assert.Equal("Succeeded", (await Refresher().RefreshAsync("Test", 4, default)).Status);
@@ -464,10 +512,9 @@ public sealed partial class RcvRealSqlTests
     }
 
     // ---- 5. lifecycle: concurrent refreshes, loading, timeout, killed session ----
-    [Fact]
+    [SqlFact]
     public async Task WhileDubaiLoads_OnlyDubaiIsLoading_ASecondDubaiRefreshIsRefused_AndSharjahRefreshesIndependently()
     {
-        if (string.IsNullOrWhiteSpace(ConnectionString)) return;
         await Seed();
         await Exec("UPDATE dbo.FakeConfig SET DelaySeconds = 8 WHERE CompanyId = 4", "PACTRPT");
         try
@@ -502,10 +549,9 @@ public sealed partial class RcvRealSqlTests
         throw new TimeoutException("The expected state was not reached.");
     }
 
-    [Fact]
+    [SqlFact]
     public async Task ACommandTimeout_EndsTheAttemptAsFailed_NothingStaysRunning_AndThePreviousSnapshotIsKept()
     {
-        if (string.IsNullOrWhiteSpace(ConnectionString)) return;
         await Seed();
         var previous = await Scalar<string>("SELECT CAST(CurrentRunId AS varchar(40)) FROM dbo.CollectionsRcvCompany WHERE CompanyId = 32");
         await Exec("UPDATE dbo.FakeConfig SET DelaySeconds = 20 WHERE CompanyId = 32", "PACTRPT");
@@ -529,10 +575,9 @@ public sealed partial class RcvRealSqlTests
         finally { await Exec("UPDATE dbo.FakeConfig SET DelaySeconds = 0 WHERE CompanyId = 32", "PACTRPT"); }
     }
 
-    [Fact]
+    [SqlFact]
     public async Task ACancelledRefresh_IsClosed_AndAnAbandonedRunningRowIsReapedOnlyWhenNoSessionHoldsTheLock()
     {
-        if (string.IsNullOrWhiteSpace(ConnectionString)) return;
         await Seed();
         // A 'Running' row whose session is gone (what a killed process leaves): nobody holds the company's lock, so the next status read closes it.
         await Exec("INSERT dbo.CollectionsRcvRun (RunId, CompanyId, TriggerSource, StartedUtc, Status) VALUES (NEWID(), 32, N'Ghost', DATEADD(SECOND, -30, SYSUTCDATETIME()), 'Running'); " +
@@ -556,10 +601,9 @@ public sealed partial class RcvRealSqlTests
         finally { await Exec("UPDATE dbo.FakeConfig SET DelaySeconds = 0 WHERE CompanyId = 32", "PACTRPT"); }
     }
 
-    [Fact]
+    [SqlFact]
     public async Task ASessionThatDiesInsideTheFetch_IsReported_AndNeverLeavesCompanyLoading()
     {
-        if (string.IsNullOrWhiteSpace(ConnectionString)) return;
         await Seed();
         // A layout that does not match the procedure kills the SQL session inside INSERT ... EXEC without running any CATCH block (measured on SQL Server 2022, as in the field).
         await using (var connection = new SqlConnection(ConnectionString))

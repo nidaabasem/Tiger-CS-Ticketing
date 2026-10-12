@@ -14,11 +14,12 @@ public sealed class ReceivablesByUnitTests
     private static readonly DateTime Now = new(2026, 10, 14, 8, 0, 0, DateTimeKind.Utc);
     private static readonly CollectionsCaller Agent = new(Guid.NewGuid(), [Roles.CsAgent], []);
 
-    private static (PactInstalmentsAppService Service, FakeInstalmentSource Source) Build()
+    private static (PactInstalmentsAppService Service, FakeInstalmentSource Source) Build(DateTime? now = null)
     {
-        var source = new FakeInstalmentSource(Now);
+        now ??= Now;
+        var source = new FakeInstalmentSource(now.Value);
         var options = new CollectionsOptions { Enabled = true };
-        return (new PactInstalmentsAppService(options, new PactReceivablesOptions { Enabled = true }, new(options, new FakeDepartmentRepository()), new(options, new FakeTimeProvider(Now)),
+        return (new PactInstalmentsAppService(options, new PactReceivablesOptions { Enabled = true }, new(options, new FakeDepartmentRepository()), new(options, new FakeTimeProvider(now.Value)),
             source, NullLogger<PactInstalmentsAppService>.Instance), source);
     }
 
@@ -74,29 +75,42 @@ public sealed class ReceivablesByUnitTests
         new(4, tenant, "Customer " + tenant, unit, code, voucher, due, remaining + 100, 100, remaining, "Installment", true, "+971500000" + unit, tenant + "@example.test");
 
     [Fact]
-    public async Task TheUnitView_ClassifiesByTheDay_NotTheMonth()
+    public async Task TheUnitView_ClassifiesByTheCurrentMonth_NotTheDay()
     {
         var (service, source) = Build();   // today (Dubai) = 14 Oct 2026
-        source.Rows.AddRange([OnDay("A", 1, "TP124-1", new DateTime(2026, 10, 5), 100, "V1"),    // earlier this month: Overdue (the month rule called it Due)
-            OnDay("A", 1, "TP124-1", new DateTime(2026, 10, 13), 110, "V2"),                     // yesterday: Overdue
+        source.Rows.AddRange([OnDay("A", 1, "TP124-1", new DateTime(2026, 9, 30), 90, "V0"),     // last day of the previous month: Overdue
+            OnDay("A", 1, "TP124-1", new DateTime(2026, 10, 1), 100, "V1"),                      // first day of the month: Due
+            OnDay("A", 1, "TP124-1", new DateTime(2026, 10, 13), 110, "V2"),                     // yesterday: Due (this month)
             OnDay("A", 1, "TP124-1", new DateTime(2026, 10, 14), 120, "V3"),                     // today: Due
-            OnDay("A", 1, "TP124-1", new DateTime(2026, 10, 15), 130, "V4"),                     // tomorrow: Upcoming
-            OnDay("A", 1, "TP124-1", new DateTime(2026, 12, 1), 140, "V5")]);
+            OnDay("A", 1, "TP124-1", new DateTime(2026, 10, 31), 130, "V4"),                     // a coming day of this month: Due
+            OnDay("A", 1, "TP124-1", new DateTime(2026, 11, 1), 140, "V5")]);                    // first day of next month: in neither
         var page = (await service.ListAsync(Agent, null, new DateOnly(2000, 1, 1), new DateOnly(2099, 12, 31), "outstanding", 0m, null, 1, 25, default, "units")).Value!;
-        // Only what is due today or earlier is listed: tomorrow's and December's instalments are not part of the unit view at all.
-        Assert.Equal((2, 1, 0), (page.Totals.OverdueCount, page.Totals.DueCount, page.Totals.NotYetDueCount));
-        Assert.Equal((210m, 120m, 0m), (page.Totals.OverdueRemaining, page.Totals.DueRemaining, page.Totals.NotYetDueRemaining));
-        Assert.Equal(new DateOnly(2026, 10, 14), page.DateTo);
+        Assert.Equal((1, 4, 0), (page.Totals.OverdueCount, page.Totals.DueCount, page.Totals.NotYetDueCount));
+        Assert.Equal((90m, 460m, 0m), (page.Totals.OverdueRemaining, page.Totals.DueRemaining, page.Totals.NotYetDueRemaining));
+        Assert.Equal(new DateOnly(2026, 10, 31), page.DateTo);                                    // the window ends with the current month
         var unit = Assert.Single(page.Units!);
-        Assert.Equal(["Due", "Overdue", "Overdue"], unit.Instalments.Select(i => i.Classification));      // newest due date first
+        Assert.Equal(["Due", "Due", "Due", "Due", "Overdue"], unit.Instalments.Select(i => i.Classification));      // newest due date first
         Assert.Equal(unit.RemainingTotal, unit.Instalments.Sum(i => i.RemainingAmount));          // the row and its instalments are the same rows
+        Assert.Equal(550m, unit.RemainingTotal);                                                  // Total = Due + Overdue; 1 Nov is not in it
         Assert.True(source.LastRequest!.ClassifyByDay);
         Assert.Equal(new DateOnly(2026, 10, 14), source.LastRequest.AsOf);
         Assert.Null(page.Months);                                                                 // no month overview in this view
         // The instalment view keeps the month rule.
         var flat = (await service.ListAsync(Agent, null, new DateOnly(2000, 1, 1), new DateOnly(2099, 12, 31), "outstanding", 0m, null, 1, 25, default, "instalments")).Value!;
         Assert.False(source.LastRequest.ClassifyByDay);
-        Assert.Equal(5, flat.Totals.Count);   // the instalment view still lists everything in its window
+        Assert.Equal(6, flat.Totals.Count);   // the instalment view still lists everything in its window
+    }
+
+    [Fact]
+    public async Task TheDecemberToJanuaryBoundary_Overdue_IsBeforeDecember_AndJanuaryIsExcluded()
+    {
+        var (service, source) = Build(new DateTime(2026, 12, 20, 8, 0, 0, DateTimeKind.Utc));   // today (Dubai) = 20 Dec 2026
+        source.Rows.AddRange([OnDay("A", 1, "TP124-1", new DateTime(2026, 11, 30), 10, "N"), OnDay("A", 1, "TP124-1", new DateTime(2026, 12, 1), 20, "D1"),
+            OnDay("A", 1, "TP124-1", new DateTime(2026, 12, 31), 40, "D2"), OnDay("A", 1, "TP124-1", new DateTime(2027, 1, 1), 80, "J")]);
+        var page = (await Units(service, to: new DateOnly(2099, 12, 31), minTotal: null)).Value!;
+        Assert.Equal(new DateOnly(2026, 12, 31), page.DateTo);
+        Assert.Equal((10m, 60m, 70m), (page.Totals.OverdueRemaining, page.Totals.DueRemaining, page.Totals.RemainingTotal));      // 1 Jan 2027 is in neither
+        Assert.Equal(["D2", "D1", "N"], Assert.Single(page.Units!).Instalments.Select(i => i.VoucherNumber));
     }
 
     [Theory]
@@ -118,7 +132,7 @@ public sealed class ReceivablesByUnitTests
 
     private static Task<CollectionsResult<TigerCS.Application.Modules.Collections.Dto.PactInstalmentsPageDto>> Units(PactInstalmentsAppService service,
         DateOnly? from = null, DateOnly? to = null, decimal? minTotal = null, string? search = null, string? status = null, int pageSize = 25, int page = 1) =>
-        service.ListAsync(Agent, null, from ?? new DateOnly(2000, 1, 1), to ?? new DateOnly(2026, 10, 14), "outstanding", null, search, page, pageSize, default, "units", null, status, minTotal);
+        service.ListAsync(Agent, null, from ?? new DateOnly(2000, 1, 1), to ?? new DateOnly(2099, 12, 31), "outstanding", null, search, page, pageSize, default, "units", null, status, minTotal);
 
     [Fact]
     public async Task MinimumTotal_IsOnTheUnitsSum_StrictlyGreater_AndCountsPagesAndTotalsFollowIt()
@@ -140,27 +154,33 @@ public sealed class ReceivablesByUnitTests
     }
 
     [Fact]
-    public async Task EveryUnitsDetailsAddUpToItsTotal_AndTheStatusIsAgainstTodayWhateverMonthIsChosen()
+    public async Task EveryUnitsDetailsAddUpToItsTotal_AndTheStatusIsAgainstTheCurrentMonthWhateverMonthIsChosen()
     {
         var (service, source) = Build();
         source.Rows.AddRange([OnDay("A", 1, "TP124-1", new DateTime(2026, 8, 10), 300, "V1"), OnDay("A", 1, "TP124-1", new DateTime(2026, 9, 10), 120, "V2"),
-            OnDay("A", 1, "TP124-1", new DateTime(2026, 10, 14), 80, "V3"), OnDay("A", 1, "TP124-1", new DateTime(2026, 10, 20), 999, "V4"),     // 20 Oct is after today
+            OnDay("A", 1, "TP124-1", new DateTime(2026, 10, 14), 80, "V3"), OnDay("A", 1, "TP124-1", new DateTime(2026, 10, 20), 999, "V4"),     // 20 Oct: a coming day of this month, Due
+            OnDay("A", 1, "TP124-1", new DateTime(2026, 11, 20), 777, "V6"),                                                                    // next month: in neither
             OnDay("A", 2, "TP124-2", new DateTime(2026, 9, 11), 500, "V5")]);                                                                   // the same customer's other apartment
         var all = (await Units(service, minTotal: null)).Value!;
         var one = all.Units!.Single(u => u.UnitCode == "TP124-1");
-        Assert.Equal(["V3", "V2", "V1"], one.Instalments.Select(i => i.VoucherNumber));                         // newest first; the future V4 is not there
-        Assert.Equal(500m, one.RemainingTotal); Assert.Equal(one.RemainingTotal, one.Instalments.Sum(i => i.RemainingAmount));
+        Assert.Equal(["V4", "V3", "V2", "V1"], one.Instalments.Select(i => i.VoucherNumber));                   // newest first; next month's V6 is not there
+        Assert.Equal(1499m, one.RemainingTotal); Assert.Equal(one.RemainingTotal, one.Instalments.Sum(i => i.RemainingAmount));
         Assert.Equal(500m, all.Units!.Single(u => u.UnitCode == "TP124-2").RemainingTotal);                      // never mixed with TP124-1
         Assert.Equal(all.Totals.RemainingTotal, all.Units!.Sum(u => u.RemainingTotal));
-        Assert.Equal(["Due", "Overdue", "Overdue"], one.Instalments.Select(i => i.Classification));
+        Assert.Equal(["Due", "Due", "Overdue", "Overdue"], one.Instalments.Select(i => i.Classification));
 
-        // A previous month: only that month's instalments, still Overdue (compared with today, not with the month); the current month stops at today and V3 is Due.
+        // A previous month: only that month's instalments, still Overdue (compared with the current month, not with the month shown).
         var september = (await Units(service, new DateOnly(2026, 9, 1), new DateOnly(2026, 9, 30), null)).Value!;
         Assert.Equal(["V2", "V5"], september.Units!.SelectMany(u => u.Instalments).Select(i => i.VoucherNumber).Order());
         Assert.Equal((620m, 2, 0), (september.Totals.OverdueRemaining, september.Totals.OverdueCount, september.Totals.DueCount));
-        var october = (await Units(service, new DateOnly(2026, 10, 1), new DateOnly(2026, 10, 31), null)).Value!;     // the service caps To at today
-        var v3 = Assert.Single(Assert.Single(october.Units!).Instalments);
-        Assert.Equal(("V3", "Due", new DateOnly(2026, 10, 14)), (v3.VoucherNumber, v3.Classification, october.DateTo));
+        // The current month: Due is the WHOLE month, the coming 20th included, and the window ends with the month.
+        var october = (await Units(service, new DateOnly(2026, 10, 1), new DateOnly(2026, 10, 31), null)).Value!;
+        var inOctober = Assert.Single(october.Units!).Instalments;
+        Assert.Equal([("V4", "Due"), ("V3", "Due")], inOctober.Select(i => (i.VoucherNumber, i.Classification)));
+        Assert.Equal(new DateOnly(2026, 10, 31), october.DateTo);
+        // Next month is outside the rule: nothing to list, and the service refuses the window instead of reading it.
+        var november = await Units(service, new DateOnly(2026, 11, 1), new DateOnly(2026, 11, 30), null);
+        Assert.Equal(CollectionsOutcome.InvalidRequest, november.Outcome);
     }
 
     [Fact]

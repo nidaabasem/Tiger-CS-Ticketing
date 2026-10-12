@@ -74,10 +74,9 @@ public sealed partial class RcvRealSqlTests
         return connection;
     }
 
-    [Fact]
+    [SqlFact]
     public async Task M02_Refuses_UntilEveryConditionHolds_AndNothingIsDeletedWhenItRefuses()
     {
-        if (string.IsNullOrWhiteSpace(ConnectionString)) return;
         await SeedMigration();
         try
         {
@@ -121,10 +120,9 @@ public sealed partial class RcvRealSqlTests
         await RunMigration("M01__backup_legacy_snapshot.sql");
     }
 
-    [Fact]
+    [SqlFact]
     public async Task M02_DryRunDeletesNothingAndReleasesTheLocks_TheRealRunHoldsThemThroughTheDelete_AndRollbackRestores()
     {
-        if (string.IsNullOrWhiteSpace(ConnectionString)) return;
         await SeedMigration();
         try
         {

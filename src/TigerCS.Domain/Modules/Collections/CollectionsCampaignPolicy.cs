@@ -96,11 +96,13 @@ public static class CollectionsCampaignPolicy
         return new(amount, earliest, amount > Threshold(stage) ? "Qualifies" : "BelowThreshold");
     }
 
-    /// <summary>Default "To" of the due-date window: month end for the whole-month stages, otherwise the preview date.</summary>
+    /// <summary>
+    /// Default "To" of the due-date window: the last day of the preview month, for every stage. The window only feeds the Due / Overdue / Total figures (the stage
+    /// eligibility is <see cref="StageRange"/>, unchanged), and Due is the whole current month, including the days still to come. The caller clamps it to the end of
+    /// the current month (<see cref="CollectionsDueMonth.ClampTo"/>).
+    /// </summary>
     public static DateOnly DefaultDateTo(CollectionsCampaignStage stage, DateOnly businessDate) =>
-        stage is CollectionsCampaignStage.CurrentMonthReminder or CollectionsCampaignStage.FollowUpReminder
-            ? new DateOnly(businessDate.Year, businessDate.Month, DateTime.DaysInMonth(businessDate.Year, businessDate.Month))
-            : businessDate;
+        new(businessDate.Year, businessDate.Month, DateTime.DaysInMonth(businessDate.Year, businessDate.Month));
 
     /// <summary>
     /// Flags (without changing eligibility) where the due-date window excludes instalments the confirmed stage rule would

@@ -156,6 +156,23 @@ public sealed class CustomerPaymentPanel
         _ => "neutral"
     };
 
+    /// <summary>The Payment tab's schedule status as text: Overdue, Due (this month) or Not yet due.</summary>
+    public static string ScheduleStatusText(string status) => status switch { "NotYetDue" => "Not yet due", _ => status };
+
+    public static string ScheduleStatusCss(string status) => status switch { "Overdue" => "critical", "Due" => "pending", _ => "neutral" };
+
+    private static readonly TimeZoneInfo DubaiZone = FindDubai();
+
+    private static TimeZoneInfo FindDubai()
+    {
+        try { return TimeZoneInfo.FindSystemTimeZoneById("Asia/Dubai"); }
+        catch (Exception ex) when (ex is TimeZoneNotFoundException or InvalidTimeZoneException) { return TimeZoneInfo.CreateCustomTimeZone("Dubai", TimeSpan.FromHours(4), "Dubai", "Dubai"); }
+    }
+
+    /// <summary>A UTC instant as Dubai time ("14 Oct 2026 12:00"), the zone every Collections date rule runs in.</summary>
+    public static string DubaiTime(DateTime utc) =>
+        TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(utc, DateTimeKind.Utc), DubaiZone).ToString("d MMM yyyy HH:mm", CultureInfo.InvariantCulture);
+
     /// <summary>Plain words for the machine reasons the linking reports.</summary>
     public static string ReasonText(string reason) => reason switch
     {
