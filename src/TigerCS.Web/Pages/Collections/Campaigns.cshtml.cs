@@ -181,9 +181,16 @@ public sealed class CampaignsModel(CollectionsApiClient api, Microsoft.Extension
     public static IEnumerable<string> ReviewNotes(CollectionsCampaignContactDto row)
     {
         if (row.Reason.Contains("CrmCustomerAmbiguous", StringComparison.Ordinal)) yield return "Several CRM customers: needs review";
+        if (row.Reason.Contains("CrmCompanyAmbiguous", StringComparison.Ordinal)) yield return "CRM sale cannot be tied to one company: needs review";
         if (row.Reason.Contains("ContactSourceConflict", StringComparison.Ordinal)) yield return "CRM and PACT contacts differ: needs review";
-        if (row.Reason.Contains("NoValidContact", StringComparison.Ordinal)) yield return "No mobile or email: cannot be sent";
+        if (row.Reason.Contains("CrmUnavailable", StringComparison.Ordinal)) yield return "CRM unavailable: contact unconfirmed, needs review";
+        // When CRM could not be used the reason above already says the contact is unconfirmed; it must not also claim that CRM holds nothing.
+        if (row.Reason.Contains("NoValidContact", StringComparison.Ordinal) && !row.Reason.Contains("CrmUnavailable", StringComparison.Ordinal)) yield return "No mobile or email in CRM or PACT: cannot be sent";
     }
+
+    /// <summary>The note under an empty mobile: when CRM could not be used it says so instead of claiming the customer has no mobile.</summary>
+    public static string NoMobileNote(CollectionsCampaignContactDto row) =>
+        row.Reason.Contains("CrmUnavailable", StringComparison.Ordinal) ? "Mobile unconfirmed: CRM unavailable" : "No mobile: voice / SMS not possible";
 
     public static string MoneyOrDash(decimal amount) => amount > 0 ? amount.ToString("N2", CultureInfo.InvariantCulture) : "—";
 }

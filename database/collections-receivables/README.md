@@ -5,8 +5,8 @@ Full design, semantics, schedule, deployment order and verification: [`docs/Coll
 
 ## Execution order (before the application is deployed)
 
-`V001` -> `V003` -> `V010` -> `V011` -> **`R001` -> `R002` -> `R003` -> `R004`** -> `migration/M01` (backup) ... deploy the application ... verify ... `migration/M02` (cleanup).
-(V001, V003, V010, V011 are usually already deployed; re-running them is harmless. V010 no longer needs the old snapshot objects.)
+`V001` -> `V003` -> `V010` -> `V011` -> **`R001`** -> **`V012`** -> **`R002` -> `R003` -> `R004`** -> `migration/M01` (backup) ... deploy the application ... verify ... `migration/M02` (cleanup).
+(V001, V003, V010, V011 are usually already deployed; re-running them is harmless. V010 no longer needs the old snapshot objects. **V012 is new and must be deployed BEFORE R004** - R004 reads `fn_Collections_TowerNames` and the new CRM columns - and AFTER R001 - V012 reads the snapshot tables.)
 
 | Script | Purpose |
 | --- | --- |
@@ -14,6 +14,7 @@ Full design, semantics, schedule, deployment order and verification: [`docs/Coll
 | `V003__fn_CollectionsTowerNumber.sql` | Tower number from a unit code. |
 | `V010__create_crm_unit_owner_tables.sql` | CRM unit owners (Sold / Contract sales per tower + unit), `fn_CollectionsUnitKey`, `fn_Collections_CrmUnitLinks` and its load procedures. |
 | `V011__create_crm_project_map.sql` | CRM project -> PACT tower mapping (`dbo.CollectionsCrmProjectMap`, empty; **no mapping is invented**). |
+| `V012__crm_owner_company_resolution_and_tower_names.sql` | CRM owners get their company from the exact unit (never the tower number alone), keep the CRM project name, `fn_Collections_TowerNames` (the one source of tower names), `usp_Collections_ResolveCrmOwnerCompanies`; backfills the current CRM run. Idempotent. |
 | `R001__create_tables.sql` | **New snapshot:** `CollectionsRcvRun`, `CollectionsRcvCompany`, `CollectionsRcvLine`. |
 | `R002__usp_CollectionsRcv_Refresh.sql` | `usp_CollectionsRcv_Refresh @CompanyId` (PACT -> temp table -> validated atomic publish, per-company lock), `usp_CollectionsRcv_ReapDeadRuns`, `usp_CollectionsRcv_NoteClientAbort`. |
 | `R003__usp_CollectionsRcv_GetStatus.sql` | Per-company state for the pages (closes orphaned attempts first; `IsLoading` is true only while that company's refresh really runs). |
@@ -28,6 +29,8 @@ Full design, semantics, schedule, deployment order and verification: [`docs/Coll
 | `tools/verify_samples.sql` | **Read-only**: independent recount per company, last run counts, sample apartments with the exact values the page must show, the recurring jobs (cron, time zone, next run in Dubai time). |
 | `tools/verify_unit_payment_summary.sql` | **Read-only**: for a sample of units (or `@UnitKey`), the Payment tab's read (`usp_CollectionsRcv_GetUnit @Only = 3`) returns every unpaid instalment incl. future months; Remaining Balance = Overdue + Due This Month + Not yet due; Due / Overdue equal the Receivables row of the unit. |
 | `tools/verify_details_total.sql` | **Read-only**: through the real read procedure, every checked apartment's Total = Due + Overdue = the sum of its details, order, no payment due from the next month on, Due / Overdue against the current Dubai month, no other company. |
+| `tools/diagnose_crm_unit.sql` | **Read-only**: set `@UnitKey` (e.g. `TP115-1921`); follows the unit from the CRM feed to the pages and prints a VERDICT naming the cause (feed not loaded / no owner row / company ambiguous / no company / mobile missing or invalid / linked). |
+| `tools/repair_tower_names.sql` | **Dry run by default** (`@Apply = 0`); `@Apply = 1` inserts the towers PACT holds that `CollectionsTowers` lacks and renames placeholder names, only from the single CRM name; never overwrites a real name; re-runnable. |
 | `tools/crm_project_map_discovery.sql` | **Read-only** helper for the CRM project -> tower map. |
 | `legacy/` | The previous pipeline's scripts, kept for the rollback and for reference (not deployed any more). |
 | `tests/local-sqlserver/` | Local harness: fake PACT with the verified layouts + a loopback linked server, for `RcvRealSqlTests`. Development servers only. |

@@ -10,7 +10,9 @@ public enum CrmLinkStatus
     /// <summary>Exactly one distinct CRM customer holds an eligible sale of the unit.</summary>
     Single = 2,
     /// <summary>More than one distinct CRM customer holds an eligible sale: nobody is chosen, the match needs review.</summary>
-    Ambiguous = 3
+    Ambiguous = 3,
+    /// <summary>The CRM sale exists but cannot be tied to ONE company: the same unit key is held by PACT accounts of both companies (or the tower is in both). Nobody is chosen; the unit is flagged.</summary>
+    CompanyAmbiguous = 4
 }
 
 /// <summary>A contact as one source holds it. Phone / Email are already normalised (empty = missing or invalid); Name is trimmed text (empty = missing).</summary>
@@ -25,6 +27,7 @@ public sealed record LinkedContact(
     CrmLinkStatus CrmStatus, bool SourceConflict)
 {
     public bool CrmCustomerAmbiguous => CrmStatus == CrmLinkStatus.Ambiguous;
+    public bool CrmCompanyAmbiguous => CrmStatus == CrmLinkStatus.CompanyAmbiguous;
     public bool HasContact => Phone.Length > 0 || Email.Length > 0;
 }
 
@@ -61,6 +64,7 @@ public static class CollectionsContactLinker
     {
         var flags = CollectionsCampaignFlags.None;
         if (linked.CrmCustomerAmbiguous) flags |= CollectionsCampaignFlags.CrmCustomerAmbiguous;
+        if (linked.CrmCompanyAmbiguous) flags |= CollectionsCampaignFlags.CrmCompanyAmbiguous;
         if (linked.SourceConflict) flags |= CollectionsCampaignFlags.ContactSourceConflict;
         if (contactRequired && !linked.HasContact) flags |= CollectionsCampaignFlags.NoValidContact;
         return flags;

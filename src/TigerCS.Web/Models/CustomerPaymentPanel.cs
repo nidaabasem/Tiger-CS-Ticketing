@@ -135,7 +135,7 @@ public sealed class CustomerPaymentPanel
     public LinkedUnitCandidateDto? SelectedUnit => UnitLink?.Candidates.FirstOrDefault(c => c.SelectionId == UnitLink.SelectedId);
 
     public string UnitLabel(LinkedUnitCandidateDto c) =>
-        $"{(c.TowerName ?? c.ProjectName ?? (c.TowerNumber is null ? "—" : $"Tower {c.TowerNumber}"))} · {c.UnitNumber ?? "—"}{(c.CompanyId is { } company ? $" · company {company}" : "")}{(c.ContractNumber is { } contract ? $" · contract {contract}" : "")}";
+        $"{(TigerCS.Domain.Modules.Collections.CollectionsTowerName.IsUsable(c.TowerName, c.TowerNumber) ? c.TowerName!.Trim() : c.ProjectName ?? (c.TowerNumber is null ? "—" : $"Tower {c.TowerNumber}"))} · {c.UnitNumber ?? "—"}{(c.CompanyId is { } company ? $" · company {company}" : "")}{(c.ContractNumber is { } contract ? $" · contract {contract}" : "")}";
 
     public static string UnitStatusText(string financialStatus) => financialStatus switch
     {

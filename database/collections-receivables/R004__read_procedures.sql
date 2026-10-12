@@ -20,8 +20,10 @@
     * An apartment is (CompanyId, TenantId, UnitId, UnitCode), compared binary-exactly: other companies, customers and apartments are never merged.
     * The apartment's CONTACT (name / mobile / e-mail as PACT holds them) is that of its earliest matching payment (then smallest voucher, then id) - the same representative row Campaigns use,
       so the two pages never show different PACT contacts for one apartment.
-    * ORDER: apartments by their latest matching due date DESC, then company, customer, unit code, unit id (a total order: pages never overlap or skip);
-      payments by due date DESC, then voucher, then id.
+    * ORDER: the NEWEST TOWER FIRST - the tower NUMBER as an integer, descending (TP140, TP132, TP131 ... TP119; never the text, never the name; a non-numeric tower number after all numeric ones),
+      then the units of a tower by their unit number ascending (numeric unit numbers before lettered ones, then the unit code text), then company, customer, unit id - a TOTAL order computed over the whole
+      filtered set BEFORE the page is cut, so pages never overlap or skip (mirrored by TigerCS.Domain CollectionsTowerOrder); payments by due date DESC, then voucher, then id.
+    * TOWER NAMES come from dbo.fn_Collections_TowerNames (V012): CollectionsTowers when its name is a real name, else the single name CRM holds for that company's tower. NULL = no name known (the page shows the number).
     * Search: customer name, mobile, e-mail, customer id, tower number / name, apartment, voucher, project - PACT contact data AND the linked CRM contact.
   Result sets of usp_CollectionsRcv_GetUnits (a contract with RcvReceivablesSource):
     1 scope     ScopeValid, TowerId, CompanyId, TowerNumber, TowerName   (ScopeValid = 0: unknown tower or tower/company clash; nothing else is returned)
@@ -52,10 +54,13 @@ BEGIN
     IF @FromDate IS NOT NULL AND @ToDate IS NOT NULL AND @FromDate > @ToDate THROW 50032, N'@FromDate must not be after @ToDate.', 1;
     IF @PageNumber < 1 OR @PageSize < 1 OR @PageSize > 100 THROW 50034, N'Invalid page.', 1;
 
+    CREATE TABLE #tn (CompanyId int NOT NULL, TowerNumber nvarchar(20) NOT NULL, TowerName nvarchar(400) NOT NULL, PRIMARY KEY (CompanyId, TowerNumber));
+    INSERT #tn (CompanyId, TowerNumber, TowerName) SELECT CompanyId, TowerNumber, TowerName FROM dbo.fn_Collections_TowerNames();
     DECLARE @TowerFound bit = 0, @TowerCompany int, @TowerNumber nvarchar(20), @TowerName nvarchar(400);
     IF @TowerId IS NOT NULL
         SELECT @TowerFound = 1, @TowerCompany = t.CompanyId, @TowerNumber = LTRIM(RTRIM(CONVERT(nvarchar(20), t.TowerNumber))), @TowerName = CONVERT(nvarchar(400), t.TowerName)
           FROM dbo.CollectionsTowers t WHERE t.TowerId = @TowerId;
+    SELECT @TowerName = n.TowerName FROM #tn n WHERE n.CompanyId = @TowerCompany AND n.TowerNumber = @TowerNumber;
     DECLARE @Scope int = COALESCE(@TowerCompany, @CompanyId);
     DECLARE @ScopeValid bit = CASE WHEN @TowerId IS NULL THEN 1 WHEN @TowerFound = 1 AND (@CompanyId IS NULL OR @CompanyId = @TowerCompany) THEN 1 ELSE 0 END;
     IF @Only IS NULL SELECT @ScopeValid AS ScopeValid, @TowerId AS TowerId, @TowerCompany AS CompanyId, @TowerNumber AS TowerNumber, @TowerName AS TowerName;
@@ -80,23 +85,23 @@ BEGIN
     -- Towers whose NAME matches the search (a handful of rows), so the payment scan below does a keyed lookup instead of a correlated subquery per payment.
     DECLARE @TowerHits TABLE (CompanyId int NOT NULL, TowerNumber nvarchar(20) NOT NULL, PRIMARY KEY (CompanyId, TowerNumber));
     IF @Like IS NOT NULL
-        INSERT @TowerHits SELECT DISTINCT tq.CompanyId, LTRIM(RTRIM(CONVERT(nvarchar(20), tq.TowerNumber))) FROM dbo.CollectionsTowers tq
-         WHERE CONVERT(nvarchar(400), tq.TowerName) LIKE @Like ESCAPE N'\';
+        INSERT @TowerHits SELECT tq.CompanyId, tq.TowerNumber FROM #tn tq WHERE tq.TowerName LIKE @Like ESCAPE N'\';
 
     -- 1. The payments in play (everything except search and Minimum Total), narrow.
     CREATE TABLE #l
     (
         LineId bigint NOT NULL PRIMARY KEY, CompanyId int NOT NULL, RunId uniqueidentifier NOT NULL, TenantId nvarchar(100) COLLATE Latin1_General_BIN2 NOT NULL, UnitId bigint NOT NULL,
-        UnitCode nvarchar(200) COLLATE Latin1_General_BIN2 NOT NULL, DueDate date NOT NULL, Amount decimal(19,4) NOT NULL, Hit bit NOT NULL
+        UnitCode nvarchar(200) COLLATE Latin1_General_BIN2 NOT NULL, DueDate date NOT NULL, Amount decimal(19,4) NOT NULL, Hit bit NOT NULL, TowerNumber nvarchar(20) NULL
     );
-    INSERT #l (LineId, CompanyId, RunId, TenantId, UnitId, UnitCode, DueDate, Amount, Hit)
+    INSERT #l (LineId, CompanyId, RunId, TenantId, UnitId, UnitCode, DueDate, Amount, Hit, TowerNumber)
     SELECT s.LineId, s.CompanyId, s.RunId, s.TenantId, s.UnitId, s.UnitCode, s.DueDate, s.Amount,
            CASE WHEN @Like IS NULL THEN 1
                 WHEN s.FullName LIKE @Like ESCAPE N'\' OR s.TenantId COLLATE DATABASE_DEFAULT LIKE @Like ESCAPE N'\' OR s.Email LIKE @Like ESCAPE N'\' OR s.Mobile LIKE @Like ESCAPE N'\'
                   OR s.UnitCode COLLATE DATABASE_DEFAULT LIKE @Like ESCAPE N'\' OR s.VoucherNumber LIKE @Like ESCAPE N'\' OR s.TowerNumber LIKE @Like ESCAPE N'\' OR s.ProjectCode LIKE @Like ESCAPE N'\'
                   OR EXISTS (SELECT 1 FROM @TowerHits h WHERE h.CompanyId = s.CompanyId AND h.TowerNumber = s.TowerNumber)
                   OR (@PhoneDigits IS NOT NULL AND REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(s.Mobile, N' ', N''), N'+', N''), N'-', N''), N'(', N''), N')', N'') LIKE N'%' + @PhoneDigits + N'%')
-                THEN 1 ELSE 0 END
+                THEN 1 ELSE 0 END,
+           s.TowerNumber
       FROM dbo.CollectionsRcvCompany c
       JOIN dbo.CollectionsRcvLine s ON s.CompanyId = c.CompanyId AND s.RunId = c.CurrentRunId
      WHERE c.CurrentRunId IS NOT NULL AND (@Scope IS NULL OR c.CompanyId = @Scope)
@@ -110,18 +115,19 @@ BEGIN
     CREATE TABLE #u
     (
         CompanyId int NOT NULL, RunId uniqueidentifier NOT NULL, TenantId nvarchar(100) COLLATE Latin1_General_BIN2 NOT NULL, UnitId bigint NOT NULL, UnitCode nvarchar(200) COLLATE Latin1_General_BIN2 NOT NULL,
-        Due decimal(19,4) NOT NULL, Overdue decimal(19,4) NOT NULL, Total decimal(19,4) NOT NULL, Cnt int NOT NULL, DueCnt int NOT NULL, OverCnt int NOT NULL, Latest date NOT NULL, Hit bit NOT NULL
+        Due decimal(19,4) NOT NULL, Overdue decimal(19,4) NOT NULL, Total decimal(19,4) NOT NULL, Cnt int NOT NULL, DueCnt int NOT NULL, OverCnt int NOT NULL, Latest date NOT NULL, Hit bit NOT NULL,
+        TowerNumber nvarchar(20) NULL
     );
     INSERT #u
     SELECT CompanyId, RunId, TenantId, UnitId, UnitCode,
            SUM(CASE WHEN DueDate >= @MonthStart THEN Amount ELSE 0 END), SUM(CASE WHEN DueDate < @MonthStart THEN Amount ELSE 0 END), SUM(Amount), COUNT(*),
-           SUM(CASE WHEN DueDate >= @MonthStart THEN 1 ELSE 0 END), SUM(CASE WHEN DueDate < @MonthStart THEN 1 ELSE 0 END), MAX(DueDate), MAX(CAST(Hit AS int))
+           SUM(CASE WHEN DueDate >= @MonthStart THEN 1 ELSE 0 END), SUM(CASE WHEN DueDate < @MonthStart THEN 1 ELSE 0 END), MAX(DueDate), MAX(CAST(Hit AS int)), MAX(TowerNumber)
       FROM #l GROUP BY CompanyId, RunId, TenantId, UnitId, UnitCode;
 
     -- Search also matches the linked CRM contact (CRM first, PACT completing): keep an apartment whose payments matched OR whose CRM customer does.
     IF @Like IS NOT NULL
     BEGIN
-        SELECT l.CompanyId, l.UnitKey, l.FullName, l.PhoneNorm, l.EmailNorm INTO #crm FROM dbo.fn_Collections_CrmUnitLinks() l WHERE l.Customers = 1;
+        SELECT l.CompanyId, l.UnitKey, l.FullName, l.PhoneNorm, l.EmailNorm INTO #crm FROM dbo.fn_Collections_CrmUnitLinks() l WHERE l.Customers = 1 AND l.CompanyAmbiguous = 0;
         DELETE u FROM #u u
          WHERE u.Hit = 0 AND NOT EXISTS (SELECT 1 FROM #crm c
                                           WHERE c.CompanyId = u.CompanyId AND c.UnitKey = dbo.fn_CollectionsUnitKey(u.UnitCode) COLLATE Latin1_General_BIN2
@@ -135,26 +141,35 @@ BEGIN
     SELECT COUNT(*) AS UnitCount, ISNULL(SUM(Cnt), 0) AS LineCount, ISNULL(SUM(DueCnt), 0) AS DueLineCount, ISNULL(SUM(OverCnt), 0) AS OverdueLineCount,
            ISNULL(SUM(Due), 0) AS DueTotal, ISNULL(SUM(Overdue), 0) AS OverdueTotal, ISNULL(SUM(Total), 0) AS Total FROM #u;
 
-    -- 3. The requested page (a total order).
+    -- 3. The requested page. The order is decided over ALL the filtered apartments BEFORE the page is cut: newest tower first (tower number as an integer, descending; a non-numeric tower
+    --    number after the numeric ones), then the apartment inside its tower (unit number ascending, numeric before lettered, then the unit code), then company / customer / unit id: a total order.
     SELECT * INTO #p FROM
     (
-        SELECT u.*, ROW_NUMBER() OVER (ORDER BY u.Latest DESC, u.CompanyId, u.TenantId, u.UnitCode, u.UnitId) AS Rn FROM #u u
+        SELECT u.*, ROW_NUMBER() OVER (ORDER BY
+                   CASE WHEN k.TowerSort IS NULL THEN 1 ELSE 0 END, k.TowerSort DESC,
+                   CASE WHEN k.TowerSort IS NULL THEN u.TowerNumber COLLATE Latin1_General_BIN2 END,
+                   CASE WHEN k2.UnitSort IS NULL THEN 1 ELSE 0 END, k2.UnitSort,
+                   k.UnitRest, u.UnitCode, u.CompanyId, u.TenantId, u.UnitId) AS Rn
+          FROM #u u
+          CROSS APPLY (SELECT CASE WHEN LEN(LTRIM(RTRIM(u.TowerNumber))) BETWEEN 1 AND 9 AND LTRIM(RTRIM(u.TowerNumber)) NOT LIKE N'%[^0-9]%' THEN CONVERT(int, LTRIM(RTRIM(u.TowerNumber))) END AS TowerSort,
+                              LTRIM(RTRIM(CASE WHEN CHARINDEX(N'-', u.UnitCode) > 0 THEN SUBSTRING(u.UnitCode, CHARINDEX(N'-', u.UnitCode) + 1, 200) ELSE u.UnitCode END)) AS UnitRest) k
+          CROSS APPLY (SELECT CASE WHEN LEN(k.UnitRest) BETWEEN 1 AND 15 AND k.UnitRest NOT LIKE N'%[^0-9]%' THEN CONVERT(bigint, k.UnitRest) END AS UnitSort) k2
     ) x WHERE x.Rn > (@PageNumber - 1) * @PageSize AND x.Rn <= @PageNumber * @PageSize;
 
     IF @Only IS NULL OR @Only = 4
     SELECT p.CompanyId, p.TenantId COLLATE DATABASE_DEFAULT AS TenantId, p.UnitId, p.UnitCode COLLATE DATABASE_DEFAULT AS UnitCode, r.FullName, r.TowerNumber,
-           CONVERT(nvarchar(400), tw.TowerName) AS TowerName, r.ProjectCode, p.Due, p.Overdue, p.Total, p.Cnt AS InstalmentCount, p.Latest AS LatestDueDate,
-           -- The CRM side of the apartment (V010; NULL = CRM holds no eligible sale or is not loaded): 1 customer -> that contact, > 1 -> ambiguous, nobody chosen.
-           l.Customers AS CrmCustomers, CASE WHEN l.Customers = 1 THEN l.CustomerId END AS CrmCustomerId, CASE WHEN l.Customers = 1 THEN l.FullName END AS CrmName,
-           CASE WHEN l.Customers = 1 THEN l.PhoneNorm END AS CrmPhone, CASE WHEN l.Customers = 1 THEN l.EmailNorm END AS CrmEmail
+           tw.TowerName AS TowerName, r.ProjectCode, p.Due, p.Overdue, p.Total, p.Cnt AS InstalmentCount, p.Latest AS LatestDueDate,
+           -- The CRM side of the apartment (V010 / V012; NULL = CRM holds no eligible sale or is not loaded): 1 customer -> that contact, > 1 -> ambiguous, nobody chosen; the sale of a unit that
+           -- BOTH companies hold is tied to neither (CrmCompanyAmbiguous = 1, no CRM contact is used).
+           l.Customers AS CrmCustomers, CASE WHEN l.Customers = 1 AND l.CompanyAmbiguous = 0 THEN l.CustomerId END AS CrmCustomerId, CASE WHEN l.Customers = 1 AND l.CompanyAmbiguous = 0 THEN l.FullName END AS CrmName,
+           CASE WHEN l.Customers = 1 AND l.CompanyAmbiguous = 0 THEN l.PhoneNorm END AS CrmPhone, CASE WHEN l.Customers = 1 AND l.CompanyAmbiguous = 0 THEN l.EmailNorm END AS CrmEmail,
+           CAST(CASE WHEN l.Customers = 1 AND l.CompanyAmbiguous = 1 THEN 1 ELSE 0 END AS int) AS CrmCompanyAmbiguous
       FROM #p p
       CROSS APPLY (SELECT TOP (1) s.* FROM dbo.CollectionsRcvLine s
                     WHERE s.CompanyId = p.CompanyId AND s.RunId = p.RunId AND s.TenantId = p.TenantId AND s.UnitId = p.UnitId AND s.UnitCode = p.UnitCode
                     ORDER BY s.DueDate, s.VoucherNumber, s.LineId) r
       LEFT JOIN dbo.fn_Collections_CrmUnitLinks() l ON l.CompanyId = p.CompanyId AND l.UnitKey = dbo.fn_CollectionsUnitKey(p.UnitCode) COLLATE Latin1_General_BIN2
-      OUTER APPLY (SELECT TOP (1) t.TowerName FROM dbo.CollectionsTowers t
-                    WHERE t.CompanyId = r.CompanyId AND LTRIM(RTRIM(CONVERT(nvarchar(20), t.TowerNumber))) = r.TowerNumber
-                    ORDER BY CASE WHEN t.IsActive = 1 THEN 0 ELSE 1 END, t.TowerId) tw
+      LEFT JOIN #tn tw ON tw.CompanyId = r.CompanyId AND tw.TowerNumber = r.TowerNumber
      ORDER BY p.Rn;
 
     -- 4. Exactly the matching payments of those apartments (the same #l set, so the sum of a unit's rows is its Total).
@@ -191,10 +206,13 @@ BEGIN
     SET NOCOUNT ON;
     IF @CompanyId IS NOT NULL AND @CompanyId NOT IN (4, 32) THROW 50031, N'Company must be 4, 32 or NULL.', 1;
     IF @FromDate IS NOT NULL AND @ToDate IS NOT NULL AND @FromDate > @ToDate THROW 50032, N'@FromDate must not be after @ToDate.', 1;
+    CREATE TABLE #tn (CompanyId int NOT NULL, TowerNumber nvarchar(20) NOT NULL, TowerName nvarchar(400) NOT NULL, PRIMARY KEY (CompanyId, TowerNumber));
+    INSERT #tn (CompanyId, TowerNumber, TowerName) SELECT CompanyId, TowerNumber, TowerName FROM dbo.fn_Collections_TowerNames();
     DECLARE @TowerFound bit = 0, @TowerCompany int, @TowerNumber nvarchar(20), @TowerName nvarchar(400);
     IF @TowerId IS NOT NULL
         SELECT @TowerFound = 1, @TowerCompany = t.CompanyId, @TowerNumber = LTRIM(RTRIM(CONVERT(nvarchar(20), t.TowerNumber))), @TowerName = CONVERT(nvarchar(400), t.TowerName)
           FROM dbo.CollectionsTowers t WHERE t.TowerId = @TowerId;
+    SELECT @TowerName = n.TowerName FROM #tn n WHERE n.CompanyId = @TowerCompany AND n.TowerNumber = @TowerNumber;
     DECLARE @Scope int = COALESCE(@TowerCompany, @CompanyId);
     DECLARE @ScopeValid bit = CASE WHEN @TowerId IS NULL THEN 1 WHEN @TowerFound = 1 AND (@CompanyId IS NULL OR @CompanyId = @TowerCompany) THEN 1 ELSE 0 END;
     SELECT @ScopeValid AS ScopeValid, @TowerId AS TowerId, @TowerCompany AS CompanyId, @TowerNumber AS TowerNumber, @TowerName AS TowerName;
@@ -206,12 +224,10 @@ BEGIN
     EXEC dbo.usp_CollectionsRcv_GetStatus @CompanyId = @Scope;
 
     SELECT s.CompanyId, s.TenantId COLLATE DATABASE_DEFAULT AS TenantId, s.FullName, s.Mobile, s.Email, s.UnitId, s.UnitCode COLLATE DATABASE_DEFAULT AS UnitCode, s.ProjectCode,
-           s.VoucherNumber, s.ChequeNumber, s.DueDate, s.Amount, s.SourceStatus, s.TowerNumber, CONVERT(nvarchar(400), tw.TowerName) AS TowerName
+           s.VoucherNumber, s.ChequeNumber, s.DueDate, s.Amount, s.SourceStatus, s.TowerNumber, tw.TowerName AS TowerName
       FROM dbo.CollectionsRcvCompany c
       JOIN dbo.CollectionsRcvLine s ON s.CompanyId = c.CompanyId AND s.RunId = c.CurrentRunId
-      OUTER APPLY (SELECT TOP (1) t.TowerName FROM dbo.CollectionsTowers t
-                    WHERE t.CompanyId = s.CompanyId AND LTRIM(RTRIM(CONVERT(nvarchar(20), t.TowerNumber))) = s.TowerNumber
-                    ORDER BY CASE WHEN t.IsActive = 1 THEN 0 ELSE 1 END, t.TowerId) tw
+      LEFT JOIN #tn tw ON tw.CompanyId = s.CompanyId AND tw.TowerNumber = s.TowerNumber
      WHERE c.CurrentRunId IS NOT NULL AND (@Scope IS NULL OR c.CompanyId = @Scope)
        AND (@TowerId IS NULL OR s.TowerNumber = @TowerNumber)
        AND (@ToDate IS NULL OR s.DueDate <= @ToDate) AND (@FromDate IS NULL OR s.DueDate >= @FromDate)
@@ -241,6 +257,8 @@ BEGIN
     IF @Only IS NOT NULL AND @Only <> 3 THROW 50036, N'@Only must be NULL or 3.', 1;
     DECLARE @Bare nvarchar(220) = SUBSTRING(@UnitKey, 3, 220);
     IF @Only IS NULL EXEC dbo.usp_CollectionsRcv_GetStatus @CompanyId = @CompanyId;
+    CREATE TABLE #tn (CompanyId int NOT NULL, TowerNumber nvarchar(20) NOT NULL, TowerName nvarchar(400) NOT NULL, PRIMARY KEY (CompanyId, TowerNumber));
+    INSERT #tn (CompanyId, TowerNumber, TowerName) SELECT CompanyId, TowerNumber, TowerName FROM dbo.fn_Collections_TowerNames();
 
     SELECT s.CompanyId, s.RunId, s.TenantId, s.UnitId, s.UnitCode, COUNT(*) AS Cnt, MAX(s.DueDate) AS Latest
       INTO #k
@@ -254,13 +272,12 @@ BEGIN
 
     IF @Only IS NULL
     SELECT k.CompanyId, k.TenantId COLLATE DATABASE_DEFAULT AS TenantId, k.UnitCode COLLATE DATABASE_DEFAULT AS UnitCode, k.UnitId, r.FullName, r.Mobile, r.Email, r.TowerNumber,
-           CONVERT(nvarchar(400), tw.TowerName) AS TowerName, k.Cnt AS AllRows, k.Cnt AS OpenRows
+           tw.TowerName AS TowerName, k.Cnt AS AllRows, k.Cnt AS OpenRows
       FROM #k k
       CROSS APPLY (SELECT TOP (1) s.* FROM dbo.CollectionsRcvLine s
                     WHERE s.CompanyId = k.CompanyId AND s.RunId = k.RunId AND s.TenantId = k.TenantId AND s.UnitId = k.UnitId AND s.UnitCode = k.UnitCode
                     ORDER BY s.DueDate, s.VoucherNumber, s.LineId) r
-      OUTER APPLY (SELECT TOP (1) t.TowerName FROM dbo.CollectionsTowers t WHERE t.CompanyId = r.CompanyId AND LTRIM(RTRIM(CONVERT(nvarchar(20), t.TowerNumber))) = r.TowerNumber
-                    ORDER BY CASE WHEN t.IsActive = 1 THEN 0 ELSE 1 END, t.TowerId) tw
+      LEFT JOIN #tn tw ON tw.CompanyId = r.CompanyId AND tw.TowerNumber = r.TowerNumber
      ORDER BY k.CompanyId, k.TenantId, k.UnitCode, k.UnitId;
 
     SELECT s.CompanyId, s.TenantId COLLATE DATABASE_DEFAULT AS TenantId, s.UnitId, s.VoucherNumber, s.ChequeNumber, s.DueDate, s.Amount AS RemainingAmount, s.SourceStatus
@@ -270,7 +287,7 @@ BEGIN
      ORDER BY k.CompanyId, k.TenantId, k.UnitId, s.DueDate DESC, s.VoucherNumber COLLATE Latin1_General_BIN2, s.LineId;
 
     IF @Only IS NULL
-    SELECT l.CompanyId, l.UnitKey, l.Customers, l.CustomerId, l.CrmUnitId, l.LeadId, l.FullName, l.PhoneNorm, l.EmailNorm
+    SELECT l.CompanyId, l.UnitKey, l.Customers, l.CustomerId, l.CrmUnitId, l.LeadId, l.FullName, l.PhoneNorm, l.EmailNorm, l.CompanyAmbiguous
       FROM dbo.fn_Collections_CrmUnitLinks() l
      WHERE l.UnitKey = @UnitKey COLLATE Latin1_General_BIN2 AND (@CompanyId IS NULL OR l.CompanyId = @CompanyId);
 END;
@@ -280,10 +297,17 @@ CREATE OR ALTER PROCEDURE dbo.usp_CollectionsRcv_GetTowers
 AS
 BEGIN
     SET NOCOUNT ON;
-    SELECT t.TowerId, LTRIM(RTRIM(CONVERT(nvarchar(20), t.TowerNumber))) AS TowerNumber, CONVERT(nvarchar(400), t.TowerName) AS TowerName,
+    -- The picker lists the active towers NEWEST FIRST: the tower number as an integer, descending (TP140 ... TP119), a non-numeric number after the numeric ones, then company and id.
+    -- The name is the one every screen shows (V012 fn_Collections_TowerNames); a tower with no known name keeps its stored text and the application shows the number only.
+    SELECT t.TowerId, LTRIM(RTRIM(CONVERT(nvarchar(20), t.TowerNumber))) AS TowerNumber, COALESCE(n.TowerName, CONVERT(nvarchar(400), t.TowerName)) AS TowerName,
            t.CompanyId, CAST(t.IsActive AS bit) AS IsActive
       FROM dbo.CollectionsTowers t
+      CROSS APPLY (SELECT LTRIM(RTRIM(CONVERT(nvarchar(20), t.TowerNumber))) AS Num) k
+      LEFT JOIN dbo.fn_Collections_TowerNames() n ON n.CompanyId = t.CompanyId AND n.TowerNumber = k.Num
      WHERE t.IsActive = 1 AND t.CompanyId IN (4, 32)
-     ORDER BY TRY_CONVERT(int, t.TowerNumber), t.TowerNumber, t.TowerId;
+     ORDER BY CASE WHEN LEN(k.Num) BETWEEN 1 AND 9 AND k.Num NOT LIKE N'%[^0-9]%' THEN 0 ELSE 1 END,
+              CASE WHEN LEN(k.Num) BETWEEN 1 AND 9 AND k.Num NOT LIKE N'%[^0-9]%' THEN CONVERT(int, k.Num) END DESC,
+              CASE WHEN LEN(k.Num) BETWEEN 1 AND 9 AND k.Num NOT LIKE N'%[^0-9]%' THEN N'' ELSE k.Num COLLATE Latin1_General_BIN2 END,
+              t.CompanyId, t.TowerId;
 END;
 GO

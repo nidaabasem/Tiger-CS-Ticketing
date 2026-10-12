@@ -12,6 +12,7 @@ else if (Model.Report is { } report)
     if (report.Snapshot is { NothingLoaded: true } nothing) { <div class="panel"><partial name="_LoadProblem" model="nothing" /></div> return; }
     <div class="panel">
         @if (report.Snapshot is { } snapshot) { <partial name="_LoadProblem" model="snapshot" /> }
+        <partial name="_CrmContactNotice" model="report.Crm" />
         @if (report.Snapshot?.OldestSuccessUtc is { } updated) { <p class="receivables-meta" data-updated>Updated @CollectionsDisplay.DubaiTime(updated)</p> }
         @* Exports stay blocked for incomplete or stale data: the buttons only exist when every company is loaded, fresh and covers the dates (the API refuses anyway). *@
         @if (report.CanExportReview && report.Snapshot is not { IsReady: false })
@@ -30,9 +31,9 @@ else if (Model.Report is { } report)
                 {
                     <tr>
                         <td><strong>@row.CustomerName</strong>@foreach (var note in CampaignsModel.ReviewNotes(row)) { <span class="receivables-meta receivables-meta--review" data-unit-note>@note</span> }</td>
-                        <td>@(row.Phone.Length > 0 ? row.Phone : "—")@if (row.Phone.Length == 0) { <span class="receivables-meta receivables-meta--missing" data-unit-note>No mobile: voice / SMS not possible</span> }</td>
+                        <td>@(row.Phone.Length > 0 ? row.Phone : "—")@if (row.Phone.Length == 0) { <span class="receivables-meta receivables-meta--missing" data-unit-note>@CampaignsModel.NoMobileNote(row)</span> }</td>
                         <td>@(row.Email.Length > 0 ? row.Email : "—")@if (row.Email.Length == 0) { <span class="receivables-meta receivables-meta--missing" data-unit-note>No email: email not possible</span> }</td>
-                        <td>@(!string.IsNullOrWhiteSpace(row.TowerName) ? row.TowerName : row.TowerNumber ?? (row.ProjectCode.Length > 0 ? row.ProjectCode : "—"))</td>
+                        <td>@CollectionsDisplay.TowerCell(row.TowerName, row.TowerNumber, row.ProjectCode)</td>
                         <td>@row.UnitCode</td>
                         <td class="num" data-unit-due>@CampaignsModel.MoneyOrDash(row.DueAmount)</td>
                         <td class="num" data-unit-overdue>@CampaignsModel.MoneyOrDash(row.OverdueAmount)</td>

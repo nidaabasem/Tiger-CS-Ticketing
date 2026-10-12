@@ -105,7 +105,7 @@ public sealed class CollectionsCampaignAppServiceTests
         h.Source.Items.AddRange([Row(amount: 100m), Row(day: 12, amount: 200m, unit: 202), Row(amount: 300m, company: 32)]);
         var items = (await h.Service.PreviewAsync(h.Manager, "CurrentMonthReminder")).Value!.Items;
         Assert.Equal(3, items.Count); Assert.Equal(3, items.Select(c => c.RecordId).Distinct().Count());
-        Assert.Equal(new decimal?[] { 200m, 100m, 300m }, items.Select(c => c.Amount));   // newest payment first (the unit due on the 12th), then company / customer / unit
+        Assert.Equal(new decimal?[] { 100m, 300m, 200m }, items.Select(c => c.Amount));   // one tower: its units by unit number (101 in company 4, 101 in company 32, 202), never by payment date
         var again = (await h.Service.PreviewAsync(h.Manager, "CurrentMonthReminder", new(2026, 10, 15))).Value!.Items;
         Assert.Equal(items.Select(c => c.RecordId), again.Select(c => c.RecordId));
         Assert.All(again, c => Assert.Equal("PreviewOnly", c.Status));
@@ -185,7 +185,7 @@ public sealed class CollectionsCampaignAppServiceTests
         using var parser = new TextFieldParser(new StringReader(file.Csv)) { Delimiters = [","], HasFieldsEnclosedInQuotes = true };
         parser.ReadFields(); var fields = parser.ReadFields()!;
         Assert.Equal("'=\"Example,\"\nCustomer", fields[4]); Assert.Equal("'+971500003001", fields[5]);
-        Assert.Equal("500.00", fields[10]); Assert.Equal(22, fields.Length); Assert.Equal(new[] { "false", "false", "false" }, fields[19..]);
+        Assert.Equal("500.00", fields[10]); Assert.Equal(24, fields.Length); Assert.Equal(new[] { "false", "false", "false" }, fields[19..22]);   // the review file adds TowerNumber, TowerName
     }
 
     [Theory]

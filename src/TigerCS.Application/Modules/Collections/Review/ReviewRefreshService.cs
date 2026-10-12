@@ -15,7 +15,7 @@ public sealed class ReviewRefreshService(
     CollectionsOptions options, CollectionsCampaignOptions campaignOptions, PactReceivablesOptions sourceOptions,
     CollectionsReviewOptions reviewOptions, CollectionsAuthorizationService authorization, CollectionsClock clock,
     IPactReceivablesSource source, IReviewStore store, IReviewJobScheduler scheduler, ReviewQueryService query,
-    ILogger<ReviewRefreshService> logger)
+    ILogger<ReviewRefreshService> logger, CollectionsUnitLinkService? links = null)
 {
     public const string SourceLabel = "PACT receivables (companies 4 and 32)";
 
@@ -24,9 +24,13 @@ public sealed class ReviewRefreshService(
         campaignOptions.FinancialSourceValidated
         && string.Equals(campaignOptions.ValidatedProcedureSuffix ?? "", sourceOptions.ProcedureSuffix ?? "", StringComparison.Ordinal);
 
-    public ReviewBuildContext Context(DateOnly asOf, DateTime readAtUtc) => new(asOf, readAtUtc, SourceLabel, sourceOptions.Currency,
+    public ReviewBuildContext Context(DateOnly asOf, DateTime readAtUtc, CrmLinkSet? crm = null) => new(asOf, readAtUtc, SourceLabel, sourceOptions.Currency,
         SourceReconciled, campaignOptions.LegalNoticeExportEnabled, campaignOptions.LegalCaseDispatchApproved,
-        reviewOptions.FloatNoiseTolerance, sourceOptions.SourceStatusMap);
+        reviewOptions.FloatNoiseTolerance, sourceOptions.SourceStatusMap, crm);
+
+    /// <summary>The CRM links of every unit of a source read (ONE bulk read), with the state of the CRM data; empty when no link service is configured.</summary>
+    public Task<CrmLinkSet> ReadCrmAsync(IEnumerable<PactReceivableInstalment> items, CancellationToken ct) =>
+        links is null ? Task.FromResult(CrmLinkSet.None) : links.GetLinksAsync(items.Select(r => (r.CompanyId, r.UnitCode)), ct);
 
     public async Task<CollectionsResult<ReviewRunDto>> StartAsync(CollectionsCaller caller, int? companyId, CancellationToken ct)
     {
@@ -86,7 +90,8 @@ public sealed class ReviewRefreshService(
             if (snapshot.Items.Any(r => r.CompanyId is not (4 or 32)))
                 throw new PactReceivablesSourceException("PACT returned a receivable without a valid company identity.");
 
-            var built = ReviewRecordBuilder.Build(snapshot.Items, Context(run.AsOfDate, snapshot.ReadAtUtc));
+            var crm = await ReadCrmAsync(snapshot.Items, budget.Token);
+            var built = ReviewRecordBuilder.Build(snapshot.Items, Context(run.AsOfDate, snapshot.ReadAtUtc, crm));
             logger.LogInformation("Review refresh {RunId}: {Rows} source rows, {Records} records, {Noise} float-noise amounts normalized, {Settled} settled rows ignored.",
                 runId, snapshot.Items.Count, built.Records.Count, built.FloatNormalizedRows, built.SettledRows);
 

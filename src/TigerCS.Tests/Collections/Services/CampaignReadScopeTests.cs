@@ -62,13 +62,13 @@ public sealed class CampaignReadScopeTests
     }
 
     [Fact]
-    public async Task MinimumTotal_UsesTheShownTotal_AndTheOrderIsNewestPaymentFirst_ForPreviewAndExport()
+    public async Task MinimumTotal_UsesTheShownTotal_AndTheOrderIsTowerThenUnit_ForPreviewAndExport()
     {
         var h = Build();
         var report = (await h.Service.PreviewAsync(h.Manager, "OverdueReminder", minTotal: 200m)).Value!;
         Assert.Equal(["A"], report.Items.Select(i => i.TenantId));                                       // A shows 500 (> 200); C shows 150
         var all = (await h.Service.PreviewAsync(h.Manager, "OverdueReminder", minTotal: null)).Value!;
-        Assert.Equal(["C", "A"], all.Items.Select(i => i.TenantId));                                     // C's newest payment is 11 Mar, A's 10 Mar
+        Assert.Equal(["A", "C"], all.Items.Select(i => i.TenantId));                                     // one tower (TP140): unit 1 before unit 3, whatever the payment dates
         var export = (await h.Service.ExportAsync(h.Manager, "OverdueReminder", "review", minTotal: 200m)).Value!;
         Assert.Equal(1, export.RowCount);
     }

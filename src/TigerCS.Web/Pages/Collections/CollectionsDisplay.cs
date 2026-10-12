@@ -24,8 +24,14 @@ public static class CollectionsDisplay
     /// <summary>"Tiger Group Sharjah" / "Tiger Group Dubai and Tiger Group Sharjah".</summary>
     public static string CompanyList(IEnumerable<SnapshotCompanyStatusDto> companies) => string.Join(" and ", companies.Select(c => c.CompanyName));
 
-    /// <summary>Tower option label: number and name.</summary>
-    public static string TowerLabel(CollectionsTowerDto tower) => $"{tower.TowerNumber} - {tower.TowerName}";
+    /// <summary>Tower option label: number and name; a tower whose name is only a placeholder (blank, or repeating its number) shows just the number - never a made-up name.</summary>
+    public static string TowerLabel(CollectionsTowerDto tower) =>
+        TigerCS.Domain.Modules.Collections.CollectionsTowerName.IsUsable(tower.TowerName, tower.TowerNumber) ? $"{tower.TowerNumber} - {tower.TowerName.Trim()}" : tower.TowerNumber;
+
+    /// <summary>The tower of a table row: its real name, else its number, else the project code or a dash.</summary>
+    public static string TowerCell(string? name, string? number, string? projectCode = null) =>
+        TigerCS.Domain.Modules.Collections.CollectionsTowerName.IsUsable(name, number) ? name!.Trim()
+        : !string.IsNullOrWhiteSpace(number) ? number.Trim() : !string.IsNullOrWhiteSpace(projectCode) ? projectCode.Trim() : "—";
 
     public static string Money(decimal amount) => amount.ToString("N2", CultureInfo.InvariantCulture);
 

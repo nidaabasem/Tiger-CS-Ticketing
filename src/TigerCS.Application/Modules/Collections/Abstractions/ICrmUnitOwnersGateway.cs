@@ -21,19 +21,23 @@ public interface ICrmUnitOwnersGateway
 /// <summary>One stored owner row: the unit key it links to, the CRM identifiers and the contact values (phone / e-mail normalised, empty = missing or invalid).</summary>
 public sealed record CrmOwnerRow(
     string UnitKey, string ProjectCode, string UnitNumber, int LeadId, int LeadStatus, int CustomerId, int UnitId, int ProjectId,
-    string FullName, string Mobile, string Email, string PhoneNorm, string EmailNorm);
+    string FullName, string Mobile, string Email, string PhoneNorm, string EmailNorm, string ProjectName = "");
 
-public sealed record CrmOwnerState(bool Loaded, DateTime? LastSuccessUtc, DateTime? LastAttemptUtc, string? LastAttemptStatus, string? LastError, int RowCount, int UnlinkedRows);
+/// <summary><c>UnlinkedRows</c>: owners tied to no company (nothing in PACT holds their unit); <c>AmbiguousRows</c>: owners whose unit key is held by both companies (not tied to either).</summary>
+public sealed record CrmOwnerState(bool Loaded, DateTime? LastSuccessUtc, DateTime? LastAttemptUtc, string? LastAttemptStatus, string? LastError, int RowCount, int UnlinkedRows, int AmbiguousRows = 0, string? Note = null);
 
 /// <summary>The CRM side of one unit, aggregated: how many distinct customers hold an eligible sale and, when exactly one, its contact.</summary>
 public sealed record CrmUnitLink(CrmLinkStatus Status, int Customers, int CustomerId, int CrmUnitId, int LeadId, SourceContact Contact);
+
 
 /// <summary>Stores the bulk CRM owner feed and answers bulk link reads (one set-based query for any number of units).</summary>
 public interface ICollectionsCrmOwnerStore
 {
     /// <summary>Stores a complete new run and publishes it atomically; the previous run is kept until then. Returns the number of rows that could be tied to one company.</summary>
-    Task<int> ReplaceAsync(IReadOnlyList<CrmOwnerRow> rows, CancellationToken cancellationToken);
+    Task<int> ReplaceAsync(IReadOnlyList<CrmOwnerRow> rows, CancellationToken cancellationToken, string? note = null);
     Task RecordFailureAsync(string message, CancellationToken cancellationToken);
+    /// <summary>Ties the CRM owners that are still without a company to the one company whose PACT snapshot holds their exact unit (run after every receivables refresh). Returns (resolved, ambiguous).</summary>
+    Task<(int Resolved, int Ambiguous)> ResolveCompaniesAsync(CancellationToken cancellationToken) => Task.FromResult((0, 0));
     Task<CrmOwnerState> GetStateAsync(CancellationToken cancellationToken);
     /// <summary>The CRM link of each (company, unit key); a unit CRM does not hold is absent from the result. <c>Unavailable</c> is never returned here: callers use <see cref="GetStateAsync"/>.</summary>
     Task<IReadOnlyDictionary<(int CompanyId, string UnitKey), CrmUnitLink>> GetLinksAsync(IReadOnlyList<(int CompanyId, string UnitKey)> units, CancellationToken cancellationToken);

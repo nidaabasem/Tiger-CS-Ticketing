@@ -11,7 +11,7 @@
     // A figure the sources did not provide is "Unavailable" - never zero and never a dash.
     string Aed(decimal? amount) => CustomerPaymentPanel.Money(amount, "AED");
     string Source(string value) => value switch { "Crm" => "CRM", "Pact" => "PACT", _ => "" };
-    string TowerOf(LinkedUnitCandidateDto c) => c.TowerName ?? c.ProjectName ?? (c.TowerNumber is null ? "—" : $"Tower {c.TowerNumber}");
+    string TowerOf(LinkedUnitCandidateDto c) => TigerCS.Domain.Modules.Collections.CollectionsTowerName.IsUsable(c.TowerName, c.TowerNumber) ? c.TowerName!.Trim() : c.ProjectName ?? (c.TowerNumber is null ? "—" : $"Tower {c.TowerNumber}");
 }
 
 <section class="unit-payment" data-unit-payment data-crm-status="@link.CrmStatus" data-pact-status="@link.PactStatus">

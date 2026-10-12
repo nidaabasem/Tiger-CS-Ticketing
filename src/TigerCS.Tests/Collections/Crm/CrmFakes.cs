@@ -12,16 +12,27 @@ public sealed class FakeCrmOwnerStore : ICollectionsCrmOwnerStore
     public int Replaces { get; private set; }
     public string? Failure { get; private set; }
     public bool Throw { get; set; }
+    public bool ThrowOnState { get; set; }
+    public string? LastNote { get; private set; }
+    /// <summary>When the stored run was loaded (tests pin it next to their clock, so the data is neither stale nor from the future).</summary>
+    public DateTime? LastSuccessUtc { get; set; } = new DateTime(2026, 10, 14, 7, 30, 0, DateTimeKind.Utc);
+    public bool LastAttemptFailed { get; set; }
+    /// <summary>Company per unit key for owners that are tied by their EXACT unit (the PACT snapshot), as V012 does for towers that exist in no / both companies.</summary>
+    public HashSet<(int CompanyId, string UnitKey)> AmbiguousUnits { get; } = [];
 
-    public Task<int> ReplaceAsync(IReadOnlyList<CrmOwnerRow> rows, CancellationToken cancellationToken)
+    public Task<int> ReplaceAsync(IReadOnlyList<CrmOwnerRow> rows, CancellationToken cancellationToken, string? note = null)
     {
-        Rows = [.. rows]; Replaces++; Failure = null;
+        Rows = [.. rows]; Replaces++; Failure = null; LastNote = note;
         return Task.FromResult(rows.Count(r => CompanyOfTower.ContainsKey(CollectionsTowerNumber.Parse(r.UnitKey) ?? "")));
     }
 
     public Task RecordFailureAsync(string message, CancellationToken cancellationToken) { Failure = message; return Task.CompletedTask; }
 
-    public Task<CrmOwnerState> GetStateAsync(CancellationToken cancellationToken) => Task.FromResult(new CrmOwnerState(Rows.Count > 0, null, null, Failure is null ? "Succeeded" : "Failed", Failure, Rows.Count, 0));
+    public Task<CrmOwnerState> GetStateAsync(CancellationToken cancellationToken)
+    {
+        if (ThrowOnState) throw new InvalidOperationException("store down");
+        return Task.FromResult(new CrmOwnerState(Rows.Count > 0, Rows.Count > 0 ? LastSuccessUtc : null, null, Failure is not null || LastAttemptFailed ? "Failed" : "Succeeded", Failure, Rows.Count, 0, 0, LastNote));
+    }
 
     public Task<IReadOnlyDictionary<(int CompanyId, string UnitKey), CrmUnitLink>> GetLinksAsync(IReadOnlyList<(int CompanyId, string UnitKey)> units, CancellationToken cancellationToken)
     {
@@ -36,8 +47,10 @@ public sealed class FakeCrmOwnerStore : ICollectionsCrmOwnerStore
                 var customers = g.Select(x => x.Row.CustomerId).Distinct().Count();
                 var first = g.OrderBy(x => x.Row.CustomerId).First().Row;
                 string Pick(Func<CrmOwnerRow, string> f) => g.Select(x => f(x.Row)).FirstOrDefault(v => v.Length > 0) ?? "";
-                return new CrmUnitLink(customers > 1 ? CrmLinkStatus.Ambiguous : CrmLinkStatus.Single, customers, customers > 1 ? 0 : first.CustomerId, first.UnitId, first.LeadId,
-                    customers > 1 ? SourceContact.Empty : new SourceContact(Pick(r => r.FullName), Pick(r => r.PhoneNorm), Pick(r => r.EmailNorm)));
+                var companyAmbiguous = AmbiguousUnits.Contains(g.Key);
+                return new CrmUnitLink(customers > 1 ? CrmLinkStatus.Ambiguous : companyAmbiguous ? CrmLinkStatus.CompanyAmbiguous : CrmLinkStatus.Single, customers,
+                    customers > 1 || companyAmbiguous ? 0 : first.CustomerId, first.UnitId, first.LeadId,
+                    customers > 1 || companyAmbiguous ? SourceContact.Empty : new SourceContact(Pick(r => r.FullName), Pick(r => r.PhoneNorm), Pick(r => r.EmailNorm)));
             });
         return Task.FromResult(result);
     }
