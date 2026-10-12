@@ -178,14 +178,23 @@ public sealed class CampaignsModel(CollectionsApiClient api, Microsoft.Extension
     public string ResultsUrl(int page = 1) => PageUrl(page).Replace("render=full", "handler=Results");
 
     /// <summary>Short review notes of a unit's CRM / PACT linking (the reasons the unit cannot be trusted as one customer).</summary>
-    public static IEnumerable<string> ReviewNotes(CollectionsCampaignContactDto row)
+    public static IEnumerable<string> ReviewNotes(CollectionsCampaignContactDto row, string? crmState = null)
     {
         if (row.Reason.Contains("CrmCustomerAmbiguous", StringComparison.Ordinal)) yield return "Several CRM customers: needs review";
         if (row.Reason.Contains("CrmCompanyAmbiguous", StringComparison.Ordinal)) yield return "CRM sale cannot be tied to one company: needs review";
         if (row.Reason.Contains("ContactSourceConflict", StringComparison.Ordinal)) yield return "CRM and PACT contacts differ: needs review";
         if (row.Reason.Contains("CrmUnavailable", StringComparison.Ordinal)) yield return "CRM unavailable: contact unconfirmed, needs review";
         // When CRM could not be used the reason above already says the contact is unconfirmed; it must not also claim that CRM holds nothing.
-        if (row.Reason.Contains("NoValidContact", StringComparison.Ordinal) && !row.Reason.Contains("CrmUnavailable", StringComparison.Ordinal)) yield return "No mobile or email in CRM or PACT: cannot be sent";
+        if (row.Reason.Contains("NoValidContact", StringComparison.Ordinal) && !row.Reason.Contains("CrmUnavailable", StringComparison.Ordinal)) yield return NoContactNote(row, crmState);
+    }
+
+    /// <summary>Why a unit cannot be sent: "CRM or PACT" is only claimed when CRM was consulted and linked this unit; a switched-off feed or an unlinked owner is said as such.</summary>
+    public static string NoContactNote(CollectionsCampaignContactDto row, string? crmState)
+    {
+        if (crmState == "Disabled") return "No mobile or email in PACT; CRM linking is switched off, so CRM was not checked: cannot be sent";
+        var ambiguous = row.Reason.Contains("CrmCustomerAmbiguous", StringComparison.Ordinal) || row.Reason.Contains("CrmCompanyAmbiguous", StringComparison.Ordinal);
+        if (crmState is not null && row.CrmCustomerId is null && !ambiguous) return "No mobile or email in PACT; no CRM owner is linked to this unit: cannot be sent";
+        return "No mobile or email in CRM or PACT: cannot be sent";
     }
 
     /// <summary>The note under an empty mobile: when CRM could not be used it says so instead of claiming the customer has no mobile.</summary>

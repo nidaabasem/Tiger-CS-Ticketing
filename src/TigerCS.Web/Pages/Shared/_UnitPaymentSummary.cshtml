@@ -149,6 +149,59 @@
                 break;
         }
 
+        @* The payment STATEMENT (PACT EDSM account of this unit alone): Due | Outstanding | Paid | Fines | Total, then Payment Details. Never derived from the snapshot below. *@
+        @if (link.Statement is { } statement)
+        {
+            string Fig(StatementAmountDto? a) => a?.Value is { } v ? CustomerPaymentPanel.Money(v, statement.Currency) : (a?.Status == "NotComputed" ? "Not computed" : "Unavailable");
+            string Css(StatementAmountDto? a, string tone) => a?.Value is null ? "kpi-card--unavailable" : tone;
+            if (statement.IsAvailable)
+            {
+                <section class="unit-statement" aria-label="Payment summary" data-unit-statement data-statement-status="Available" data-statement-company="@statement.CompanyId">
+                    <h3 class="payment-section-title">Payment Summary</h3>
+                    <div class="kpi-grid payment-kpis payment-kpis--five">
+                        <div class="kpi-card @Css(statement.Due, "statement-red")" data-statement="due"><strong class="statement-red-text">@Fig(statement.Due)</strong><span>Due</span></div>
+                        <div class="kpi-card @Css(statement.Outstanding, "statement-red")" data-statement="outstanding"><strong class="statement-red-text">@Fig(statement.Outstanding)</strong><span>@statement.OutstandingLabel</span></div>
+                        <div class="kpi-card @Css(statement.Paid, "statement-green")" data-statement="paid"><strong class="statement-green-text">@Fig(statement.Paid)</strong><span>Paid</span></div>
+                        <div class="kpi-card @Css(statement.Fines, "")" data-statement="fines"><strong>@Fig(statement.Fines)</strong><span>Fines</span></div>
+                        <div class="kpi-card @Css(statement.Total, "")" data-statement="total"><strong>@Fig(statement.Total)</strong><span>Total</span></div>
+                    </div>
+                    @foreach (var n in statement.Notes) { <p class="field-hint" data-statement-note>@n</p> }
+                    <h3 class="payment-section-title">Payment Details</h3>
+                    @if (statement.Rows.Count == 0)
+                    {
+                        <div class="empty-state empty-state--compact"><p>@(statement.RowsComplete ? "PACT lists no payments for this account." : "Payment details are unavailable.")</p></div>
+                    }
+                    else
+                    {
+                        <div class="table-scroll">
+                            <table class="data-table" data-statement-details>
+                                <thead><tr><th>Date</th><th>Status</th><th class="col-num">Amount</th><th>Cheque Number</th></tr></thead>
+                                <tbody>
+                                    @foreach (var row in statement.Rows)
+                                    {
+                                        <tr data-statement-row="@row.Status">
+                                            <td class="text-mono">@(row.Date is { } d ? CustomerPaymentPanel.Date(d) : (row.DateRaw ?? "—"))</td>
+                                            <td><span class="badge @(row.Status == "Paid" ? "badge-pay-ok" : "badge-pay-critical")">@row.Status</span></td>
+                                            <td class="col-num text-mono @(row.Status == "Paid" ? "statement-green-text" : "statement-red-text")">@(row.Amount is { } amt ? CustomerPaymentPanel.Money(amt, statement.Currency) : "Unavailable")</td>
+                                            <td class="text-mono">@(string.IsNullOrWhiteSpace(row.ChequeNumber) ? "—" : row.ChequeNumber)</td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    }
+                    @if (!statement.RowsComplete) { <p class="field-hint" data-statement-incomplete>Some payment rows could not be read from PACT; the list may be incomplete.</p> }
+                </section>
+            }
+            else
+            {
+                <div class="alert alert-warning" role="status" data-unit-statement data-statement-status="@statement.Status">
+                    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="@warnIcon" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" /></svg>
+                    <span><strong>Payment summary not shown.</strong> @statement.Detail@if (statement.OtherUnits.Count > 0) { <text> Other units on the same PACT account: @string.Join(", ", statement.OtherUnits).</text> } Nothing is guessed or shown as zero.</span>
+                </div>
+            }
+        }
+
         @* The summary and the schedule are always shown for a unit: a value that is not available says "Unavailable", it never disappears or becomes zero. *@
         <section class="kpi-grid payment-kpis payment-kpis--five" aria-label="Payment summary" data-payment-summary>
             <div class="kpi-card @(figures?.TotalAmount is null ? "kpi-card--unavailable" : "")" data-kpi="total">
@@ -173,7 +226,7 @@
 
         @if (figures is { TotalAmount: null } or { PaidAmount: null })
         {
-            <p class="field-hint" data-total-paid-unavailable>Total and paid amounts are currently unavailable</p>
+            <p class="field-hint" data-total-paid-unavailable>Total and paid amounts are currently unavailable@(link.Statement?.IsAvailable == true ? " in this snapshot view; the Payment Summary above is the statement" : "")</p>
         }
 
         @if (figures is { DueThisMonth: 0, Overdue: 0 })
@@ -188,7 +241,7 @@
 
         @if (figures is not null)
         {
-            <h3 class="payment-section-title">Payment schedule</h3>
+            <h3 class="payment-section-title">Payment schedule <small class="text-secondary">(unpaid instalments only)</small></h3>
             @if (figures.Schedule.Count == 0)
             {
                 <div class="empty-state empty-state--compact"><p>No unpaid payments on this unit's schedule.</p></div>

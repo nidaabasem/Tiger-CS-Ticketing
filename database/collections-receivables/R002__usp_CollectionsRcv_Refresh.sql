@@ -172,6 +172,13 @@ BEGIN
               FROM #src
              WHERE Amount > 0 AND UnitCode NOT LIKE N'%*%' AND UnitID > 0 AND LTRIM(RTRIM(ISNULL(UnitCode, N''))) NOT IN (N'', N'0') AND LTRIM(RTRIM(ISNULL(TenantID, N''))) <> N'' AND DueDate IS NOT NULL;
             IF @@ROWCOUNT <> @published THROW 50013, N'The number of stored rows does not match the validated count; nothing was published.', 1;
+            -- The unit/account directory of this run: every (tenant, unit) PACT returned, settled and cancelled ones included (see CollectionsRcvAccountUnit).
+            INSERT dbo.CollectionsRcvAccountUnit (RunId, CompanyId, TenantId, UnitId, UnitCode, OpenRows, SettledRows, IsCancelled)
+            SELECT @RunId, @CompanyId, LTRIM(RTRIM(TenantID)), UnitID, LTRIM(RTRIM(UnitCode)),
+                   SUM(CASE WHEN Amount > 0 THEN 1 ELSE 0 END), SUM(CASE WHEN Amount IS NULL OR Amount <= 0 THEN 1 ELSE 0 END), MAX(CASE WHEN UnitCode LIKE N'%*%' THEN 1 ELSE 0 END)
+              FROM #src
+             WHERE UnitID > 0 AND LTRIM(RTRIM(ISNULL(UnitCode, N''))) NOT IN (N'', N'0') AND LTRIM(RTRIM(ISNULL(TenantID, N''))) <> N''
+             GROUP BY LTRIM(RTRIM(TenantID)), UnitID, LTRIM(RTRIM(UnitCode));
             UPDATE dbo.CollectionsRcvCompany
                SET CurrentRunId = @RunId, LastSuccessUtc = SYSUTCDATETIME(), PublishedRows = @published, LastStatus = 'Succeeded', LastFinishedUtc = SYSUTCDATETIME(),
                    LastErrorNumber = NULL, LastError = NULL, ConsecutiveFailures = 0
@@ -192,6 +199,7 @@ BEGIN
             DELETE TOP (50000) FROM dbo.CollectionsRcvLine WHERE CompanyId = @CompanyId AND RunId <> @RunId;
             SET @del = @@ROWCOUNT;
         END;
+        DELETE FROM dbo.CollectionsRcvAccountUnit WHERE CompanyId = @CompanyId AND RunId <> @RunId;
         DELETE FROM dbo.CollectionsRcvRun WHERE CompanyId = @CompanyId AND StartedUtc < DATEADD(DAY, -60, SYSUTCDATETIME()) AND RunId <> @RunId;
     END TRY
     BEGIN CATCH

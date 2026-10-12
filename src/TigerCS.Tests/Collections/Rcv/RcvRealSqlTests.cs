@@ -85,6 +85,8 @@ public sealed partial class RcvRealSqlTests
         await Pact(4, "TP102-201", "D2", "Dani Two", "+971500000002", "dani@example.test", 2021, "C3", "2026-01-01", 0, "Paid");
         // D3: a cancelled apartment (513*) next to a live one of the same customer.
         await Pact(4, "TP103-513*", "D3", "Dara Three", "+971500000003", "dara@example.test", 3135, "E1", "2026-08-01", 900);
+        await Pact(4, "TP103-5**15", "D3", "Dara Three", "+971500000003", "dara@example.test", 3150, "E3", "2026-08-01", 700);   // several asterisks, in the middle
+        await Pact(4, "**TP103-516", "D3", "Dara Three", "+971500000003", "dara@example.test", 3160, "E4", "2026-08-01", 650);    // leading asterisks: never matched as TP103-516
         await Pact(4, "TP103-514", "D3", "Dara Three", "+971500000003", "dara@example.test", 3140, "E2", "2026-08-01", 200);
         // D4: invalid units - UnitID 0, unit code 0, blank unit code.
         await Pact(4, "TP104-401", "D4", "Dino Four", "+971500000004", "dino@example.test", 0, "F1", "2026-08-01", 500);
@@ -109,7 +111,7 @@ public sealed partial class RcvRealSqlTests
         // Dubai: 12 PACT rows with a positive amount... minus the cancelled (E1), the three invalid units (F1-F3); the settled one (C3) and the future November one stay out / in as shown.
         Assert.Equal(0, await Scalar<int>("SELECT COUNT(*) FROM dbo.CollectionsRcvLine WHERE CompanyId = 4 AND (UnitCode LIKE '%*%' OR UnitId <= 0 OR UnitCode IN ('', '0') OR Amount <= 0)"));
         var run4 = await Scalar<string>("SELECT CONCAT(RawRows, '/', PublishedRows, '/', ExcludedSettledRows, '/', ExcludedInvalidRows, '/', ExcludedCancelledRows, '/', ExcludedCancelledAmount, '/', Layout) FROM dbo.CollectionsRcvRun WHERE CompanyId = 4");
-        Assert.Equal("13/8/1/3/1/900.0000/1", run4);
+        Assert.Equal("15/8/1/3/3/2250.0000/1", run4);
         var run32 = await Scalar<string>("SELECT CONCAT(RawRows, '/', PublishedRows, '/', ExcludedSettledRows, '/', ExcludedInvalidRows, '/', ExcludedCancelledRows, '/', Layout) FROM dbo.CollectionsRcvRun WHERE CompanyId = 32");
         Assert.Equal("3/3/0/0/0/3", run32);                                       // Sharjah: its own 12-column procedure, no ProjectCode
         Assert.Equal(0, await Scalar<int>("SELECT COUNT(*) FROM dbo.CollectionsRcvLine l JOIN dbo.CollectionsRcvCompany c ON c.CompanyId = l.CompanyId AND c.CurrentRunId <> l.RunId"));   // only published lines exist
@@ -421,6 +423,66 @@ public sealed partial class RcvRealSqlTests
             Assert.Null(page.Units.Single(u => u.UnitCode == "TP105-501").CrmCustomers);                      // a unit CRM does not hold keeps its PACT contact
             // The Sharjah apartment with the same unit CODE is not linked to Dubai's CRM owner.
             Assert.Null(page.Units.Single(u => u.CompanyId == 32 && u.UnitCode == "TP101-101").CrmCustomers);
+        }
+        finally { await Exec("UPDATE dbo.CollectionsCrmOwnerState SET CurrentRunId = NULL WHERE Id = 1; DELETE FROM dbo.CollectionsCrmUnitOwner;"); }
+    }
+
+    [SqlFact]
+    public async Task TheUnitAccountDirectory_HoldsFullyPaidUnits_TheOtherUnitsOfEachAccount_AndFlagsCancelledOnes_NeverMatchingThem()
+    {
+        await Seed();
+        // A unit with NOTHING open (only a settled instalment) and a fully paid sibling on D2's account: the open-balance snapshot knows neither.
+        await Pact(4, "TP106-601", "D6", "Dora Six", "", "", 6011, "K1", "2026-01-01", 0, "Paid");
+        await Pact(4, "TP102-202", "D2", "Dani Two", "+971500000002", "dani@example.test", 2022, "C9", "2026-01-01", 0, "Paid");
+        Assert.Equal("Succeeded", (await Refresher().RefreshAsync("Test", 4, default)).Status);
+        var source = Source();
+
+        var paid = await source.ReadAccountDirectoryAsync("TP106-601", 4, default);
+        Assert.Equal([(4, "D6", 6011, 0)], paid.Matches.Select(u => (u.CompanyId, u.TenantId, u.UnitId, u.OpenRows)));       // resolved although nothing is open
+        Assert.Empty((await source.ReadUnitAsync("TP106-601", 4, Today, default)).Identities);                                // the open-balance read cannot see it
+        Assert.False(paid.IsComplete);                                                                                        // not accepted as complete unless configured
+
+        var d2 = await source.ReadAccountDirectoryAsync("TP102-201", 4, default);
+        Assert.Equal([2021, 2022], d2.AccountUnits.Select(u => u.UnitId).OrderBy(x => x));                                    // the fully paid sibling is visible
+        Assert.Equal(0, d2.AccountUnits.Single(u => u.UnitId == 2022).OpenRows);
+
+        var d1 = await source.ReadAccountDirectoryAsync("TP101-101", 4, default);
+        Assert.Equal([1011, 1012], d1.AccountUnits.Select(u => u.UnitId).OrderBy(x => x));
+
+        var d3 = await source.ReadAccountDirectoryAsync("TP103-514", 4, default);
+        Assert.Equal([3140], d3.Matches.Select(u => u.UnitId));
+        Assert.Equal(4, d3.AccountUnits.Count);                                                                               // 514 plus the three cancelled codes of the same tenant ...
+        Assert.Equal(3, d3.AccountUnits.Count(u => u.IsCancelled));                                                           // ... flagged, so they withhold a statement instead of being ignored
+
+        foreach (var starred in new[] { "TP103-513*", "TP103-5**15", "**TP103-516" })
+            Assert.Empty((await source.ReadAccountDirectoryAsync(starred, null, default)).Matches);                           // the mark is never removed to match an active unit
+        Assert.DoesNotContain((await source.ReadAccountDirectoryAsync("TP101-101", 32, default)).AccountUnits, u => u.TenantId == "D1");   // another company's tenant is never mixed in
+        Assert.True(new RcvReceivablesSource(Config(), new ReceivablesSnapshotOptions { AccountDirectoryComplete = true }, new PactReceivablesOptions { Enabled = true }, TimeProvider.System, NullLogger<RcvReceivablesSource>.Instance)
+            .ReadAccountDirectoryAsync("TP106-601", 4, default).Result.IsComplete);
+    }
+
+    [SqlFact]
+    public async Task Tp140_407_Lead307092_IsTraced_FromTheCrmFeedThroughIngestionAndTheJoin_WhenPactHoldsNoMobile()
+    {
+        await Seed();
+        await Pact(32, "TP140-407", "T407", "Pact Holder", "", "", 4071, "V407", "2026-09-01", 500);
+        Assert.Equal("Succeeded", (await Refresher().RefreshAsync("Test", 32, default)).Status);
+        var gateway = new TigerCS.Tests.Collections.Crm.FakeCrmUnitOwnersGateway();
+        gateway.Owners.Add(TigerCS.Tests.Collections.Crm.FakeCrmUnitOwnersGateway.Owner(900407, "TP140", "407", "AFTAB ALAM KHAN MOHAMMAD MAZAHARUDDIN KHAN", "+971529586320", "kaftab.alam@yahoo.co.in", leadId: 307092));
+        var store = new SqlCollectionsCrmOwnerStore(Config(), new ReceivablesSnapshotOptions());
+        var refresh = new CollectionsCrmOwnersRefreshService(new CollectionsCrmOwnersOptions { Enabled = true }, gateway, store, NullLogger<CollectionsCrmOwnersRefreshService>.Instance);
+        try
+        {
+            var result = await refresh.RefreshAsync(default);                                          // ingestion through the real store: stage -> resolve company from the exact unit -> publish
+            Assert.True(result.Succeeded, result.Message);
+            Assert.Equal((1, 1, 0), (result.Fetched, result.Stored, result.Unlinked));
+            Assert.Equal(32, await Scalar<int>("SELECT CompanyId FROM dbo.CollectionsCrmUnitOwner WHERE UnitKey = N'TP140-407'"));   // the harness's tower list puts tower 140 in company 32, where this unit is held
+            var unit = (await Page(minTotal: null)).Units.Single(u => u.CompanyId == 32 && u.UnitCode == "TP140-407");     // the join: PACT mobile is blank, CRM supplies the contact
+            Assert.Equal(("", 1), (unit.Instalments.First().Mobile, unit.CrmCustomers));
+            Assert.Equal(("AFTAB ALAM KHAN MOHAMMAD MAZAHARUDDIN KHAN", "+971529586320", "kaftab.alam@yahoo.co.in"), (unit.CrmName, unit.CrmPhone, unit.CrmEmail));
+            // The same unit read for the Payment tab links to the same CRM owner.
+            var read = await Source().ReadUnitAsync("TP140-407", null, Today, default);
+            Assert.Equal(900407, read.CrmLinks[32].CustomerId);
         }
         finally { await Exec("UPDATE dbo.CollectionsCrmOwnerState SET CurrentRunId = NULL WHERE Id = 1; DELETE FROM dbo.CollectionsCrmUnitOwner;"); }
     }
