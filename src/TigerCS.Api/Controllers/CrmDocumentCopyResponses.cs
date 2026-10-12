@@ -21,6 +21,7 @@ internal static class CrmDocumentCopyResponses
             CrmDocumentCopyStatus.VerificationFailed => Coded(controller, result, StatusCodes.Status403Forbidden, "Customer verification failed"),
             CrmDocumentCopyStatus.OwnershipMismatch => Coded(controller, result, StatusCodes.Status403Forbidden, "Record does not belong to the verified customer"),
             CrmDocumentCopyStatus.IdempotencyConflict => Coded(controller, result, StatusCodes.Status409Conflict, "Idempotency key already used"),
+            CrmDocumentCopyStatus.NotPermitted => Coded(controller, result, StatusCodes.Status403Forbidden, "Document sending is not permitted"),
             CrmDocumentCopyStatus.Disabled => Coded(controller, result, StatusCodes.Status503ServiceUnavailable, "Document copies are switched off"),
 
             CrmDocumentCopyStatus.DocumentUnavailable => Coded(
@@ -45,6 +46,7 @@ internal static class CrmDocumentCopyResponses
                 {
                     CrmDocumentCodes.DeliveryChannelNotIntegrated => StatusCodes.Status501NotImplemented,
                     CrmDocumentCodes.DeliveryDestinationUnavailable => StatusCodes.Status422UnprocessableEntity,
+                    CrmDocumentCodes.EmailTransportNotReal => StatusCodes.Status503ServiceUnavailable,
                     _ => StatusCodes.Status502BadGateway
                 },
                 "Document could not be delivered"),

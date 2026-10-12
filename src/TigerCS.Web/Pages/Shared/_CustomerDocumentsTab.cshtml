@@ -88,11 +88,7 @@
                 }
             </div>
 
-            @if (!panel.CanSend)
-            {
-                <div class="alert alert-info" role="status"><span>Your role is read-only, so documents can be opened but not sent to the customer.</span></div>
-            }
-            else if (!send.Available)
+            @if (!send.Available)
             {
                 <div class="alert alert-info" role="status" data-documents-send-unavailable><span><strong>Send to customer is unavailable.</strong> @send.UnavailableReason</span></div>
             }
@@ -133,7 +129,7 @@
                                                     <input type="hidden" name="record" value="@document.RecordId" />
                                                     <input type="hidden" name="documentName" value="@document.Name" />
                                                     <input type="hidden" name="idempotencyKey" value="@Guid.NewGuid().ToString("N")" />
-                                                    <button type="submit" class="btn btn-sm btn-gold" disabled="@(!send.Available || !panel.CanSend)" title="@(panel.CanSend && send.Available ? "Email this document to the customer as an attachment" : send.UnavailableReason)" data-document-send>Send to customer</button>
+                                                    <button type="submit" class="btn btn-sm btn-gold" disabled="@(!send.Available)" title="@(send.Available ? "Email this document to the customer as an attachment" : send.UnavailableReason)" data-document-send>Send to customer</button>
                                                 </form>
                                             </td>
                                         </tr>

@@ -715,6 +715,127 @@ public class CrmDocumentCopyAppServiceTests
         Assert.Empty(f.Email.Sent); // the loser sent nothing; the winner's send is the one
     }
 
+    // ---- origin: Genesys rows keep the real session, agent rows have none, and the two never share a key ----
+
+    private static AgentDocumentRecipient AgentRecipient() =>
+        new(DocumentServiceFixture.CustomerId, DocumentServiceFixture.LeadId, "1204", "customer@example.com", "Ahmed Al-Farsi");
+
+    [Fact]
+    public async Task AGenesysSend_IsStoredWithItsRealVerificationSession_AndNoAgentScope()
+    {
+        var f = new DocumentServiceFixture();
+        f.Own("REC-1");
+
+        await Send(f, Req(f));
+
+        var row = Assert.Single(f.Deliveries.All);
+        Assert.Equal(DocumentDeliveryOrigin.GenesysVerifiedSession, row.Origin);
+        Assert.Equal(f.SessionId, row.VerificationSessionId);
+        Assert.Null(row.CrmCustomerId);
+        Assert.Null(row.CrmLeadId);
+    }
+
+    [Fact]
+    public async Task AnAgentSend_ThroughTheSharedCore_IsStoredWithNoSession_AndSendsToCrmsAddress()
+    {
+        var f = new DocumentServiceFixture();
+        f.Own("REC-1");
+
+        var result = await f.Service.SendToCustomerAsync(DocumentServiceFixture.Caller, AgentRecipient(), CrmDocumentType.Contract, "REC-1", "agent-key-1");
+
+        Assert.Equal(CrmDocumentCopyStatus.Sent, result.Status);
+        var row = Assert.Single(f.Deliveries.All);
+        Assert.Equal(DocumentDeliveryOrigin.AgentDesk, row.Origin);
+        Assert.Null(row.VerificationSessionId);
+        Assert.Equal(DocumentServiceFixture.CustomerId, row.CrmCustomerId);
+        Assert.Equal(DocumentServiceFixture.LeadId, row.CrmLeadId);
+        Assert.Equal("customer@example.com", Assert.Single(f.Email.Sent).Destination);
+        Assert.Contains(f.Audit.Entries, e => e.Action == "CrmDocumentCopySent" && e.AfterValue!.Contains("Origin=AgentDesk"));
+    }
+
+    [Fact]
+    public async Task AKeyUsedByGenesys_CannotBeReusedByTheAgentDesk_AndTheOtherWayRound()
+    {
+        var f = new DocumentServiceFixture();
+        f.Own("REC-1");
+
+        await Send(f, Req(f), key: "shared-key");
+        var agent = await f.Service.SendToCustomerAsync(DocumentServiceFixture.Caller, AgentRecipient(), CrmDocumentType.Contract, "REC-1", "shared-key");
+
+        Assert.Equal(CrmDocumentCopyStatus.IdempotencyConflict, agent.Status);
+        Assert.Single(f.Email.Sent);
+
+        var g = new DocumentServiceFixture();
+        g.Own("REC-1");
+        await g.Service.SendToCustomerAsync(DocumentServiceFixture.Caller, AgentRecipient(), CrmDocumentType.Contract, "REC-1", "shared-key");
+        var genesys = await Send(g, Req(g), key: "shared-key");
+
+        Assert.Equal(CrmDocumentCopyStatus.IdempotencyConflict, genesys.Status);
+        Assert.Single(g.Email.Sent);
+    }
+
+    [Fact]
+    public async Task AGenesysSendAndAnAgentSendOfTheSameDocument_AreSeparateScopes_NeitherSuppressesTheOther()
+    {
+        var f = new DocumentServiceFixture();
+        f.Own("REC-1");
+
+        await Send(f, Req(f), key: "genesys-key");
+        var agent = await f.Service.SendToCustomerAsync(DocumentServiceFixture.Caller, AgentRecipient(), CrmDocumentType.Contract, "REC-1", "agent-key");
+
+        Assert.False(agent.Duplicate);
+        Assert.Equal(2, f.Email.Sent.Count);
+    }
+
+    [Fact]
+    public async Task TheAgentDesk_RefusesARecordCrmDoesNotListForThatCustomerAndUnit()
+    {
+        var f = new DocumentServiceFixture();
+        f.Own("REC-1");
+
+        var result = await f.Service.SendToCustomerAsync(DocumentServiceFixture.Caller, AgentRecipient(), CrmDocumentType.Contract, "SOMEONE-ELSES", "agent-key");
+
+        Assert.Equal(CrmDocumentCopyStatus.OwnershipMismatch, result.Status);
+        Assert.Empty(f.Email.Sent);
+        Assert.Empty(f.Deliveries.All);
+    }
+
+    [Fact]
+    public async Task TheAgentDesk_RefusesWhenTheChannelIsNotRealMail_BeforeTouchingCrm()
+    {
+        var f = new DocumentServiceFixture();
+        f.Own("REC-1");
+        f.Email.RealMail = false;
+
+        var result = await f.Service.SendToCustomerAsync(DocumentServiceFixture.Caller, AgentRecipient(), CrmDocumentType.Contract, "REC-1", "agent-key");
+
+        Assert.Equal(CrmDocumentCopyStatus.DeliveryFailed, result.Status);
+        Assert.Equal(CrmDocumentCodes.EmailTransportNotReal, result.Code);
+        Assert.Empty(f.Gateway.ListCalls);
+        Assert.Empty(f.Email.Sent);
+        Assert.Empty(f.Deliveries.All);
+    }
+
+    [Fact]
+    public void TheDeliveryRowsShape_IsEnforcedByItsFactories()
+    {
+        var now = DateTime.UtcNow;
+        Assert.Throws<ArgumentException>(() => new CrmDocumentDeliveryRequest(
+            Guid.NewGuid(), "k", "f", Guid.Empty, CrmDocumentType.Contract, "R", DocumentDeliveryChannel.Email, null, now)); // no invented/empty session
+        Assert.Throws<ArgumentException>(() => CrmDocumentDeliveryRequest.ForAgentDesk(
+            Guid.NewGuid(), "k", "f", 0, 1, CrmDocumentType.Contract, "R", DocumentDeliveryChannel.Email, null, now));
+
+        var agent = CrmDocumentDeliveryRequest.ForAgentDesk(Guid.NewGuid(), "k", "f", 9001, 12345, CrmDocumentType.Contract, "R", DocumentDeliveryChannel.Email, null, now);
+        Assert.Null(agent.VerificationSessionId);
+        Assert.True(agent.IsAgentScope(9001, 12345));
+        Assert.False(agent.IsAgentScope(9001, 12346));
+
+        var session = Guid.NewGuid();
+        var genesys = new CrmDocumentDeliveryRequest(Guid.NewGuid(), "k", "f", session, CrmDocumentType.Contract, "R", DocumentDeliveryChannel.Email, null, now);
+        Assert.Equal(session, genesys.VerificationSessionId);
+        Assert.False(genesys.IsAgentScope(9001, 12345));
+    }
+
     private static string Fingerprint(DocumentServiceFixture f) =>
         Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(
             $"{f.SessionId:N}|{(byte)CrmDocumentType.Contract}|REC-1|{(byte)DocumentDeliveryChannel.Email}")));

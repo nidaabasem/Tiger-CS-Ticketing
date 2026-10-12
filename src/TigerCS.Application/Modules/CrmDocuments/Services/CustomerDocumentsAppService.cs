@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging;
+using TigerCS.Application.Authorization;
 using TigerCS.Application.Modules.CrmDocuments.Abstractions;
 using TigerCS.Application.Modules.CrmDocuments.Dto;
 using TigerCS.Application.Modules.CustomerVerification.CrmIntegration;
@@ -38,6 +39,7 @@ public sealed class CustomerDocumentsAppService(
     CrmBuyerLookupAppService buyerLookup,
     ICrmDocumentGateway documentGateway,
     CrmDocumentCopyAppService copyService,
+    IEnumerable<IDocumentDeliveryChannelSender> channelSenders,
     CrmDocumentOptions options,
     CustomerNotificationPolicy emailPolicy,
     ILogger<CustomerDocumentsAppService> logger)
@@ -47,6 +49,13 @@ public sealed class CustomerDocumentsAppService(
         [CrmDocumentType.ReservationForm, CrmDocumentType.Contract, CrmDocumentType.RegistrationReceipt];
 
     private const int MaxPhonesTried = 5;
+
+    /// <summary>
+    /// The explicit document-send grant (<see cref="CrmDocumentOptions.AgentSendRoles"/>), distinct from being able to see the
+    /// customer. The System Administrator override applies through <see cref="AuthorizationGate"/>, as everywhere else.
+    /// </summary>
+    public bool CanSend(IReadOnlyCollection<string> callerRoles) =>
+        AuthorizationGate.Evaluate(callerRoles, () => callerRoles.Any(r => options.EffectiveAgentSendRoles.Contains(r, StringComparer.Ordinal)));
 
     public static bool IsTabType(CrmDocumentType type) => TabTypes.Contains(type);
 
@@ -104,7 +113,7 @@ public sealed class CustomerDocumentsAppService(
 
         var groups = await Task.WhenAll(TabTypes.Select(type => ListGroupAsync(type, customer.CustomerId, leadId, cancellationToken)));
         return CustomerDocumentsResult<CustomerDocumentsDto>.Ok(new CustomerDocumentsDto(
-            "Ready", null, units, leadId, groups, SendAvailability(customer.Customer.Email, hasAnyDocument: groups.Any(g => g.Documents.Count > 0))));
+            "Ready", null, units, leadId, groups, SendAvailability(callerRoles, customer.Customer.Email, hasAnyDocument: groups.Any(g => g.Documents.Count > 0))));
     }
 
     private async Task<CustomerDocumentGroupDto> ListGroupAsync(CrmDocumentType type, int customerId, int leadId, CancellationToken cancellationToken)
@@ -176,6 +185,14 @@ public sealed class CustomerDocumentsAppService(
         Guid callerEmployeeId, IReadOnlyCollection<string> callerRoles, string customerKey, CustomerDocumentSendRequestDto request,
         string? idempotencyKey, CancellationToken cancellationToken = default)
     {
+        // The send grant is checked before anything else — before the customer is even resolved, and with no CRM call.
+        if (!CanSend(callerRoles))
+        {
+            return new CrmDocumentCopyResult(
+                CrmDocumentCopyStatus.NotPermitted, CrmDocumentCodes.DocumentSendNotPermitted,
+                "Your role has not been granted permission to send documents to customers.");
+        }
+
         if (request.CrmLeadId is not { } leadId || !TryTabType(request.DocumentType, out var type) || string.IsNullOrWhiteSpace(request.RecordId))
         {
             return new CrmDocumentCopyResult(
@@ -207,11 +224,16 @@ public sealed class CustomerDocumentsAppService(
 
     // ---------------------------------------------------------------- shared
 
-    private CustomerDocumentSendDto SendAvailability(string? crmEmail, bool hasAnyDocument)
+    private CustomerDocumentSendDto SendAvailability(IReadOnlyCollection<string> callerRoles, string? crmEmail, bool hasAnyDocument)
     {
         var email = crmEmail?.Trim();
         var valid = CrmDocumentCopyAppService.IsEmailAddress(email);
         var masked = valid ? CrmDocumentCopyAppService.MaskEmail(email!) : null;
+
+        if (!CanSend(callerRoles))
+        {
+            return new(false, "Your role has not been granted permission to send documents to customers (CrmDocuments:AgentSendRoles). You can still open and download them.", masked);
+        }
 
         if (!options.Enabled)
         {
@@ -221,6 +243,11 @@ public sealed class CustomerDocumentsAppService(
         if (!emailPolicy.Enabled)
         {
             return new(false, "Email delivery is switched off in this environment (EmailNotifications:Enabled), so no attachment can be sent.", masked);
+        }
+
+        if (channelSenders.FirstOrDefault(c => c.Channel == DocumentDeliveryChannel.Email) is not { SendsRealMail: true })
+        {
+            return new(false, "This environment's mail provider only records messages in memory (EmailNotifications:Provider = Recording), so nothing can be sent to a customer. Use the Smtp provider.", masked);
         }
 
         if (!valid)

@@ -39,8 +39,6 @@ public sealed class CustomerDocumentsPanel
     public string? Notice { get; init; }
     public bool NoticeIsError { get; init; }
 
-    /// <summary>False for read-only roles (the Api refuses their POSTs anyway): the Send button then says why instead of failing.</summary>
-    public bool CanSend { get; set; } = true;
 
     public string TabHref(int? leadId) =>
         $"/Customers/{Uri.EscapeDataString(CustomerKey)}?tab={CustomerProfileTabs.Documents}{(leadId is { } id ? $"&unit={id}" : "")}#documents";

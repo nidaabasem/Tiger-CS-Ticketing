@@ -142,7 +142,7 @@ public sealed partial class CrmDocumentCopyAppService(
         var existing = await deliveryRepository.GetByKeyAsync(callerEmployeeId, key, cancellationToken);
         if (existing is not null)
         {
-            var replay = ReplayOrNull(existing, sessionId, type, requestedRecordId, channel, now, staleAfter);
+            var replay = ReplayOrNull(existing, DeliveryScope.ForSession(sessionId), type, requestedRecordId, channel, now, staleAfter);
             if (replay is not null)
             {
                 return replay;
@@ -232,9 +232,9 @@ public sealed partial class CrmDocumentCopyAppService(
 
         // ---- 5-9. Select the record, claim the send, fetch, deliver, record ----
         return await DeliverAsync(
-            callerEmployeeId, key, sessionId, type, requestedRecordId, channel, existing, now,
+            callerEmployeeId, key, type, requestedRecordId, channel, existing, now,
             new DeliveryTarget(
-                customerId, lead.LeadId, lead.UnitNumber, buyer.Customer.Email,
+                DeliveryScope.ForSession(sessionId), customerId, lead.LeadId, lead.UnitNumber, buyer.Customer.Email,
                 buyer.Customer.FullNameEnglish ?? contact.DisplayName ?? string.Empty, $"VerificationSessionId={sessionId}"),
             cancellationToken);
     }
@@ -246,9 +246,10 @@ public sealed partial class CrmDocumentCopyAppService(
     /// customer, established by <see cref="CustomerDocumentsAppService"/>, instead of a customer OTP.
     ///
     /// <para>
-    /// The agent cannot choose the destination: it is CRM's email for the customer. The delivery record's session column
-    /// holds a stable surrogate for (customer, lead) — there is no verification session on this path — so the existing
-    /// "same document, recently sent" suppression also stops two agents emailing the same file twice.
+    /// The agent cannot choose the destination: it is CRM's email for the customer. The delivery record is explicit about its
+    /// origin (<see cref="DocumentDeliveryOrigin.AgentDesk"/>): it carries the CRM customer and lead, and its verification
+    /// session reference stays null — nothing is invented to fill a column meant for a real session. The idempotency key,
+    /// the replay rules and the 15-minute "same document already sent" suppression all work on that customer + lead scope.
     /// </para>
     /// </summary>
     /// <remarks>The caller MUST have established that <paramref name="recipient"/> is a customer/lead the agent may act for.</remarks>
@@ -281,16 +282,24 @@ public sealed partial class CrmDocumentCopyAppService(
                 "No Email delivery integration is registered.", documentType: type.ToString(), channel: channel.ToString(), retryable: false);
         }
 
+        if (!channelSenders.First(s => s.Channel == channel).SendsRealMail)
+        {
+            // A recording stand-in "succeeds" without contacting anyone. Never fetch, claim or report on its behalf.
+            return Fail(CrmDocumentCopyStatus.DeliveryFailed, CrmDocumentCodes.EmailTransportNotReal,
+                "This environment's mail provider only records messages in memory (EmailNotifications:Provider = Recording); nothing can be sent to a customer from here.",
+                documentType: type.ToString(), channel: channel.ToString(), retryable: false);
+        }
+
         var key = idempotencyKey.Trim();
         var requestedRecordId = recordId.Trim();
-        var context = AgentContextId(recipient.CustomerId, recipient.LeadId);
+        var scope = DeliveryScope.ForAgent(recipient.CustomerId, recipient.LeadId);
         var now = timeProvider.GetUtcNow().UtcDateTime;
         var staleAfter = TimeSpan.FromMinutes(Math.Max(1, options.InProgressStaleAfterMinutes));
 
         var existing = await deliveryRepository.GetByKeyAsync(callerEmployeeId, key, cancellationToken);
         if (existing is not null)
         {
-            var replay = ReplayOrNull(existing, context, type, requestedRecordId, channel, now, staleAfter);
+            var replay = ReplayOrNull(existing, scope, type, requestedRecordId, channel, now, staleAfter);
             if (replay is not null)
             {
                 return replay;
@@ -298,28 +307,45 @@ public sealed partial class CrmDocumentCopyAppService(
         }
 
         return await DeliverAsync(
-            callerEmployeeId, key, context, type, requestedRecordId, channel, existing, now,
+            callerEmployeeId, key, type, requestedRecordId, channel, existing, now,
             new DeliveryTarget(
-                recipient.CustomerId, recipient.LeadId, recipient.UnitNumber, recipient.Email, recipient.DisplayName,
-                $"Origin=AgentDesk;DeliveryContext={context}"),
+                scope, recipient.CustomerId, recipient.LeadId, recipient.UnitNumber, recipient.Email, recipient.DisplayName,
+                "Origin=AgentDesk"),
             cancellationToken);
     }
 
-    /// <summary>A stable id for "an agent sending to this customer's lead": SHA-256 of the pair, folded into a Guid. Not a verification session.</summary>
-    internal static Guid AgentContextId(int customerId, int leadId) =>
-        new(SHA256.HashData(Encoding.UTF8.GetBytes($"agent-desk|{customerId}|{leadId}"))[..16]);
+    /// <summary>What idempotency and duplicate checks are scoped to: a real verification session (Genesys), or the agent's CRM customer + lead.</summary>
+    /// <param name="SessionId">The real verification session; null for the agent desk.</param>
+    /// <param name="CustomerId">The CRM customer (agent desk only).</param>
+    /// <param name="LeadId">The CRM lead / unit (agent desk only).</param>
+    private sealed record DeliveryScope(Guid? SessionId, int? CustomerId, int? LeadId)
+    {
+        public bool IsAgent => SessionId is null;
+        public static DeliveryScope ForSession(Guid sessionId) => new(sessionId, null, null);
+        public static DeliveryScope ForAgent(int customerId, int leadId) => new(null, customerId, leadId);
+
+        /// <summary>Genesys keeps its historical fingerprint (session-based); the agent desk's is customer + lead based.</summary>
+        public string FingerprintOf(CrmDocumentType type, string recordId, DocumentDeliveryChannel channel) => IsAgent
+            ? Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes($"agent|{CustomerId}|{LeadId}|{(byte)type}|{recordId}|{(byte)channel}")))
+            : Fingerprint(SessionId!.Value, type, recordId, channel);
+
+        public bool Matches(CrmDocumentDeliveryRequest row) => IsAgent
+            ? row.IsAgentScope(CustomerId!.Value, LeadId!.Value)
+            : row.Origin == DocumentDeliveryOrigin.GenesysVerifiedSession && row.VerificationSessionId == SessionId;
+    }
 
     /// <summary>
     /// Where a document copy goes and what it is about, once ownership has been established by whichever door the
     /// request came through (a verified chatbot session, or a signed-in agent on a customer the agent may see).
     /// </summary>
+    /// <param name="Scope">The idempotency / duplicate scope.</param>
     /// <param name="CustomerId">CRM's customer id.</param>
     /// <param name="LeadId">CRM's lead id: the unit.</param>
     /// <param name="UnitNumber">Shown in a selection list.</param>
     /// <param name="DisplayName">The greeting name.</param>
     /// <param name="Email">CRM's email for this customer — never anything the caller supplied.</param>
     /// <param name="AuditContext">Written into the audit entry: which proof the send rode on.</param>
-    private sealed record DeliveryTarget(int CustomerId, int LeadId, string? UnitNumber, string? Email, string DisplayName, string AuditContext);
+    private sealed record DeliveryTarget(DeliveryScope Scope, int CustomerId, int LeadId, string? UnitNumber, string? Email, string DisplayName, string AuditContext);
 
     /// <summary>
     /// Steps shared by every door: only a record CRM lists for this customer and lead is selected; the send is claimed
@@ -327,7 +353,7 @@ public sealed partial class CrmDocumentCopyAppService(
     /// credential; exactly one email goes out; the outcome is recorded and audited.
     /// </summary>
     private async Task<CrmDocumentCopyResult> DeliverAsync(
-        Guid callerEmployeeId, string key, Guid sessionId, CrmDocumentType type, string? requestedRecordId,
+        Guid callerEmployeeId, string key, CrmDocumentType type, string? requestedRecordId,
         DocumentDeliveryChannel channel, CrmDocumentDeliveryRequest? existing, DateTime now, DeliveryTarget target,
         CancellationToken cancellationToken)
     {
@@ -396,21 +422,28 @@ public sealed partial class CrmDocumentCopyAppService(
         var masked = MaskEmail(destination);
 
         // ---- 6. Second line of duplicate defence: same send under a new key ----
-        var recent = await deliveryRepository.FindRecentSentAsync(
-            sessionId, type, selected.RecordId, channel,
-            now - TimeSpan.FromMinutes(Math.Max(0, options.DuplicateSuppressionMinutes)), cancellationToken);
+        var since = now - TimeSpan.FromMinutes(Math.Max(0, options.DuplicateSuppressionMinutes));
+        var recent = target.Scope.IsAgent
+            ? await deliveryRepository.FindRecentSentForAgentAsync(
+                target.Scope.CustomerId!.Value, target.Scope.LeadId!.Value, type, selected.RecordId, channel, since, cancellationToken)
+            : await deliveryRepository.FindRecentSentAsync(
+                target.Scope.SessionId!.Value, type, selected.RecordId, channel, since, cancellationToken);
         if (recent is not null)
         {
             return SentResult(recent, duplicate: true);
         }
 
         // ---- 7. Claim the send (unique index on caller + key) ----
-        var fingerprint = Fingerprint(sessionId, type, selected.RecordId, channel);
+        var fingerprint = target.Scope.FingerprintOf(type, selected.RecordId, channel);
         CrmDocumentDeliveryRequest claim;
         if (existing is null)
         {
-            claim = new CrmDocumentDeliveryRequest(
-                callerEmployeeId, key, fingerprint, sessionId, type, selected.RecordId, channel, masked, now);
+            claim = target.Scope.IsAgent
+                ? CrmDocumentDeliveryRequest.ForAgentDesk(
+                    callerEmployeeId, key, fingerprint, target.Scope.CustomerId!.Value, target.Scope.LeadId!.Value, type, selected.RecordId,
+                    channel, masked, now)
+                : new CrmDocumentDeliveryRequest(
+                    callerEmployeeId, key, fingerprint, target.Scope.SessionId!.Value, type, selected.RecordId, channel, masked, now);
             await deliveryRepository.AddAsync(claim, cancellationToken);
             try
             {
@@ -515,13 +548,13 @@ public sealed partial class CrmDocumentCopyAppService(
 
     /// <summary>The answer to a request whose key already has a row — or null when a failed/abandoned row should be retried.</summary>
     private CrmDocumentCopyResult? ReplayOrNull(
-        CrmDocumentDeliveryRequest existing, Guid sessionId, CrmDocumentType type, string? requestedRecordId,
+        CrmDocumentDeliveryRequest existing, DeliveryScope scope, CrmDocumentType type, string? requestedRecordId,
         DocumentDeliveryChannel channel, DateTime now, TimeSpan staleAfter)
     {
         // The key is bound to what it first sent. The record is compared only
         // when the replay names one: a retry that omits recordId (single match)
         // is the same request.
-        var sameRequest = existing.VerificationSessionId == sessionId
+        var sameRequest = scope.Matches(existing)
             && existing.DocumentType == type
             && existing.Channel == channel
             && (requestedRecordId is null || string.Equals(existing.CrmRecordId, requestedRecordId, StringComparison.Ordinal));

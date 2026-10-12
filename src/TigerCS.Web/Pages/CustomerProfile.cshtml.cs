@@ -157,7 +157,6 @@ public sealed class CustomerProfileModel(
         DocumentsPanel = DocumentsTabActive
             ? await documentsPanelLoader.LoadAsync(customerKey, unit, DocumentsNotice, DocumentsNoticeIsError, cancellationToken)
             : CustomerDocumentsPanelLoader.Deferred(customerKey, unit);
-        DocumentsPanel.CanSend = !TigerCS.Domain.Modules.IdentityAndAccess.Roles.IsReadOnlyCaller(Viewer?.Roles ?? []);
 
         return Page();
     }
@@ -169,7 +168,6 @@ public sealed class CustomerProfileModel(
     public async Task<IActionResult> OnGetDocumentsPanelAsync(string customerKey, int? unit, CancellationToken cancellationToken)
     {
         var panel = await documentsPanelLoader.LoadAsync(customerKey, unit, null, false, cancellationToken);
-        panel.CanSend = !TigerCS.Domain.Modules.IdentityAndAccess.Roles.IsReadOnlyCaller(CurrentUser.FromPrincipal(User)?.Roles ?? []);
         return Partial("_CustomerDocumentsTab", panel);
     }
 

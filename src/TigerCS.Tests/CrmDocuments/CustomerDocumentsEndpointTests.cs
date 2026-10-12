@@ -5,13 +5,18 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using TigerCS.Application.Modules.CrmDocuments.Abstractions;
+using TigerCS.Application.Modules.CrmDocuments.Services;
 using TigerCS.Application.Modules.CustomerVerification.CrmIntegration;
 using TigerCS.Application.Modules.CustomerVerification.Dto;
 using TigerCS.Application.Modules.IdentityAndAccess.Dto;
 using TigerCS.Application.Modules.Notifications.Abstractions;
 using TigerCS.Application.Modules.Ticketing.Dto;
 using TigerCS.Domain.Modules.IdentityAndAccess;
+using TigerCS.Domain.Modules.CustomerVerification;
 using TigerCS.Domain.Modules.SlaAndEscalation;
+using TigerCS.Infrastructure.Persistence;
+using Microsoft.EntityFrameworkCore;
 using TigerCS.Integrations.Modules.CrmIntegration;
 using TigerCS.Integrations.Modules.EmailIntegration;
 using TigerCS.Tests.CustomerVerification.Fakes;
@@ -143,12 +148,37 @@ public sealed class CustomerDocumentsEndpointTests : IDisposable
         }
     }
 
+    /// <summary>
+    /// The test host's mail sender is the in-memory recorder, which truthfully reports it is not real mail. Tests that exercise
+    /// the send path stand in for a configured SMTP provider by wrapping the real email channel and claiming it is real; the
+    /// message still lands in the recorder so the attachment can be read back.
+    /// </summary>
+    private sealed class ClaimsRealMailChannel(IDocumentDeliveryChannelSender inner) : IDocumentDeliveryChannelSender
+    {
+        public DocumentDeliveryChannel Channel => inner.Channel;
+        public bool SendsRealMail => true;
+        public Task<DocumentDeliveryResult> SendAsync(DocumentDeliveryMessage message, CancellationToken cancellationToken = default) =>
+            inner.SendAsync(message, cancellationToken);
+    }
+
     private readonly StubCrm _crm = new();
     private readonly TigerCsApiFactory _factory;
 
     public CustomerDocumentsEndpointTests() => _factory = CreateFactory(enabled: true, configure: null);
 
-    private TigerCsApiFactory CreateFactory(bool enabled, Action<IServiceCollection>? configure) => new()
+    private TigerCsApiFactory CreateFactory(bool enabled, Action<IServiceCollection>? configure, bool claimsRealMail = true, string[]? sendRoles = null)
+    {
+        var factory = BuildFactory(enabled, configure, claimsRealMail);
+        // Unset keeps the shipped default (CS Agent, CS Supervisor, CS Manager); a configured list replaces it.
+        for (var i = 0; sendRoles is not null && i < sendRoles.Length; i++)
+        {
+            factory.ExtraConfiguration[$"CrmDocuments:AgentSendRoles:{i}"] = sendRoles[i];
+        }
+
+        return factory;
+    }
+
+    private TigerCsApiFactory BuildFactory(bool enabled, Action<IServiceCollection>? configure, bool claimsRealMail) => new()
     {
         ExtraConfiguration =
         {
@@ -159,6 +189,13 @@ public sealed class CustomerDocumentsEndpointTests : IDisposable
         },
         ExtraServices = services =>
         {
+            if (claimsRealMail)
+            {
+                services.RemoveAll<IDocumentDeliveryChannelSender>();
+                services.AddScoped<IDocumentDeliveryChannelSender>(sp =>
+                    new ClaimsRealMailChannel(ActivatorUtilities.CreateInstance<EmailDocumentDeliveryChannelSender>(sp)));
+            }
+
             services.RemoveAll<ICrmBuyerLookupGateway>();
             services.AddHttpClient<ICrmBuyerLookupGateway, CrmBuyerHttpGateway>(c => c.BaseAddress = new Uri(CrmBase))
                 .ConfigurePrimaryHttpMessageHandler(() => _crm.Handler);
@@ -578,7 +615,7 @@ public sealed class CustomerDocumentsEndpointTests : IDisposable
     }
 
     [Fact]
-    public async Task Send_ForAReadOnlyRole_IsRefused_AndNothingIsMailed()
+    public async Task Send_ForARoleWithoutTheSendGrant_IsRefused_AndNothingIsMailed()
     {
         var admin = await ClientAsync();
         await CreateCrmCustomerTicketAsync(admin);
@@ -661,5 +698,191 @@ public sealed class CustomerDocumentsEndpointTests : IDisposable
         Assert.Equal(HttpStatusCode.ServiceUnavailable, send.StatusCode);
         Assert.Equal("DOCUMENT_COPY_DISABLED", (await JsonAsync(send)).GetProperty("code").GetString());
         Assert.Empty(factory.Services.GetRequiredService<RecordingEmailSender>().Recorded);
+    }
+
+    // =====================================================================
+    //  Explicit send permission
+    // =====================================================================
+
+    [Fact]
+    public async Task ARoleThatMaySeeTheCustomer_ButHasNoSendGrant_CanListAndOpen_ButNotSend()
+    {
+        // CS Agent sees every customer; with the grant narrowed to CS Manager it can read but not send.
+        using var factory = CreateFactory(enabled: true, configure: null, sendRoles: [Roles.CsManager]);
+        var admin = await ClientAsync(factory: factory);
+        await CreateCrmCustomerTicketAsync(admin, factory);
+        var agent = await ClientAsync(Roles.CsAgent, factory);
+        _crm.Requests.Clear();
+
+        var list = await JsonAsync(await agent.GetAsync($"/api/customers/{Key}/documents?crmLeadId=12345"));
+        var open = await agent.GetAsync($"/api/customers/{Key}/documents/12345/Contract/5001/file");
+        _crm.Requests.Clear();
+        var send = await agent.SendAsync(Send(Key, new { crmLeadId = 12345, documentType = "Contract", recordId = "5001" }, NewKey()));
+
+        Assert.Equal("Ready", list.GetProperty("status").GetString());
+        Assert.False(list.GetProperty("send").GetProperty("available").GetBoolean());
+        Assert.Contains("has not been granted permission", list.GetProperty("send").GetProperty("unavailableReason").GetString());
+        Assert.Equal(HttpStatusCode.OK, open.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, send.StatusCode);
+        Assert.Equal("DOCUMENT_SEND_NOT_PERMITTED", (await JsonAsync(send)).GetProperty("code").GetString());
+        Assert.Empty(_crm.Requests); // refused before the customer was even resolved
+        Assert.Empty(factory.Services.GetRequiredService<RecordingEmailSender>().Recorded);
+        Assert.Empty(await DeliveryRowsAsync(factory));
+
+        // ...and the role that holds the grant can.
+        var manager = await ClientAsync(Roles.CsManager, factory);
+        var ok = await manager.SendAsync(Send(Key, new { crmLeadId = 12345, documentType = "Contract", recordId = "5001" }, NewKey()));
+        Assert.Equal(HttpStatusCode.OK, ok.StatusCode);
+    }
+
+    [Theory]
+    [InlineData(Roles.CsAgent)]
+    [InlineData(Roles.CsSupervisor)]
+    [InlineData(Roles.CsManager)]
+    public async Task TheShippedDefaultGrant_CoversCsAgentSupervisorAndManager(string role)
+    {
+        var admin = await ClientAsync();
+        await CreateCrmCustomerTicketAsync(admin);
+        var client = await ClientAsync(role);
+
+        var response = await client.SendAsync(Send(Key, new { crmLeadId = 12345, documentType = "Contract", recordId = "5001" }, NewKey()));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task ADepartmentEmployeeWhoCanSeeTheCustomer_IsNotGrantedSending()
+    {
+        var admin = await ClientAsync();
+        var departmentId = await CreateCrmCustomerTicketAsync(admin);
+        var (username, password, employeeId) = await _factory.SeedEmployeeAsync(Roles.DepartmentEmployee);
+        await _factory.AssignDepartmentAsync(employeeId, departmentId); // visibility via membership, not via the grant
+        var client = _factory.CreateClient();
+        var login = await (await client.PostAsJsonAsync("/api/auth/login", new LoginRequestDto(username, password))).Content.ReadFromJsonAsync<LoginResponseDto>();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", login!.AccessToken);
+
+        var list = await JsonAsync(await client.GetAsync($"/api/customers/{Key}/documents?crmLeadId=12345"));
+        var send = await client.SendAsync(Send(Key, new { crmLeadId = 12345, documentType = "Contract", recordId = "5001" }, NewKey()));
+
+        Assert.Equal("Ready", list.GetProperty("status").GetString()); // can see it...
+        Assert.False(list.GetProperty("send").GetProperty("available").GetBoolean());
+        Assert.Equal(HttpStatusCode.Forbidden, send.StatusCode); // ...cannot send it
+        Assert.Equal("DOCUMENT_SEND_NOT_PERMITTED", (await JsonAsync(send)).GetProperty("code").GetString());
+    }
+
+    [Fact]
+    public async Task TheDestinationIsAlwaysCrmsAddress_EvenIfTheRequestTriesToSupplyOne()
+    {
+        var client = await ReadyClientAsync();
+
+        var response = await client.SendAsync(Send(Key, new { crmLeadId = 12345, documentType = "Contract", recordId = "5001", email = "attacker@evil.test", to = "attacker@evil.test", destination = "attacker@evil.test" }, NewKey()));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var mail = Assert.Single(Mailbox.Recorded);
+        Assert.Equal(BuyerEmail, mail.ToAddress);
+        Assert.DoesNotContain("evil.test", mail.ToAddress);
+    }
+
+    // =====================================================================
+    //  Persistence: agent-origin rows are explicit; Genesys rows keep real sessions
+    // =====================================================================
+
+    private static async Task<List<CrmDocumentDeliveryRequest>> DeliveryRowsAsync(TigerCsApiFactory factory)
+    {
+        using var scope = factory.Services.CreateScope();
+        return await scope.ServiceProvider.GetRequiredService<TigerCsDbContext>().CrmDocumentDeliveryRequests.AsNoTracking().ToListAsync();
+    }
+
+    [Fact]
+    public async Task AnAgentSend_IsStoredWithAnExplicitOrigin_ItsCrmScope_AndNoVerificationSession()
+    {
+        var client = await ReadyClientAsync();
+
+        await client.SendAsync(Send(Key, new { crmLeadId = 12345, documentType = "Contract", recordId = "5002" }, NewKey()));
+
+        var row = Assert.Single(await DeliveryRowsAsync(_factory));
+        Assert.Equal(DocumentDeliveryOrigin.AgentDesk, row.Origin);
+        Assert.Null(row.VerificationSessionId); // nothing invented in the session column
+        Assert.Equal(9001, row.CrmCustomerId);
+        Assert.Equal(12345, row.CrmLeadId);
+        Assert.Equal(CrmDocumentType.Contract, row.DocumentType);
+        Assert.Equal("5002", row.CrmRecordId);
+        Assert.Equal(DocumentDeliveryStatus.Sent, row.Status);
+        Assert.NotNull(row.SentAtUtc);
+        Assert.Equal("a***@e***.test", row.MaskedDestination);
+        Assert.DoesNotContain(BuyerEmail, row.MaskedDestination); // never the full address
+    }
+
+    [Fact]
+    public async Task TwoAgentsSendingTheSameDocumentUnderDifferentKeys_EmailItOnce_AndTheSecondIsToldSo()
+    {
+        var first = await ReadyClientAsync();
+        var second = await ClientAsync();
+        var body = new { crmLeadId = 12345, documentType = "Contract", recordId = "5001" };
+
+        var a = await JsonAsync(await first.SendAsync(Send(Key, body, NewKey())));
+        var b = await JsonAsync(await second.SendAsync(Send(Key, body, NewKey())));
+
+        Assert.False(a.GetProperty("duplicate").GetBoolean());
+        Assert.True(b.GetProperty("duplicate").GetBoolean());
+        Assert.Single(Mailbox.Recorded);
+        Assert.Single(await DeliveryRowsAsync(_factory)); // the suppressed one wrote no second row
+    }
+
+    [Fact]
+    public async Task TheSameDocumentOfAnotherUnit_IsNotSuppressedByAnEarlierUnitsSend()
+    {
+        var client = await ReadyClientAsync();
+        _crm.Documents[(12346, "TigerContract")] = [("5001", "Same id, other unit.pdf")]; // a record id reused under another lead
+
+        await client.SendAsync(Send(Key, new { crmLeadId = 12345, documentType = "Contract", recordId = "5001" }, NewKey()));
+        var other = await JsonAsync(await client.SendAsync(Send(Key, new { crmLeadId = 12346, documentType = "Contract", recordId = "5001" }, NewKey())));
+
+        Assert.False(other.GetProperty("duplicate").GetBoolean());
+        Assert.Equal(2, Mailbox.Recorded.Count);
+        var leads = (await DeliveryRowsAsync(_factory)).Select(r => r.CrmLeadId!.Value).Order().ToList();
+        Assert.Equal(new[] { 12345, 12346 }, leads);
+    }
+
+    [Fact]
+    public async Task AKeyReusedForADifferentUnit_IsAnIdempotencyConflict()
+    {
+        var client = await ReadyClientAsync();
+        var key = NewKey();
+        await client.SendAsync(Send(Key, new { crmLeadId = 12345, documentType = "Contract", recordId = "5001" }, key));
+
+        var reused = await client.SendAsync(Send(Key, new { crmLeadId = 12346, documentType = "Contract", recordId = "5003" }, key));
+
+        Assert.Equal(HttpStatusCode.Conflict, reused.StatusCode);
+        Assert.Single(Mailbox.Recorded);
+    }
+
+    // =====================================================================
+    //  The Recording mail provider is never presented as real delivery
+    // =====================================================================
+
+    [Fact]
+    public async Task WithTheRecordingMailProvider_SendingIsUnavailable_Refused_AndNothingIsFetchedClaimedOrRecorded()
+    {
+        using var factory = CreateFactory(enabled: true, configure: null, claimsRealMail: false);
+        var client = await ClientAsync(factory: factory);
+        await CreateCrmCustomerTicketAsync(client, factory);
+
+        var list = await JsonAsync(await client.GetAsync($"/api/customers/{Key}/documents?crmLeadId=12345"));
+        _crm.Requests.Clear();
+        var send = await client.SendAsync(Send(Key, new { crmLeadId = 12345, documentType = "Contract", recordId = "5001" }, NewKey()));
+
+        var sendInfo = list.GetProperty("send");
+        Assert.False(sendInfo.GetProperty("available").GetBoolean());
+        Assert.Contains("only records messages in memory", sendInfo.GetProperty("unavailableReason").GetString());
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, send.StatusCode);
+        var problem = await JsonAsync(send);
+        Assert.Equal("EMAIL_TRANSPORT_NOT_REAL", problem.GetProperty("code").GetString());
+        Assert.DoesNotContain("accepted", problem.GetRawText(), StringComparison.OrdinalIgnoreCase);
+        Assert.Empty(_crm.FileCalls);
+        Assert.Empty(factory.Services.GetRequiredService<RecordingEmailSender>().Recorded);
+        Assert.Empty(await DeliveryRowsAsync(factory));
+        // Viewing is unaffected.
+        Assert.Equal(HttpStatusCode.OK, (await client.GetAsync($"/api/customers/{Key}/documents/12345/Contract/5001/file")).StatusCode);
     }
 }

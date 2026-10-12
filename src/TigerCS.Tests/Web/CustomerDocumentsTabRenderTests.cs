@@ -237,15 +237,27 @@ public sealed class CustomerDocumentsTabRenderTests : IDisposable
     }
 
     [Fact]
-    public async Task AReadOnlyViewer_CanOpenButNotSend()
+    public async Task AViewerWithoutTheSendGrant_SeesTheApisReason_CanOpen_AndEverySendButtonIsDisabled()
     {
         _api.Units = [Unit1];
-        _role.Role = Roles.ReportingUser;
+        _api.SendReason = "Your role has not been granted permission to send documents to customers (CrmDocuments:AgentSendRoles). You can still open and download them.";
         var html = await Ok(await Client().GetAsync("/Customers/crm:9001?tab=documents"));
 
-        Assert.Contains("Your role is read-only", html, StringComparison.Ordinal);
+        Assert.Contains("has not been granted permission to send documents", html, StringComparison.Ordinal);
         Assert.All(Regex.Matches(html, "<button type=\"submit\"[^>]*data-document-send>"), b => Assert.Contains("disabled", b.Value, StringComparison.Ordinal));
         Assert.Contains(">Open</a>", html, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task WithTheRecordingMailProvider_TheTabSaysNothingCanBeSent_AndNeverOffersToSend()
+    {
+        _api.Units = [Unit1];
+        _api.SendReason = "This environment's mail provider only records messages in memory (EmailNotifications:Provider = Recording), so nothing can be sent to a customer. Use the Smtp provider.";
+        var html = WebUtility.HtmlDecode(await Ok(await Client().GetAsync("/Customers/crm:9001?tab=documents")));
+
+        Assert.Contains("only records messages in memory", html, StringComparison.Ordinal);
+        Assert.DoesNotContain("Accepted for sending", html, StringComparison.Ordinal);
+        Assert.All(Regex.Matches(html, "<button type=\"submit\"[^>]*data-document-send>"), b => Assert.Contains("disabled", b.Value, StringComparison.Ordinal));
     }
 
     // ---------------------------------------------------------------- Open / Download
@@ -346,6 +358,8 @@ public sealed class CustomerDocumentsTabRenderTests : IDisposable
     [InlineData(HttpStatusCode.BadGateway, "DELIVERY_FAILED", "The document could not be delivered right now.", "was not sent")]
     [InlineData(HttpStatusCode.UnprocessableEntity, "DELIVERY_DESTINATION_UNAVAILABLE", "CRM has no valid email address", "was not sent")]
     [InlineData(HttpStatusCode.Forbidden, "RECORD_OWNERSHIP_MISMATCH", "That record does not belong", "was not sent")]
+    [InlineData(HttpStatusCode.Forbidden, "DOCUMENT_SEND_NOT_PERMITTED", "Your role has not been granted permission to send documents to customers.", "was not sent")]
+    [InlineData(HttpStatusCode.ServiceUnavailable, "EMAIL_TRANSPORT_NOT_REAL", "only records messages in memory", "was not sent")]
     public async Task Send_Failures_AreShownAsNotSent_WithTheServicesOwnReason(HttpStatusCode status, string code, string detail, string lead)
     {
         _api.SendFailure = (status, code, detail);

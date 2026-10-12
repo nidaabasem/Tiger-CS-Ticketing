@@ -1,4 +1,5 @@
 using TigerCS.Domain.Modules.CustomerVerification;
+using TigerCS.Domain.Modules.IdentityAndAccess;
 
 namespace TigerCS.Application.Modules.CrmDocuments;
 
@@ -23,6 +24,20 @@ public sealed class CrmDocumentOptions
     /// </summary>
     public List<string> AcceptedVerificationMethods { get; set; } =
         [nameof(VerificationMethod.Otp), nameof(VerificationMethod.AuthenticatedDigitalUser)];
+
+    /// <summary>
+    /// Roles granted the agent desk's <b>Send to customer</b> (Customer Details → Documents). This is a separate grant from being
+    /// able to see the customer or open their files: a role not listed can do both of those and still cannot send. The System
+    /// Administrator override (ADR-0024) applies as everywhere else. Unset (null) means the shipped default
+    /// (<see cref="DefaultAgentSendRoles"/>); when configured the list <b>replaces</b> the default (the configuration binder would otherwise
+    /// append to it and a role could never be taken away).
+    /// </summary>
+    public List<string>? AgentSendRoles { get; set; }
+
+    public static readonly IReadOnlyList<string> DefaultAgentSendRoles = [Roles.CsAgent, Roles.CsSupervisor, Roles.CsManager];
+
+    /// <summary>The roles that hold the send grant, after applying the default.</summary>
+    public IReadOnlyList<string> EffectiveAgentSendRoles => AgentSendRoles is { Count: > 0 } configured ? configured : DefaultAgentSendRoles;
 
     /// <summary>Largest document sent as an attachment. Bigger answers DELIVERY_FAILED/DOCUMENT_TOO_LARGE rather than risking a mailbox rejection.</summary>
     public int MaxAttachmentBytes { get; set; } = 10 * 1024 * 1024;

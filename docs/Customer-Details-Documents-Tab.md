@@ -38,26 +38,61 @@ The Web page (`/Customers/{key}`) adds `?handler=DocumentsPanel` (lazy tab fragm
   claim, server-side download, size/type checks, one email, audit) but takes its proof from the agent's access to the customer (rules 1–4 above).
 * **"Accepted" is not "delivered".** `Sent` means the SMTP server accepted the message. TigerCS has no delivery receipt, bounce feed or read receipt, so
   the UI says *"Accepted for sending … Accepted is not delivered"* and never "delivered". A repeat within 15 minutes says *"Not sent again"*.
-* **Prerequisites (otherwise Send is disabled with the reason shown):** `CrmDocuments:Enabled=true` (ships `false`; a Production host refuses to start with it
-  on unless `CrmDocuments:AllowInProduction=true`), `EmailNotifications:Enabled=true` with the `Smtp` provider (the `Recording` provider records in memory and
-  sends nothing), a valid email in CRM, and at least one document. Listing/Open/Download do **not** depend on `CrmDocuments:Enabled`.
-* **Audit/idempotency:** one `CrmDocumentDeliveryRequests` row and a `CrmDocumentCopySent` audit entry per send (`Origin=AgentDesk`). There is no verification
-  session on this path, so the row's `VerificationSessionId` holds a stable surrogate (SHA-256 of customer + lead), which also lets the 15-minute duplicate
-  suppression stop two agents emailing the same file. No migration was needed.
+* **Explicit send permission.** Seeing a customer or opening their files does not allow sending. Sending needs a role in
+  `CrmDocuments:AgentSendRoles` (default: CS Agent, CS Supervisor, CS Manager; System Administrator via the standard override). A configured list
+  **replaces** the default. Checked first on every send, before the customer is resolved or CRM is called; refused with `403 DOCUMENT_SEND_NOT_PERMITTED`,
+  and the tab shows the reason with the buttons disabled. The destination is always CRM's email for the customer; the request has no address field.
+* **Recording mail provider.** `EmailNotifications:Provider=Recording` keeps messages in memory and reports "Sent" without contacting anyone. The agent
+  desk checks `IEmailSender.SendsRealMail` and, when false, shows "only records messages in memory… Use the Smtp provider", disables Send, and refuses a
+  request with `503 EMAIL_TRANSPORT_NOT_REAL` — before any download, claim or row. It can therefore never show "Accepted for sending".
+* **Other prerequisites (otherwise Send is disabled with the reason shown):** `CrmDocuments:Enabled=true` (ships `false`; a Production host refuses to start
+  with it on unless `CrmDocuments:AllowInProduction=true`), `EmailNotifications:Enabled=true` with the `Smtp` provider, a valid email in CRM, and at least one
+  document. Listing/Open/Download do **not** depend on `CrmDocuments:Enabled` or on the send grant.
 
-## UAT (needs real CRM, real SMTP and a mailbox you can read)
+## Delivery persistence (`CrmDocumentDeliveryRequests`)
 
-Pre-reqs: `Crm:Provider=Http` with `Crm:BaseUrl`/`Crm:SecretKey`; `CrmDocuments:Enabled=true`; `EmailNotifications:Enabled=true`, `Provider=Smtp`.
-Use a CRM customer you control whose CRM email is a mailbox you can read, with two units that have different documents.
+Migration `AddAgentDeskDocumentDelivery` (script: `AddAgentDeskDocumentDelivery.sql`, idempotent). The table has no foreign key to verification sessions (only
+`CallerEmployeeId → AspNetUsers`); consumers of `VerificationSessionId` are the Genesys replay check, the 15-minute duplicate suppression and the
+`IX_..._SessionDocument` index. The origin is now modelled explicitly:
 
-1. **Retrieval** — Customers → open the customer → **Documents**. With two units the tab asks you to pick one; pick unit A. Check the three groups against CRM
-   (type 4/5/6 attachments of that lead). Pick unit B: A's documents disappear immediately and only B's show.
-2. **Open / Download** — Open a contract (new tab shows it); Download saves it with the CRM attachment name. Compare the bytes/page count with the file in CRM.
-   Try a hand-edited link with another unit's record id → a 403 page, no file.
-3. **Attachment** — Click **Send to customer** on one document. Expect *"Accepted for sending … to x***@y***.com"*. Open the mailbox: one email, subject
-   "Your … — Tiger Properties", the file attached and identical to what Open showed. Click again → *"Not sent again"*; the mailbox still has one email.
-4. **Unavailable reasons** — Turn `CrmDocuments:Enabled` off → button disabled with the reason; remove the customer's CRM email → disabled with the reason.
+| Column | Genesys send | Agent-desk send |
+|---|---|---|
+| `Origin` (tinyint, default 1 for every existing row) | `1` GenesysVerifiedSession | `2` AgentDesk |
+| `VerificationSessionId` (now nullable) | the real verified session | **NULL** |
+| `CrmCustomerId`, `CrmLeadId` (new, nullable) | NULL | the CRM customer and unit |
 
-**Not verified in this repository's sandbox:** nothing here could reach Tiger CRM, a real SMTP relay or a real mailbox, so receipt of a real attachment (step 3)
-and the real CRM file-route authentication (`docs/Genesys/uat/verify-crm-file-auth.sh`) are unverified. Automated tests prove what TigerCS requested of CRM
-and handed to the mail sender, against a stub CRM and the in-memory recording sender.
+A check constraint `CK_CrmDocumentDeliveryRequests_Origin` allows only those two shapes. Idempotency stays the unique `(CallerEmployeeId, IdempotencyKey)`;
+a replay must match its row's origin and scope (session, or customer + lead), so a key used by one door conflicts at the other. Duplicate suppression is
+per scope (`IX_..._SessionDocument` for Genesys, new `IX_..._AgentDocument` for agents): an agent send never suppresses a Genesys send or vice versa; two
+agents sending the same document to the same customer + unit within 15 minutes send one email. Rollback (`Down`) deletes agent-desk rows (they cannot exist
+under the old NOT NULL column). The Genesys flow, its OTP requirements and its fingerprint are unchanged.
+
+## Live UAT — minimal configuration and steps (ALL UNVERIFIED until performed)
+
+Minimal configuration of the **API** host (Web only needs its existing API base URL). Secrets via user-secrets / environment, never committed:
+
+```
+Crm__Provider=Http
+Crm__BaseUrl=https://<crm-host>/            # where GetCustomerDocuments and the file routes live
+Crm__SecretKey=<X-SECRET-KEY value>
+CrmDocuments__Enabled=true                  # (Production also needs CrmDocuments__AllowInProduction=true)
+EmailNotifications__Enabled=true
+EmailNotifications__Provider=Smtp           # NOT Recording
+EmailNotifications__SmtpHost=<host>  EmailNotifications__SmtpPort=587  (+ the sender/credentials keys the Smtp provider requires)
+# optional: CrmDocuments__AgentSendRoles__0="CS Agent"  (default already grants CS Agent / Supervisor / Manager)
+```
+
+Apply the schema first: `AddAgentDeskDocumentDelivery.sql` (or `dotnet ef database update`). Test data: a CRM customer you control whose **CRM email is a
+mailbox you can read**, two units with different documents, and a TigerCS ticket for that customer (so it appears in Customers).
+
+1. **CRM download authentication** — from a machine that reaches CRM run `docs/Genesys/uat/verify-crm-file-auth.sh` (checks the `fileUrl` route with and without
+   `X-SECRET-KEY`). Then, signed in as a CS Agent, open the customer → Documents → pick a unit → **Open** a document. Pass = the real file renders; a
+   `CRM_AUTHENTICATION_FAILED` / `CRM_ACCESS_DENIED` / `CRM_INVALID_RESPONSE` error naming the cause means the file route rejects the credential or serves HTML.
+   Compare the file with the one in CRM (bytes/page count). Repeat with a hand-edited link carrying another unit's record id → must be a 403 page.
+2. **One real attachment over SMTP** — click **Send to customer** once on one document. Expect "Accepted for sending … to x***@y***" (the SMTP server accepted it).
+   Then, in the customer's mailbox, find exactly one email "Your … — Tiger Properties" with the file attached and identical to step 1's file. That mailbox check is the only
+   evidence of receipt; "accepted" is not "delivered". Click again within 15 minutes → "Not sent again", still one email.
+3. **Guard rails (optional, quick):** with `Provider=Recording` the tab says nothing can be sent; a role outside `AgentSendRoles` sees the reason and disabled buttons.
+
+**Unverified here:** steps 1 and 2 (no CRM, SMTP relay or mailbox were reachable from the build sandbox), and the new migration against a real SQL Server (the script was
+generated by EF Core but not executed; tests use the in-memory provider, so the check constraint is not exercised by them).

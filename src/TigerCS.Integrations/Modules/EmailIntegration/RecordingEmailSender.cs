@@ -42,6 +42,9 @@ public sealed class RecordingEmailSender(ILogger<RecordingEmailSender> logger) :
 
     private readonly ConcurrentQueue<RecordedEmail> _recorded = new();
 
+    /// <summary>This adapter keeps messages in memory; nothing leaves the process.</summary>
+    public bool SendsRealMail => false;
+
     public IReadOnlyCollection<RecordedEmail> Recorded => _recorded.ToArray();
 
     public Task<EmailSendResult> SendAsync(EmailMessage message, CancellationToken cancellationToken = default)
