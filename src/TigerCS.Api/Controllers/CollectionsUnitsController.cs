@@ -21,7 +21,7 @@ public sealed class CollectionsUnitsController(
 {
     /// <summary>
     /// Payment Summary of one unit, found by its tower + unit code (<c>TP140-101</c>), never by a phone number. The customer comes from CRM first (an eligible, not cancelled
-    /// Sold / Contract sale of the same unit), PACT completes what CRM lacks; amounts and instalments come from PACT for that unit only (due today or earlier, Due + Overdue).
+    /// Sold / Contract sale of the same unit), PACT completes what CRM lacks; amounts and instalments come from PACT for that unit only (Due / Overdue / Total: due today or earlier; <c>Payments</c>: the Payment tab figures - the Dubai month's Due and Overdue, the whole remaining balance and the full unpaid schedule, with Total / Paid null because the snapshot holds neither).
     /// A missing PACT mobile does not matter. "PACT holds nothing" is reported as <c>NoFinancialData</c>, never as zero.
     /// </summary>
     /// <param name="unitCode">The unit code, with or without the <c>TP</c> prefix; a cancelled code (containing <c>*</c>), <c>0</c> or empty is refused.</param>

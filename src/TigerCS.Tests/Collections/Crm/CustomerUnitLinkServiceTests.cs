@@ -68,7 +68,7 @@ public sealed class CustomerUnitLinkServiceTests
             Reads.Add((unitKey, companyId));
             if (Throw) throw new PactReceivablesSourceException("PACT receivables are unavailable.");
             var ids = Identities.Where(i => CollectionsUnitKey.Normalize(i.UnitCode) == unitKey && (companyId is null || i.CompanyId == companyId)).ToList();
-            var instalments = Instalments.Where(n => ids.Any(i => i.CompanyId == n.CompanyId && i.TenantId == n.TenantId && i.UnitId == n.UnitId) && n.RemainingAmount > 0 && n.DueDate <= today).ToList();
+            var instalments = Instalments.Where(n => ids.Any(i => i.CompanyId == n.CompanyId && i.TenantId == n.TenantId && i.UnitId == n.UnitId) && n.RemainingAmount > 0).ToList();   // like the real read: future instalments too
             var links = CrmLinks.Where(l => l.Key.Key == unitKey && (companyId is null || l.Key.Company == companyId)).ToDictionary(l => l.Key.Company, l => l.Value);
             var snapshot = new SnapshotStatusDto(LoadedCompanies.Select(c => new SnapshotCompanyStatusDto(c, "Co" + c, true, Now, Now, "Succeeded", null, 0, 10, null, null, 0, 0, 0, 0, 0, 0, "Fresh", 1)).ToList(), [], 120);
             return Task.FromResult(new PactUnitReceivables(snapshot, ids, instalments, links, true, Now));

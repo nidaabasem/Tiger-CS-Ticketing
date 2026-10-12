@@ -6,6 +6,19 @@ public sealed record CollectionsUnitPartyDto(string Name, string Mobile, string 
 /// <summary>One unpaid instalment of the unit due today or earlier (Dubai). Original / paid are null when PACT did not return them (never estimated).</summary>
 public sealed record CollectionsUnitInstalmentDto(string Description, DateOnly DueDate, decimal? OriginalAmount, decimal? PaidAmount, decimal RemainingAmount, string Status, int? DaysLate);
 
+/// <summary>One payment of the unit's schedule. <c>Status</c>: <c>Overdue</c> (due before the first day of the current Dubai month), <c>Due</c> (due in the current Dubai month, any day) or <c>NotYetDue</c> (after it). Scheduled / paid are null when the source did not return them (never estimated).</summary>
+public sealed record CollectionsUnitScheduleLineDto(string Description, DateOnly DueDate, decimal? ScheduledAmount, decimal? PaidAmount, decimal RemainingAmount, string Status, int? DaysLate);
+
+/// <summary>
+/// The Payment tab's figures of ONE unit, each from the source that really holds it. Remaining balance, due this month and overdue come from the PACT receivables snapshot, which holds every
+/// UNPAID instalment of the unit (future ones included): Overdue = due before the first day of the current Dubai month, Due this month = due anywhere in that month, and
+/// Remaining balance = every unpaid instalment, future ones too (it is NOT Due + Overdue). Total and paid amounts are null ("Unavailable") because the snapshot holds neither: a fully paid
+/// instalment is not stored, and EDSM's payment summary is per customer and company, not per unit, so nothing here is inferred from the snapshot's unpaid rows.
+/// </summary>
+public sealed record CollectionsUnitPaymentFiguresDto(
+    decimal? TotalAmount, decimal? PaidAmount, decimal RemainingBalance, decimal DueThisMonth, decimal Overdue,
+    DateOnly MonthStart, DateOnly MonthEnd, IReadOnlyList<CollectionsUnitScheduleLineDto> Schedule, DateTime? LastUpdatedUtc, string? TotalAndPaidUnavailableReason);
+
 /// <summary>
 /// Payment Summary of ONE unit, found by its tower + unit code (never by a phone number). <c>LinkStatus</c>: <c>Linked</c> (one customer, one PACT account),
 /// <c>NeedsReview</c> (see <c>ReviewReasons</c>: several CRM customers, CRM and PACT contacts disagree, several PACT accounts) or <c>NotFound</c> (neither CRM nor PACT
@@ -18,4 +31,5 @@ public sealed record CollectionsUnitPaymentSummaryDto(
     string LinkStatus, IReadOnlyList<string> ReviewReasons,
     CollectionsUnitPartyDto Customer, string CrmStatus, int? CrmCustomerId, int? CrmUnitId, string? PactTenantId, int? PactUnitId,
     string FinancialStatus, string? FinancialDetail, decimal? Due, decimal? Overdue, decimal? Total,
-    IReadOnlyList<CollectionsUnitInstalmentDto> Instalments, DateOnly AsOf, DateTime? PactReadAtUtc, string PactFreshness, string? FinancialReason = null);
+    IReadOnlyList<CollectionsUnitInstalmentDto> Instalments, DateOnly AsOf, DateTime? PactReadAtUtc, string PactFreshness, string? FinancialReason = null,
+    CollectionsUnitPaymentFiguresDto? Payments = null);

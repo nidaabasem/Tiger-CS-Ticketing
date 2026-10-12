@@ -282,7 +282,7 @@ public sealed partial class RcvRealSqlTests
         var unit = await Source().ReadUnitAsync("TP101-101", null, Today, default);
         Assert.Equal([4, 32], unit.Identities.Select(i => i.CompanyId).Order());
         Assert.Equal(["A2", "A1"], unit.Instalments.Where(i => i.CompanyId == 4).Select(i => i.VoucherNumber));
-        Assert.DoesNotContain(unit.Instalments, i => i.DueDate > Today);
+        // Future instalments are returned too (Remaining Balance / Not yet due); the application classifies by date.
         var dubaiOnly = await Source().ReadUnitAsync("TP101-101", 4, Today, default);
         Assert.Equal([4], dubaiOnly.Identities.Select(i => i.CompanyId));
         Assert.Empty((await Source().ReadUnitAsync("TP103-513*", null, Today, default)).Identities);       // a cancelled apartment has no summary

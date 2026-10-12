@@ -218,7 +218,7 @@ GO
   Payment Summary by unit.  @UnitKey is the normalised key (TP140-101); @CompanyId narrows to one company (NULL = every company that holds the unit).
     1 status        usp_CollectionsRcv_GetStatus
     2 identities    per (company, tenant, unit): the PACT customer of the unit (name / mobile / e-mail as PACT holds them - mobile may be empty), tower, payment count
-    3 instalments   the unit's unpaid payments due on or before @AsOfDate, newest first
+    3 instalments   ALL the unit's unpaid payments (future ones included), newest first; the application classifies them (@AsOfDate is kept for compatibility)
     4 crm           the CRM link of the unit (usp_Collections_GetCrmUnitLinks shape), all companies
   Rows with UnitID <= 0 or a cancelled ('*') / blank / 0 code never match.
 */
@@ -256,7 +256,7 @@ BEGIN
     SELECT s.CompanyId, s.TenantId COLLATE DATABASE_DEFAULT AS TenantId, s.UnitId, s.VoucherNumber, s.ChequeNumber, s.DueDate, s.Amount AS RemainingAmount, s.SourceStatus
       FROM #k k
       JOIN dbo.CollectionsRcvLine s ON s.CompanyId = k.CompanyId AND s.RunId = k.RunId AND s.TenantId = k.TenantId AND s.UnitId = k.UnitId
-     WHERE s.UnitCode = k.UnitCode AND s.Amount > 0 AND s.DueDate <= @AsOfDate
+     WHERE s.UnitCode = k.UnitCode AND s.Amount > 0   -- ALL unpaid instalments of the unit, future ones too: the Payment tab's Remaining Balance and its Not yet due rows; the application classifies by date
      ORDER BY k.CompanyId, k.TenantId, k.UnitId, s.DueDate DESC, s.VoucherNumber COLLATE Latin1_General_BIN2, s.LineId;
 
     SELECT l.CompanyId, l.UnitKey, l.Customers, l.CustomerId, l.CrmUnitId, l.LeadId, l.FullName, l.PhoneNorm, l.EmailNorm
