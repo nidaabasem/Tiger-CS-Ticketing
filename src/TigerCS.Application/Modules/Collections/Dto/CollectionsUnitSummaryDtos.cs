@@ -3,7 +3,7 @@ namespace TigerCS.Application.Modules.Collections.Dto;
 /// <summary>The customer of a unit as linked from CRM and PACT. Every value carries where it came from (<c>Crm</c>, <c>Pact</c> or empty when nobody has it).</summary>
 public sealed record CollectionsUnitPartyDto(string Name, string Mobile, string Email, string NameSource, string MobileSource, string EmailSource);
 
-/// <summary>One unpaid instalment of the unit due today or earlier (Dubai). Original / paid are null when PACT did not return them (never estimated).</summary>
+/// <summary>One unpaid or partly paid instalment of the unit due before the end of the current Dubai month (Overdue: before its first day; Due: inside it, any day). Original / paid are null when PACT did not return them (never estimated).</summary>
 public sealed record CollectionsUnitInstalmentDto(string Description, DateOnly DueDate, decimal? OriginalAmount, decimal? PaidAmount, decimal RemainingAmount, string Status, int? DaysLate);
 
 /// <summary>

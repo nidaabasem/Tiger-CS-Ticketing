@@ -273,7 +273,10 @@ public sealed class CollectionsCampaignAppService(
         if (rows.Any(r => r.CompanyId is not (4 or 32) || string.IsNullOrWhiteSpace(r.TenantId)))
             throw new InvalidDataException("PACT returned a receivable without a valid company/customer identity.");
         // The originals can repeat one instalment under different apartments of the same tenant.
-        var eligibleRows = rows.Where(r => DateOnly.FromDateTime(r.DueDate) >= eligibleStart).ToList();
+        // ELIGIBILITY ends where it always did - at the earlier of To and TODAY - even though the READ scope now reaches the end of the current month. The days of the month still
+        // to come feed only the Due / Total figures; they never make a unit a candidate, never change a stage amount, flag or review reason, and never move a reminder.
+        var eligibleEnd = today is { } t0 && t0 < to ? t0 : to;
+        var eligibleRows = rows.Where(r => DateOnly.FromDateTime(r.DueDate) >= eligibleStart && DateOnly.FromDateTime(r.DueDate) <= eligibleEnd).ToList();
         var ambiguousTenants = eligibleRows.GroupBy(r => (r.CompanyId, Tenant: r.TenantId.Trim()))
             .Where(g => g.GroupBy(r => DateOnly.FromDateTime(r.DueDate))
                 .Any(d => d.Select(r => (r.UnitId, Code: r.UnitCode.Trim())).Distinct().Count() > 1)

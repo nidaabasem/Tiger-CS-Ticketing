@@ -15,13 +15,15 @@ using TigerCS.Tests.Notifications.Fakes;
 namespace TigerCS.Tests.Collections.Rcv.Parity;
 
 /// <summary>
-/// PARITY of the Campaigns evaluation after it moved from SQL (the previous pipeline: dbo.usp_Collections_GetCampaignUnits over dbo.CollectionsReceivable*) to the application (the rebuilt
-/// pipeline: payment rows from dbo.CollectionsRcvLine + CollectionsCampaignAppService.BuildFactsInMemory). Both pipelines are loaded from the SAME fake PACT (generated customers + the hand-written
-/// edge cases of database/collections-receivables/legacy/tests/local-sqlserver/03_edge_cases.sql: ambiguous same-day payments, contradictory status, conflicting contacts, invalid phones / e-mails,
-/// threshold boundaries, former owners, CRM single / ambiguous / conflicting / completing), the SAME service code runs over each, and for 90 scenarios (5 stages x 18 filters) the preview
-/// (every item with every field, the counts Total / Ready / Review, stage amounts, statuses and review reasons) and BOTH CSV exports must be identical. ONLY the ORDER is allowed to differ
-/// (the old engine ordered by customer / unit code, the new one newest payment first), so results are compared as sets keyed by the stable record id, and the new order is asserted separately.
-/// Runs only when TIGERCS_PERF_SQL holds a connection string to the throw-away database that also holds the previous pipeline's objects (never in CI); otherwise it returns immediately.
+/// PARITY of the Campaigns evaluation over the rebuilt pipeline, against an INDEPENDENT reference of the same rules. The production engine is the application evaluation
+/// (CollectionsCampaignAppService.BuildFactsInMemory) over the payment rows <c>usp_CollectionsRcv_GetLines</c> returns (<see cref="RcvReceivablesSource"/>). The reference
+/// (<see cref="PublishedLinesOracle"/>) runs the SAME application evaluation over the published lines read with a plain SELECT and filtered in C#, so any difference is a difference in
+/// what the read procedure returns (window, exclusions, representative contact row). Both therefore apply the CURRENT rule: Due / Overdue against the current Dubai calendar month
+/// (CollectionsDueMonth), stage eligibility up to today, read scope through the end of the month. The previous day-based SQL engine is no longer a reference (it is retired).
+/// The fake PACT is loaded with generated customers + the hand-written edge cases (ambiguous same-day payments, contradictory status, conflicting contacts, invalid phones / e-mails,
+/// threshold boundaries, former owners, CRM single / ambiguous / conflicting / completing); 90 scenarios (5 stages x 18 filters) plus off-schedule dates and the legal release gates compare
+/// every item with every field, the counts Total / Ready / Review and BOTH CSV exports.
+/// Runs only when TIGERCS_PERF_SQL holds a connection string to the throw-away database (never in CI). Without it each test reports SKIPPED (see <see cref="SqlFactAttribute"/>), never passed.
 /// </summary>
 [Collection("RcvRealSql")]
 public sealed class CampaignParityTests
@@ -59,7 +61,7 @@ public sealed class CampaignParityTests
 
     private static IConfiguration Config() => new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["ConnectionStrings:TigerCsDatabase"] = ConnectionString }).Build();
 
-    /// <summary>Loads BOTH pipelines from the same PACT data, once.</summary>
+    /// <summary>Loads the fake PACT (generated + edge data) and the rebuilt snapshot, once.</summary>
     private static async Task EnsureLoaded()
     {
         await Gate.WaitAsync();
@@ -70,16 +72,11 @@ public sealed class CampaignParityTests
             await Exec("UPDATE dbo.FakeConfig SET Tenants = CASE CompanyId WHEN 4 THEN 150 ELSE 100 END, Instalments = 12, DelaySeconds = 0, Shape = CASE WHEN CompanyId = 32 THEN 3 ELSE 1 END;", "PACTRPT");
             await Exec("CREATE OR ALTER PROCEDURE dbo.p32AccountReceivables @StartDate datetime, @EndDate datetime, @MinAmount int AS EXEC dbo.FakeReceivables 32, @StartDate, @EndDate, @MinAmount;", "PACTRPT");
             await RunFile(Path.Combine(legacy, "03_edge_cases.sql"));
-            // previous pipeline
-            await Exec("DELETE FROM dbo.CollectionsReceivableRunCompany; DELETE FROM dbo.CollectionsReceivableRun; TRUNCATE TABLE dbo.CollectionsReceivableSnapshot; TRUNCATE TABLE dbo.CollectionsReceivableUnitText; TRUNCATE TABLE dbo.CollectionsReceivableUnit; TRUNCATE TABLE dbo.CollectionsContactNorm; " +
-                       "DELETE FROM dbo.CollectionsReceivableCompanyState; INSERT dbo.CollectionsReceivableCompanyState (CompanyId) VALUES (4), (32);");
-            await Exec("EXEC dbo.usp_Collections_RefreshReceivables @TriggerSource = N'Parity';");
-            await CollectionsContactNormStore.FillPendingAsync(ConnectionString!, 120, default);
             // new pipeline
             await Exec("DELETE FROM dbo.CollectionsRcvLine; DELETE FROM dbo.CollectionsRcvRun; UPDATE dbo.CollectionsRcvCompany SET CurrentRunId = NULL, LastSuccessUtc = NULL, PublishedRows = 0, LastRunId = NULL, LastAttemptUtc = NULL, LastFinishedUtc = NULL, LastStatus = 'Never', LastErrorNumber = NULL, LastError = NULL, ConsecutiveFailures = 0;");
             var result = await new RcvReceivablesRefresher(Config(), new ReceivablesSnapshotOptions(), NullLogger<RcvReceivablesRefresher>.Instance).RefreshAsync("Parity", null, default);
             Assert.Equal("Succeeded", result.Status);
-            // CRM owners of the edge units (single / ambiguous / conflicting / completing): both engines read the same V010 tables.
+            // CRM owners of the edge units (single / ambiguous / conflicting / completing): the reference and the production source read the same V010 tables.
             await RunFile(Path.Combine(legacy, "05_crm_owner_cases.sql"));
             loaded = true;
         }
@@ -160,7 +157,7 @@ public sealed class CampaignParityTests
     }
 
     private static string Diff(CollectionsCampaignContactDto a, CollectionsCampaignContactDto b) =>
-        string.Join("; ", typeof(CollectionsCampaignContactDto).GetProperties().Where(p => !Equals(p.GetValue(a), p.GetValue(b))).Select(p => $"{p.Name}: old=[{p.GetValue(a)}] new=[{p.GetValue(b)}]"));
+        string.Join("; ", typeof(CollectionsCampaignContactDto).GetProperties().Where(p => !Equals(p.GetValue(a), p.GetValue(b))).Select(p => $"{p.Name}: reference=[{p.GetValue(a)}] production=[{p.GetValue(b)}]"));
 
     /// <summary>The export as a set of rows, without the ReadAtUtc column (it is the time of each snapshot's load).</summary>
     private static List<string> Rows(string csv)
@@ -171,24 +168,23 @@ public sealed class CampaignParityTests
         return [.. rows.Skip(1).Order(StringComparer.Ordinal)];
     }
 
-    [Theory]
+    [SqlTheory]
     [MemberData(nameof(Scenarios))]
-    public async Task OldSqlEngine_AndNewApplicationEvaluation_GiveTheSameUnitsAmountsStatusesReasonsCountsAndExports(
+    public async Task ReadProcedure_AndIndependentReference_GiveTheSameUnitsAmountsStatusesReasonsCountsAndExports(
         string stage, string? towerNumber, int? company, string? from, string? to, decimal min, string? search, bool release)
     {
-        if (string.IsNullOrEmpty(ConnectionString)) return;
         await EnsureLoaded();
         var (date, nowUtc) = Scheduled(stage);
-        var oldService = Service(new LegacyCampaignEngine(ConnectionString), nowUtc, release);
-        var newService = Service(NewSource(), nowUtc, release);
+        var referenceService = Service(new PublishedLinesOracle(ConnectionString!, NewSource()), nowUtc, release);
+        var productionService = Service(NewSource(), nowUtc, release);
         int? towerId = towerNumber is null ? null : await TowerIdAsync(towerNumber);
         var f = from is null ? new DateOnly(2026, 1, 1) : DateOnly.Parse(from);
         DateOnly? t = to is null ? null : DateOnly.Parse(to);
         var label = string.Join(" | ", new object?[] { stage, towerNumber, company, from, to, min, search, release }.Select(x => x?.ToString() ?? "-"));
 
-        var a = await AllPages(oldService, stage, date, company, search, f, t, towerId, min);
-        var b = await AllPages(newService, stage, date, company, search, f, t, towerId, min);
-        Assert.True(a.Items.Keys.Order().SequenceEqual(b.Items.Keys.Order()), $"{label}: units only in old: [{string.Join(",", a.Items.Where(x => !b.Items.ContainsKey(x.Key)).Select(x => x.Value.UnitCode))}] only in new: [{string.Join(",", b.Items.Where(x => !a.Items.ContainsKey(x.Key)).Select(x => x.Value.UnitCode))}]");   // the same units
+        var a = await AllPages(referenceService, stage, date, company, search, f, t, towerId, min);
+        var b = await AllPages(productionService, stage, date, company, search, f, t, towerId, min);
+        Assert.True(a.Items.Keys.Order().SequenceEqual(b.Items.Keys.Order()), $"{label}: units only in reference: [{string.Join(",", a.Items.Where(x => !b.Items.ContainsKey(x.Key)).Select(x => x.Value.UnitCode))}] only in production: [{string.Join(",", b.Items.Where(x => !a.Items.ContainsKey(x.Key)).Select(x => x.Value.UnitCode))}]");   // the same units
         Assert.Equal((a.Total, a.Ready, a.Review), (b.Total, b.Ready, b.Review));                    // the counts
         foreach (var (id, expected) in a.Items)
             Assert.True(expected == b.Items[id], $"{label}: unit {expected.CompanyId}:{expected.UnitCode} differs in {Diff(expected, b.Items[id])}");   // every field: stage amount, earliest due, status, review reasons, contact, Due / Overdue
@@ -198,8 +194,8 @@ public sealed class CampaignParityTests
 
         foreach (var mode in new[] { "review", "genesys" })
         {
-            var x = await oldService.ExportAsync(Manager, stage, mode, date, company, search, default, f, t, towerId, min);
-            var y = await newService.ExportAsync(Manager, stage, mode, date, company, search, default, f, t, towerId, min);
+            var x = await referenceService.ExportAsync(Manager, stage, mode, date, company, search, default, f, t, towerId, min);
+            var y = await productionService.ExportAsync(Manager, stage, mode, date, company, search, default, f, t, towerId, min);
             Assert.Equal((x.IsSuccess, x.Outcome, x.Detail), (y.IsSuccess, y.Outcome, y.Detail));    // refused identically (row limit / not every row ready) ...
             if (x.IsSuccess)
             {
@@ -210,10 +206,9 @@ public sealed class CampaignParityTests
         }
     }
 
-    [Fact]
+    [SqlFact]
     public async Task OffScheduleDatesAndTheLegalReleaseGates_AlsoGiveTheSameResults()
     {
-        if (string.IsNullOrEmpty(ConnectionString)) return;
         await EnsureLoaded();
         var reasons = new HashSet<string>(); var statuses = new HashSet<string>();
         foreach (var stage in Stages)
@@ -221,7 +216,7 @@ public sealed class CampaignParityTests
             {
                 var (scheduled, nowUtc) = Scheduled(stage);
                 var preview = scheduled.AddDays(1);                                                       // not a scheduled day of the stage: PreviewOnly / OutsideSchedule
-                var a = await AllPages(Service(new LegacyCampaignEngine(ConnectionString), nowUtc, release), stage, preview, null, null, new DateOnly(2026, 1, 1), null, null, 0m);
+                var a = await AllPages(Service(new PublishedLinesOracle(ConnectionString!, NewSource()), nowUtc, release), stage, preview, null, null, new DateOnly(2026, 1, 1), null, null, 0m);
                 var b = await AllPages(Service(NewSource(), nowUtc, release), stage, preview, null, null, new DateOnly(2026, 1, 1), null, null, 0m);
                 Assert.Equal((a.Total, a.Ready, a.Review), (b.Total, b.Ready, b.Review));
                 Assert.True(a.Items.Count == b.Items.Count && a.Items.All(x => b.Items.TryGetValue(x.Key, out var y) && x.Value == y), $"{stage} release={release}");
@@ -230,10 +225,9 @@ public sealed class CampaignParityTests
         Assert.Contains("OutsideSchedule", reasons); Assert.Contains("PreviewOnly", statuses);
     }
 
-    [Fact]
+    [SqlFact]
     public async Task TheParityScenarios_ReallyExerciseTheRules_StagesStatusesAndReviewReasons()
     {
-        if (string.IsNullOrEmpty(ConnectionString)) return;
         await EnsureLoaded();
         var reasons = new HashSet<string>(); var statuses = new HashSet<string>(); var stagesWithUnits = 0; var withAmount = 0; var withoutAmount = 0; var withDue = 0;
         foreach (var (stage, release) in Stages.SelectMany(st => new[] { (st, true), (st, false) }))
@@ -258,10 +252,9 @@ public sealed class CampaignParityTests
         Assert.True(withAmount > 20 && withoutAmount > 0 && withDue > 0, $"amounts {withAmount}/{withoutAmount}, due {withDue}");   // priced units, ambiguous (no amount) units, units due today
     }
 
-    [Fact]
+    [SqlFact]
     public async Task TheNewOrder_IsNewestPaymentFirst_ThenCompanyCustomerUnit_AndPagesNeverOverlap()
     {
-        if (string.IsNullOrEmpty(ConnectionString)) return;
         await EnsureLoaded();
         var (date, nowUtc) = Scheduled("OverdueReminder");
         var service = Service(NewSource(), nowUtc, false);
@@ -291,7 +284,7 @@ public sealed class CampaignParityTests
         c = StringComparer.Ordinal.Compare(p.UnitCode, q.UnitCode); return c != 0 ? c : p.UnitId.CompareTo(q.UnitId);
     }
 
-    [Theory]
+    [SqlTheory]
     [InlineData("OverdueReminder")]
     [InlineData("CurrentMonthReminder")]
     [InlineData("FollowUpReminder")]
@@ -299,14 +292,13 @@ public sealed class CampaignParityTests
     [InlineData("LegalReferral")]
     public async Task AllMonths_ChangesOnlyTheShownTotals_NeverTheStagePolicy(string stage)
     {
-        if (string.IsNullOrEmpty(ConnectionString)) return;
         await EnsureLoaded();
         var (date, nowUtc) = Scheduled(stage);
-        var oldService = Service(new LegacyCampaignEngine(ConnectionString), nowUtc, false);
-        var newService = Service(NewSource(), nowUtc, false);
+        var referenceService = Service(new PublishedLinesOracle(ConnectionString!, NewSource()), nowUtc, false);
+        var productionService = Service(NewSource(), nowUtc, false);
         var start = new DateOnly(2026, 1, 1);
-        var a = await AllPages(oldService, stage, date, null, null, start, null, null, 0m);               // the old behaviour: read scope = configured start
-        var b = await AllPages(newService, stage, date, null, null, null, null, null, 0m);                // the new "All months": read scope = whole history, eligibility = configured start
+        var a = await AllPages(referenceService, stage, date, null, null, start, null, null, 0m);               // the old behaviour: read scope = configured start
+        var b = await AllPages(productionService, stage, date, null, null, null, null, null, 0m);                // the new "All months": read scope = whole history, eligibility = configured start
         Assert.Equal(a.Items.Keys.Order(), b.Items.Keys.Order());                                          // the same units are eligible
         Assert.Equal((a.Total, a.Ready, a.Review), (b.Total, b.Ready, b.Review));
         // Only Due / Overdue (and so Total) may differ, and exactly by the unit's payments before the configured start date.

@@ -84,19 +84,18 @@ public sealed class CampaignMinimumAndPaidTests
         // Today is 14 Oct 2026 (Dubai). Due = anywhere in October (even the coming 20th and 25th); Overdue = before 1 Oct; 1 Nov and later is in neither.
         var source = new RawSource([Row("A", 1, new(2026, 9, 20), 100m), Row("A", 1, new(2026, 10, 10), 300m), Row("A", 1, new(2026, 10, 14), 200m), Row("A", 1, new(2026, 10, 20), 900m),
             Row("A", 1, new(2026, 11, 1), 5000m),
-            Row("F", 2, new(2026, 10, 25), 900m),                                                 // only a coming day of this month: listed, Due
+            Row("F", 2, new(2026, 10, 25), 900m),                                                 // ONLY a coming day of this month: not a send candidate (eligibility is unchanged)
             Row("G", 3, new(2026, 11, 1), 700m)]);                                                // only next month: not listed at all
         var service = Service(source, 0m);
         var preview = (await service.PreviewAsync(Manager, "CurrentMonthReminder", minTotal: null)).Value!;
-        Assert.Equal(["F", "A"], preview.Items.Select(i => i.TenantId));                          // newest payment first (25 Oct, then 20 Oct)
-        var a = preview.Items.Single(i => i.TenantId == "A");
-        Assert.Equal((1400m, 100m, 1500m), (a.DueAmount, a.OverdueAmount, a.TotalAmount));        // 300 + 200 + 900 are Due, the September 100 is Overdue, the 5000 of 1 Nov is in neither
-        var f = preview.Items.Single(i => i.TenantId == "F");
-        Assert.Equal((900m, 0m, 900m), (f.DueAmount, f.OverdueAmount, f.TotalAmount));
+        var a = Assert.Single(preview.Items);                                                     // F (only a coming day) and G (only next month) are not candidates
+        Assert.Equal("A", a.TenantId);
+        Assert.Equal((1400m, 100m, 1500m), (a.DueAmount, a.OverdueAmount, a.TotalAmount));        // the shown figures: 300 + 200 + 900 are Due (the coming 20th included), the September 100 is Overdue, 1 Nov is in neither
+        Assert.Equal(500m, a.Amount);                                                             // the STAGE amount is unchanged: only the October instalments up to today (300 + 200), never the coming 900
         Assert.Equal(new DateOnly(2026, 10, 31), source.Last!.ThroughDate);                       // the source is never asked beyond the end of the current month
         var csv = (await service.ExportAsync(Manager, "CurrentMonthReminder", "review", minTotal: null)).Value!.Csv;
         Assert.DoesNotContain("\"5000.00\"", csv); Assert.DoesNotContain("\"700.00\"", csv);                   // next month's instalments are not in the file either
-        Assert.Contains("\"1400.00\"", csv);                                                    // the exported amount is the stage amount of the same October instalments
+        Assert.Contains("\"500.00\"", csv); Assert.DoesNotContain("\"1400.00\"", csv);          // the exported amount is the stage amount (up to today), not the widened Due
     }
 
     [Fact]
@@ -109,6 +108,7 @@ public sealed class CampaignMinimumAndPaidTests
         var october = (await service.PreviewAsync(Manager, "CurrentMonthReminder", dateFrom: new(2026, 10, 1), dateTo: new(2026, 10, 31), minTotal: null)).Value!;
         var item = Assert.Single(october.Items);
         Assert.Equal((650m, 0m, 650m), (item.DueAmount, item.OverdueAmount, item.TotalAmount));
+        Assert.Equal(250m, item.Amount);                                                          // the stage amount stays 100 + 150 (up to today); the coming 400 is shown, never sent
         Assert.Equal(new DateOnly(2026, 10, 31), october.DateTo);                                 // the whole month, the preview shows the window it really used
         var september = (await service.PreviewAsync(Manager, "CurrentMonthReminder", dateFrom: new(2026, 9, 1), dateTo: new(2026, 9, 30), minTotal: null)).Value!;
         Assert.Empty(september.Items);                                                            // the stage's own eligibility (this month's instalments) is unchanged

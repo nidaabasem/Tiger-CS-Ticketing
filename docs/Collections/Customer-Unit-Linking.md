@@ -20,7 +20,7 @@ A phone number only *finds the customer*; money is never looked up by phone.
 
 | `financialStatus` | Meaning |
 | --- | --- |
-| `Available` | Amounts due today or earlier; `due`, `overdue`, `total`. |
+| `Available` | Amounts due before the end of the current Dubai month (Overdue: before its first day; Due: inside it); `due`, `overdue`, `total`. |
 | `NoDues` | **Confirmed zero**: PACT holds the unit and nothing is due. |
 | `NoFinancialData` | Nothing usable (`PactHoldsNoRecord`, `CompanySnapshotNotLoaded`, `LeasingReceivablesSourceMissing`, `CompanyNotSupported`). **Not zero**: amounts are null. |
 | `MatchFailed` | Failed or ambiguous match (`ProjectMappingMissing/Ambiguous`, `CompanyMappingAmbiguous`, `UnitCode…`, `CompanyMissing`, several PACT accounts). No amounts. |

@@ -137,10 +137,10 @@ public sealed class DueMonthRuleTests
         var item = Assert.Single((await h.Service.PreviewAsync(h.Manager, "CurrentMonthReminder", minTotal: null)).Value!.Items);
         Assert.Equal((900m, 100m, 1000m), (item.DueAmount, item.OverdueAmount, item.TotalAmount));
         Assert.Equal(new DateOnly(2026, 10, 31), h.Source.LastRequest!.ThroughDate);
-        Assert.Equal(1000m, item.TotalAmount);
+        Assert.Equal(500m, item.Amount);                                                                 // the stage amount: 200 + 300 (up to today); the coming 400 only widens Due
         var csv = (await h.Service.ExportAsync(h.Manager, "CurrentMonthReminder", "review", minTotal: null)).Value!.Csv;
         Assert.DoesNotContain("800", csv);                                                               // the 1 Nov instalment is not part of the send data
-        Assert.Contains("\"900.00\"", csv);                                                              // the stage amount: the October instalments (200 + 300 + 400)
+        Assert.Contains("\"500.00\"", csv);                                                              // the stage amount: the October instalments up to today (200 + 300)
     }
 
     [Fact]
@@ -161,11 +161,13 @@ public sealed class DueMonthRuleTests
         var h = Campaigns();
         h.Source.Items.AddRange([Pay("A", 1, new(2026, 9, 10), 600m, "P-OVER"),                           // partly paid (the source sends what remains)
             Pay("A", 1, new(2026, 10, 25), 400m, "P-DUE"),
+            Pay("A", 1, new(2026, 10, 8), 250m, "P-MID"),                                                  // partly paid, up to today: what makes the unit a candidate
             Pay("A", 1, new(2026, 10, 5), 0m, "PAID", "Paid"),                                             // fully paid: nothing remains
             Pay("B", 2, new(2026, 10, 8), 0m, "PAID-B", "Paid")]);                                         // a unit with nothing left is not a candidate
         var preview = (await h.Service.PreviewAsync(h.Manager, "CurrentMonthReminder", minTotal: null)).Value!;
         var item = Assert.Single(preview.Items);
-        Assert.Equal(("A", 400m, 600m, 1000m), (item.TenantId, item.DueAmount, item.OverdueAmount, item.TotalAmount));
+        Assert.Equal(("A", 650m, 600m, 1250m), (item.TenantId, item.DueAmount, item.OverdueAmount, item.TotalAmount));
+        Assert.Equal(250m, item.Amount);
     }
 
     [Fact]
@@ -187,12 +189,51 @@ public sealed class DueMonthRuleTests
     }
 
     [Fact]
-    public async Task Campaigns_TheStageEligibilityStaysTheSame_AUnitWithOnlyUpcomingMonthPaymentsStillQualifiesForTheCurrentMonthStageOnly()
+    public async Task OneUnit_ShowsTheSameDueOverdueAndTotal_OnReceivables_Campaigns_AndThePaymentSummary()
+    {
+        var now = new DateTime(2026, 10, 12, 8, 0, 0, DateTimeKind.Utc);
+        var due = new[] { (new DateTime(2026, 9, 30), 100m), (new DateTime(2026, 10, 1), 200m), (new DateTime(2026, 10, 12), 300m), (new DateTime(2026, 10, 31), 400m), (new DateTime(2026, 11, 1), 500m) };
+        // Receivables
+        var (receivables, source) = Receivables(now);
+        source.Rows.AddRange(due.Select((d, n) => Instalment("A", 1, d.Item1, d.Item2, 0, "V" + n)));
+        var unit = Assert.Single((await Units(receivables, minTotal: null)).Value!.Units!);
+        // Campaigns
+        var h = Campaigns(now);
+        h.Source.Items.AddRange(due.Select((d, n) => Pay("A", 1, d.Item1, d.Item2, "V" + n)));
+        var item = Assert.Single((await h.Service.PreviewAsync(h.Manager, "CurrentMonthReminder", minTotal: null)).Value!.Items);
+        // Payment Summary (also what the customer card and the Genesys unit details are built from)
+        var status = ReceivablesSnapshotComposer.BuildStatus(D(2000, 1, 1), D(2026, 10, 12), [FakeSnapshotSource.Healthy(4, now.AddMinutes(-5))], [], now, 90);
+        var summary = CollectionsUnitPaymentSummaryAppService.Compose("TP124-1", D(2026, 10, 12),
+            new(status, [new PactUnitIdentity(4, "A", 1, "TP124-1", "Customer A", "", "", "124", "Tower", 5, 5)],
+                due.Select((d, n) => new PactUnitInstalment(4, "A", 1, "V" + n, DateOnly.FromDateTime(d.Item1), d.Item2, d.Item2, 0m, "Installment")).ToList(),
+                new Dictionary<int, CrmUnitLink>(), true, now), 90);
+        Assert.Equal((900m, 100m, 1000m), (item.DueAmount, item.OverdueAmount, item.TotalAmount));
+        Assert.Equal((900m, 100m, 1000m), (summary.Due, summary.Overdue, summary.Total));
+        Assert.Equal(1000m, unit.RemainingTotal);
+        Assert.Equal(900m, unit.Instalments.Where(i => i.Classification == "Due").Sum(i => i.RemainingAmount));
+        Assert.Equal(100m, unit.Instalments.Where(i => i.Classification == "Overdue").Sum(i => i.RemainingAmount));
+    }
+
+    [Fact]
+    public async Task Campaigns_WideningTheAmountsToTheMonthEnd_NeverWidensEligibilityOrTheStageAmount()
     {
         var h = Campaigns();   // today = 14 Oct 2026
         h.Source.Items.Add(Pay("A", 1, new(2026, 10, 28), 500m, "O28"));
-        Assert.Single((await h.Service.PreviewAsync(h.Manager, "CurrentMonthReminder", minTotal: null)).Value!.Items);
-        Assert.Empty((await h.Service.PreviewAsync(h.Manager, "OverdueReminder", minTotal: null)).Value!.Items);       // not older than a month: not an overdue-stage candidate
-        Assert.Empty((await h.Service.PreviewAsync(h.Manager, "LegalNotice", minTotal: null)).Value!.Items);          // the legal notice looks at the previous month
+        foreach (var stage in new[] { "CurrentMonthReminder", "FollowUpReminder", "OverdueReminder", "LegalNotice", "LegalReferral" })
+            Assert.Empty((await h.Service.PreviewAsync(h.Manager, stage, minTotal: null)).Value!.Items);          // a unit with ONLY a coming day is a candidate for no stage (as before)
+        h.Source.Items.Add(Pay("A", 1, new(2026, 10, 9), 100m, "O09"));
+        var item = Assert.Single((await h.Service.PreviewAsync(h.Manager, "CurrentMonthReminder", minTotal: null)).Value!.Items);
+        Assert.Equal(100m, item.Amount);                                                                  // the stage amount: only the 9 Oct instalment (up to today)
+        Assert.Equal((600m, 0m, 600m), (item.DueAmount, item.OverdueAmount, item.TotalAmount));          // the shown Due includes the coming 28th
+    }
+
+    [Fact]
+    public void Campaigns_TheReminderScheduleAndStageRangesDoNotDependOnTheDefaultToDate()
+    {
+        // Timing is a function of the preview date alone (ScheduledDates) and eligibility of StageRange: neither takes the window's To.
+        foreach (var stage in Enum.GetValues<TigerCS.Domain.Modules.Collections.CollectionsCampaignStage>())
+            Assert.NotEmpty(TigerCS.Domain.Modules.Collections.CollectionsCampaignPolicy.ScheduledDates(stage, new DateOnly(2026, 10, 12)));
+        var parameters = typeof(TigerCS.Domain.Modules.Collections.CollectionsCampaignPolicy).GetMethod(nameof(TigerCS.Domain.Modules.Collections.CollectionsCampaignPolicy.StageRange))!.GetParameters();
+        Assert.Equal(["stage", "businessDate"], parameters.Select(p => p.Name));
     }
 }

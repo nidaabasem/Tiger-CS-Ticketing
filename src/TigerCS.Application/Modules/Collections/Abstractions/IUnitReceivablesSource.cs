@@ -9,7 +9,7 @@ public sealed record PactUnitIdentity(
 
 public sealed record PactUnitInstalment(int CompanyId, string TenantId, int UnitId, string VoucherNumber, DateOnly DueDate, decimal RemainingAmount, decimal? OriginalAmount, decimal? PaidAmount, string PaymentStatus);
 
-/// <summary>Everything the local snapshot knows about ONE unit key, read with one statement: PACT identities and unpaid instalments due today or earlier, and the CRM link per company.</summary>
+/// <summary>Everything the local snapshot knows about ONE unit key, read with one statement: PACT identities and unpaid instalments due before the end of the month of today (Dubai), and the CRM link per company.</summary>
 public sealed record PactUnitReceivables(
     SnapshotStatusDto Snapshot, IReadOnlyList<PactUnitIdentity> Identities, IReadOnlyList<PactUnitInstalment> Instalments,
     IReadOnlyDictionary<int, CrmUnitLink> CrmLinks, bool CrmLoaded, DateTime ReadAtUtc);

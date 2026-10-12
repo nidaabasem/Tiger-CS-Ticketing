@@ -158,7 +158,7 @@ public sealed class RcvReceivablesSource(
 
     /// <summary>
     /// One unit by its normalised key (tower + unit code), read with ONE statement: the PACT accounts that hold it (a missing PACT mobile changes nothing), the unit's own unpaid
-    /// instalments due today or earlier, and its CRM link. Nothing is looked up by phone number or name.
+    /// instalments due before the end of the current Dubai month (the month of <c>today</c>), and its CRM link. Nothing is looked up by phone number or name.
     /// </summary>
     public async Task<PactUnitReceivables> ReadUnitAsync(string unitKey, int? companyId, DateOnly today, CancellationToken cancellationToken)
     {

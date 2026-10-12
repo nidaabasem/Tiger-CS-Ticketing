@@ -208,7 +208,39 @@ public sealed class CollectionsCrmLinkingTests
         Assert.Equal("Linked", s.LinkStatus);
         Assert.Equal("Crm Customer", s.Customer.Name); Assert.Equal("+971501234567", s.Customer.Mobile);
         Assert.Equal("Available", s.FinancialStatus);
-        Assert.Equal(400m, s.Overdue); Assert.Equal(100m, s.Due); Assert.Equal(500m, s.Total); // the future instalment is not counted
+        Assert.Equal(0m, s.Overdue); Assert.Equal(1400m, s.Due); Assert.Equal(1400m, s.Total); // 5, 14 and the coming 20 Oct are all Due (the current month); nothing is before 1 Oct
+    }
+
+    private static PactUnitInstalment On(DateOnly due, decimal remaining, string voucher, decimal? original = null) =>
+        new(4, "T1", 101, voucher, due, remaining, original ?? remaining, (original ?? remaining) - remaining, "Installment");
+
+    private static CollectionsUnitPaymentSummaryDto ComposeOn(DateOnly today, params PactUnitInstalment[] instalments) =>
+        CollectionsUnitPaymentSummaryAppService.Compose("TP140-101", today, new(Snapshot(4), [Id()], instalments, new Dictionary<int, CrmUnitLink>(), true, Now), 120);
+
+    [Fact]
+    public void Summary_UsesTheSameMonthRuleAsReceivablesAndCampaigns()
+    {
+        // Today 12 Oct 2026: 30 Sep Overdue; 1, 12 and 31 Oct Due; 1 Nov in neither (never listed or totalled).
+        var s = ComposeOn(new(2026, 10, 12), On(new(2026, 9, 30), 10m, "S30"), On(new(2026, 10, 1), 20m, "O01"), On(new(2026, 10, 12), 40m, "O12"),
+            On(new(2026, 10, 31), 80m, "O31"), On(new(2026, 11, 1), 160m, "N01"));
+        Assert.Equal((10m, 140m, 150m), (s.Overdue, s.Due, s.Total));
+        Assert.Equal(["S30", "O01", "O12", "O31"], s.Instalments.Select(i => i.Description.Replace("Voucher ", "")));
+        Assert.Equal(["Overdue", "Due", "Due", "Due"], s.Instalments.Select(i => i.Status));
+        Assert.Null(s.Instalments.Single(i => i.Description.EndsWith("O31")).DaysLate);                    // a coming day is Due and not late
+        Assert.Equal(s.Total, s.Instalments.Sum(i => i.RemainingAmount));                                  // details add up to the total
+    }
+
+    [Fact]
+    public void Summary_DecemberToJanuary_AndPartlyPaid()
+    {
+        var december = ComposeOn(new(2026, 12, 15), On(new(2026, 11, 30), 5m, "N30"), On(new(2026, 12, 31), 7m, "D31"), On(new(2027, 1, 1), 9m, "J01"));
+        Assert.Equal((5m, 7m, 12m), (december.Overdue, december.Due, december.Total));
+        var january = ComposeOn(new(2027, 1, 10), On(new(2026, 12, 31), 5m, "D31"), On(new(2027, 1, 31), 7m, "J31"), On(new(2027, 2, 1), 9m, "F01"));
+        Assert.Equal((5m, 7m, 12m), (january.Overdue, january.Due, january.Total));
+        // Partly paid: only the remainder counts (original 1000, 400 paid -> 600), a fully paid instalment (nothing remaining) never does.
+        var partial = ComposeOn(new(2026, 10, 12), On(new(2026, 9, 10), 600m, "P", original: 1000m), On(new(2026, 10, 25), 0m, "PAID", original: 300m));
+        Assert.Equal((600m, 0m, 600m), (partial.Overdue, partial.Due, partial.Total));
+        Assert.Equal(1000m, partial.Instalments.Single().OriginalAmount);
     }
 
     [Fact]

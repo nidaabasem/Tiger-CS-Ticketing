@@ -217,9 +217,11 @@ public sealed class CollectionsCampaignAppServiceTests
         var h = new Harness(); h.Source.Items.Add(Row(tenant: "3009") with { DueDate = new(2026, 11, 5) });   // next month: never read, never listed
         var current = (await h.Service.PreviewAsync(h.Manager, "CurrentMonthReminder", new(2026, 10, 8))).Value!;
         Assert.Empty(current.Items);
-        h.Source.Items.Add(Row(tenant: "3002", day: 25));   // a coming day of the current month (today is 14 Oct): Due, listed
+        h.Source.Items.Add(Row(tenant: "3002", day: 25));   // ONLY a coming day of the current month (today is 14 Oct): shown as Due once a unit is a candidate, but alone it is NOT one
+        Assert.Empty((await h.Service.PreviewAsync(h.Manager, "CurrentMonthReminder", new(2026, 10, 8))).Value!.Items);
+        h.Source.Items.Add(Row(tenant: "3002", day: 10));   // an instalment up to today makes the unit a candidate; the coming day then counts in Due
         var item = Assert.Single((await h.Service.PreviewAsync(h.Manager, "CurrentMonthReminder", new(2026, 10, 8))).Value!.Items);
-        Assert.Equal(("3002", 500m, 0m), (item.TenantId, item.DueAmount, item.OverdueAmount));
+        Assert.Equal(("3002", 1000m, 0m, 500m), (item.TenantId, item.DueAmount, item.OverdueAmount, item.Amount));
         var overdue = (await h.Service.PreviewAsync(h.Manager, "OverdueReminder", new(2026, 10, 8))).Value!;
         Assert.Empty(overdue.Items);
     }

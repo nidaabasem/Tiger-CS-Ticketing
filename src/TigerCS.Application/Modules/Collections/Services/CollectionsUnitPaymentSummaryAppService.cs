@@ -105,16 +105,16 @@ public sealed class CollectionsUnitPaymentSummaryAppService(
         var company = data.Snapshot.Companies.FirstOrDefault(c => c.CompanyId == account.CompanyId);
         if (company is null || !company.HasSnapshot)
             return ("NoFinancialData", "The PACT receivables of this company are not loaded. This is not a zero balance.", null, null, null, [], "CompanySnapshotNotLoaded");
-        var rows = data.Instalments.Where(i => i.CompanyId == account.CompanyId && i.TenantId == account.TenantId && i.UnitId == account.UnitId && i.RemainingAmount > 0 && i.DueDate <= today)
+        var rows = data.Instalments.Where(i => i.CompanyId == account.CompanyId && i.TenantId == account.TenantId && i.UnitId == account.UnitId && i.RemainingAmount > 0 && CollectionsDueMonth.IsInScope(i.DueDate, today))
             .OrderBy(i => i.DueDate).ThenBy(i => i.VoucherNumber, StringComparer.Ordinal).ToList();
         var lines = rows.Select((i, index) => new CollectionsUnitInstalmentDto(i.VoucherNumber.Length > 0 ? $"Voucher {i.VoucherNumber}" : $"Instalment {index + 1}", i.DueDate, i.OriginalAmount, i.PaidAmount,
-            i.RemainingAmount, i.DueDate < today ? "Overdue" : "Due", i.DueDate < today ? today.DayNumber - i.DueDate.DayNumber : null)).ToList();
+            i.RemainingAmount, CollectionsDueMonth.IsOverdue(i.DueDate, today) ? "Overdue" : "Due", i.DueDate < today ? today.DayNumber - i.DueDate.DayNumber : null)).ToList();
         var due = lines.Where(l => l.Status == "Due").Sum(l => l.RemainingAmount);
         var overdue = lines.Where(l => l.Status == "Overdue").Sum(l => l.RemainingAmount);
         var stale = company.Freshness != "Fresh" ? $" The PACT data is {(company.AgeMinutes is { } age ? age + " minutes" : "not current")} old (limit {maxAgeMinutes})." : "";
         // Unpaid rows exist only when OpenRows > 0; a unit PACT lists with nothing open is confirmed to owe nothing due.
         if (lines.Count == 0)
-            return account.AllRows > 0 ? ("NoDues", ("Nothing is due on or before today." + stale).Trim(), 0m, 0m, 0m, lines, null) : ("NoFinancialData", "PACT holds no receivable record for this unit.", null, null, null, lines, "PactHoldsNoRecord");
+            return account.AllRows > 0 ? ("NoDues", ("Nothing is due in the current month or earlier." + stale).Trim(), 0m, 0m, 0m, lines, null) : ("NoFinancialData", "PACT holds no receivable record for this unit.", null, null, null, lines, "PactHoldsNoRecord");
         return ("Available", stale.Length > 0 ? stale.Trim() : null, due, overdue, due + overdue, lines, null);
     }
 }

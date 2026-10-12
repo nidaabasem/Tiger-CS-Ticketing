@@ -101,10 +101,9 @@ public sealed partial class RcvRealSqlTests
     }
 
     // ---- 1. fetch, validate, publish, per company ----
-    [Fact]
+    [SqlFact]
     public async Task Refresh_LoadsEachCompanyFromItsOwnProcedure_KeepsThemApart_AndCountsWhatItLeftOut()
     {
-        if (string.IsNullOrWhiteSpace(ConnectionString)) return;
         await Seed();
         Assert.Equal(2, await Scalar<int>("SELECT COUNT(*) FROM dbo.CollectionsRcvCompany WHERE CurrentRunId IS NOT NULL AND LastStatus = 'Succeeded'"));
         // Dubai: 12 PACT rows with a positive amount... minus the cancelled (E1), the three invalid units (F1-F3); the settled one (C3) and the future November one stay out / in as shown.
@@ -119,10 +118,9 @@ public sealed partial class RcvRealSqlTests
         Assert.Equal(2, await Scalar<int>("SELECT COUNT(*) FROM dbo.CollectionsRcvLine WHERE CompanyId = 32 AND Mobile = '' AND Email = ''"));   // rows without a mobile or e-mail are kept
     }
 
-    [Fact]
+    [SqlFact]
     public async Task ARefreshOfOneCompany_NeverTouchesTheOther()
     {
-        if (string.IsNullOrWhiteSpace(ConnectionString)) return;
         await Seed();
         var dubaiRun = await Scalar<string>("SELECT CAST(CurrentRunId AS varchar(40)) FROM dbo.CollectionsRcvCompany WHERE CompanyId = 4");
         var result = await Refresher().RefreshAsync("Retry", 32, default);
@@ -133,10 +131,9 @@ public sealed partial class RcvRealSqlTests
     }
 
     // ---- 2. what the Receivables page shows ----
-    [Fact]
+    [SqlFact]
     public async Task TheDefaultView_ListsEachApartmentOnce_WithDueOverdueAndTotal_NewestFirst_AndHidesWhatMustNotShow()
     {
-        if (string.IsNullOrWhiteSpace(ConnectionString)) return;
         await Seed();
         var page = await Page();           // Minimum Total 100 (strictly greater)
         var keys = page.Units.Select(Key).ToList();
@@ -159,10 +156,9 @@ public sealed partial class RcvRealSqlTests
         Assert.Equal(100m, d1.Units.Single(u => u.UnitCode == "TP101-102").RemainingTotal);        // the 500 due in November is not in it
     }
 
-    [Fact]
+    [SqlFact]
     public async Task MinimumTotal_IsStrictlyGreater_AppliesToTheApartmentSum_AndClearingShowsEverythingDueOrOverdue()
     {
-        if (string.IsNullOrWhiteSpace(ConnectionString)) return;
         await Seed();
         Assert.DoesNotContain("4:D1:TP101-102", (await Page(minTotal: 100m)).Units.Select(Key));        // a sum of exactly 100 is hidden
         Assert.Contains("4:D1:TP101-102", (await Page(minTotal: 99.99m)).Units.Select(Key));
@@ -177,10 +173,9 @@ public sealed partial class RcvRealSqlTests
         Assert.Equal(cleared.Units.Select(Key), paged);                                                 // and in the same, stable order
     }
 
-    [Fact]
+    [SqlFact]
     public async Task DueAndOverdue_AreComparedWithTheCurrentMonth_NotWithTheDay_AndTheStatusFilterAppliesToThePayments()
     {
-        if (string.IsNullOrWhiteSpace(ConnectionString)) return;
         await Seed();
         var all = await Page(minTotal: null);
         var b = all.Units.Single(u => u.UnitCode == "TP101-102");
@@ -196,10 +191,9 @@ public sealed partial class RcvRealSqlTests
         Assert.Equal(all.Totals.RemainingTotal, due.Totals.RemainingTotal + overdue.Totals.RemainingTotal);   // Due + Overdue = everything
     }
 
-    [Fact]
+    [SqlFact]
     public async Task TheMonthFilter_UsesTheDueDate_AllMonthsReachesPreviousYears_AndTheCurrentMonthStopsAtTheMonthEnd()
     {
-        if (string.IsNullOrWhiteSpace(ConnectionString)) return;
         await Seed();
         var allMonths = await Page(minTotal: null);
         var d2 = allMonths.Units.Single(u => u.UnitCode == "TP102-201");
@@ -217,10 +211,9 @@ public sealed partial class RcvRealSqlTests
         Assert.Equal(["4:D2:TP102-201"], y2025.Units.Select(Key));
     }
 
-    [Fact]
+    [SqlFact]
     public async Task Search_FindsByNameMobileTowerAndApartment_AndNeverCrossesCompanies()
     {
-        if (string.IsNullOrWhiteSpace(ConnectionString)) return;
         await Seed();
         Assert.Equal(["4:D5:TP105-501"], (await Page(minTotal: null, search: "Dalia")).Units.Select(Key));
         Assert.Equal(["4:D2:TP102-201"], (await Page(minTotal: null, search: "971500000002")).Units.Select(Key));
@@ -237,10 +230,9 @@ public sealed partial class RcvRealSqlTests
     }
 
     // ---- 3. Campaigns, Payment Summary and the status share the same rows ----
-    [Fact]
+    [SqlFact]
     public async Task TheCampaignRows_AreTheSamePayments_WithTheSameExclusions()
     {
-        if (string.IsNullOrWhiteSpace(ConnectionString)) return;
         await Seed();
         var snapshot = await Source().ReadAsync(new PactReceivablesRequest(new DateOnly(2000, 1, 1), Today), default);
         Assert.Equal(10, snapshot.Items.Count);                                                          // 8 Dubai (incl. the November one) - wait: the window ends today, so 7 + 3 Sharjah
@@ -252,10 +244,9 @@ public sealed partial class RcvRealSqlTests
         Assert.Single(sharjah.Snapshot!.Companies);
     }
 
-    [Fact]
+    [SqlFact]
     public async Task TheWindowRead_AppliesNoClassificationOfItsOwn_CampaignsClassifyAgainstTheCurrentMonth()
     {
-        if (string.IsNullOrWhiteSpace(ConnectionString)) return;
         await Seed();
         var any = await Source().ReadAsync(new PactReceivablesRequest(new DateOnly(2000, 1, 1), Today), default);
         // The old month classification (Class / AsOfDate: "Due" = anything in the as-of month) must not filter anything any more: the same rows come back whatever they ask for.
@@ -277,10 +268,9 @@ public sealed partial class RcvRealSqlTests
     private static async Task<PactInstalmentUnitsPage> PageAt(DateOnly today, string search, string? status = null, DateOnly? to = null, DateOnly? from = null) =>
         await Source().ReadInstalmentUnitsAsync(new PactInstalmentsRequest(from ?? new DateOnly(2000, 1, 1), to ?? new DateOnly(2099, 12, 31), today, 0m, "outstanding", search, null, 1, 100, null, null, status, true, null), default);
 
-    [Fact]
+    [SqlFact]
     public async Task TheRestOfTheCurrentMonth_IsDue_EvenWithNoMinimumTotal_AndTheNextMonthIsNeverRead()
     {
-        if (string.IsNullOrWhiteSpace(ConnectionString)) return;
         await Seed();
         // D6 (Dubai): 30 Sep 10 (Overdue), 20 Oct 70 and 31 Oct 30 (still to come: Due), 1 Nov 900 (next month: neither). The snapshot stores all four (the whole window 2000-2099 is loaded).
         await Pact(4, "TP106-601", "D6", "Dora Six", "+971500000006", "dora@example.test", 6011, "K1", "2026-09-30", 10);
@@ -309,10 +299,9 @@ public sealed partial class RcvRealSqlTests
         }
     }
 
-    [Fact]
+    [SqlFact]
     public async Task DecemberToJanuary_TheNextMonthStartIsTheFirstOfJanuary_AndJanuaryLooksBackAtDecember()
     {
-        if (string.IsNullOrWhiteSpace(ConnectionString)) return;
         await Seed();
         await Pact(4, "TP107-701", "D7", "Dana Seven", "+971500000007", "dana@example.test", 7011, "M1", "2026-11-30", 5);
         await Pact(4, "TP107-701", "D7", "Dana Seven", "+971500000007", "dana@example.test", 7011, "M2", "2026-12-31", 7);
@@ -326,10 +315,9 @@ public sealed partial class RcvRealSqlTests
         Assert.Equal((20m, 12m, 32m), (january.Totals.DueRemaining, january.Totals.OverdueRemaining, january.Totals.RemainingTotal));            // 31 Dec is Overdue, 1 Feb is excluded
     }
 
-    [Fact]
+    [SqlFact]
     public async Task PartlyPaidCountsItsRemainder_AndAFullyPaidInstalmentNeverEntersTheSnapshotOrTheTotals()
     {
-        if (string.IsNullOrWhiteSpace(ConnectionString)) return;
         await Seed();
         // PACT returns the REMAINING amount: 600 left of a part-paid September instalment (Overdue) and 400 left of a part-paid coming October one (Due); a fully paid one returns 0.
         await Pact(4, "TP108-801", "D8", "Dalal Eight", "+971500000008", "dalal@example.test", 8011, "N1", "2026-09-10", 600);
@@ -341,10 +329,9 @@ public sealed partial class RcvRealSqlTests
         Assert.Equal((400m, 600m, 1000m), (page.Totals.DueRemaining, page.Totals.OverdueRemaining, page.Totals.RemainingTotal));
     }
 
-    [Fact]
+    [SqlFact]
     public async Task ThePaymentSummaryRead_FindsAUnitByItsKey_PerCompany_AndNeverByContact()
     {
-        if (string.IsNullOrWhiteSpace(ConnectionString)) return;
         await Seed();
         var unit = await Source().ReadUnitAsync("TP101-101", null, Today, default);
         Assert.Equal([4, 32], unit.Identities.Select(i => i.CompanyId).Order());
@@ -362,10 +349,9 @@ public sealed partial class RcvRealSqlTests
             new(options, new FakeDepartmentRepository()), new(options, new FakeTimeProvider(new DateTime(2026, 10, 11, 5, 0, 0, DateTimeKind.Utc))), source, NullLogger<CollectionsCampaignAppService>.Instance);
     }
 
-    [Fact]
+    [SqlFact]
     public async Task Campaigns_ListTheSameUnitsWithTheSameAmounts_KeepContactlessUnits_AndOrderNewestFirst()
     {
-        if (string.IsNullOrWhiteSpace(ConnectionString)) return;
         await Seed();
         var service = CampaignService(Source());
         var manager = new CollectionsCaller(Guid.NewGuid(), [Roles.CsManager], []);
@@ -399,10 +385,9 @@ public sealed partial class RcvRealSqlTests
         Assert.Equal(current.TotalCount, export.RowCount);
     }
 
-    [Fact]
+    [SqlFact]
     public async Task TheApartmentListApi_StillWorksOnTheNewSource_AndOnlyListsWhatIsOwed()
     {
-        if (string.IsNullOrWhiteSpace(ConnectionString)) return;
         await Seed();
         var options = new CollectionsOptions { Enabled = true };
         var service = new PactReceivableCustomersAppService(options, new PactReceivablesOptions { Enabled = true, DefaultMinOutstandingAmount = 0m },
@@ -412,10 +397,9 @@ public sealed partial class RcvRealSqlTests
         Assert.Contains(report.Items, c => c.TenantId == "D5" && c.UnitCode == "TP105-501");
     }
 
-    [Fact]
+    [SqlFact]
     public async Task TheCrmContact_IsPreferred_AndAnAmbiguousCrmUnitIsFlagged_WithoutHidingTheReceivable()
     {
-        if (string.IsNullOrWhiteSpace(ConnectionString)) return;
         await Seed();
         var run = Guid.NewGuid();
         await Exec($"INSERT dbo.CollectionsCrmUnitOwner (RunId, UnitKey, CompanyId, ProjectCode, UnitNumber, LeadId, LeadStatus, CrmCustomerId, CrmUnitId, ProjectId, FullName, Mobile, Email, PhoneNorm, EmailNorm) VALUES " +
@@ -438,10 +422,9 @@ public sealed partial class RcvRealSqlTests
         finally { await Exec("UPDATE dbo.CollectionsCrmOwnerState SET CurrentRunId = NULL WHERE Id = 1; DELETE FROM dbo.CollectionsCrmUnitOwner;"); }
     }
 
-    [Fact]
+    [SqlFact]
     public async Task Leasing_Company7_IsNeverLoadedNorRead_ItStaysAPaymentSummaryByPhoneFeature()
     {
-        if (string.IsNullOrWhiteSpace(ConnectionString)) return;
         await Seed();
         await using (var connection = new SqlConnection(ConnectionString))
         {
@@ -458,10 +441,9 @@ public sealed partial class RcvRealSqlTests
     }
 
     // ---- 4. state, failure and isolation ----
-    [Fact]
+    [SqlFact]
     public async Task BeforeTheFirstLoad_EveryCompanyIsNotLoaded_NeverZero()
     {
-        if (string.IsNullOrWhiteSpace(ConnectionString)) return;
         await Reset();
         var page = await Page();
         Assert.True(page.Snapshot.NothingLoaded);
@@ -469,10 +451,9 @@ public sealed partial class RcvRealSqlTests
         Assert.All(page.Snapshot.Companies, c => { Assert.False(c.HasSnapshot); Assert.Equal("Missing", c.Freshness); Assert.False(c.RefreshInProgress); });
     }
 
-    [Fact]
+    [SqlFact]
     public async Task AFailingCompany_KeepsItsLastGoodSnapshot_RecordsTheRealError_AndLeavesTheOtherCompanyAlone()
     {
-        if (string.IsNullOrWhiteSpace(ConnectionString)) return;
         await Seed();
         var before = await Page(minTotal: null);
         await Exec("CREATE OR ALTER PROCEDURE dbo.p32AccountReceivables @StartDate datetime, @EndDate datetime, @MinAmount int AS THROW 51000, N'PACT said no', 1;", "PACTRPT");
@@ -496,10 +477,9 @@ public sealed partial class RcvRealSqlTests
 
     private static Task Reset2() => Exec("CREATE OR ALTER PROCEDURE dbo.p32AccountReceivables @StartDate datetime, @EndDate datetime, @MinAmount int AS EXEC dbo.FakeReceivables 32, @StartDate, @EndDate, @MinAmount;", "PACTRPT");
 
-    [Fact]
+    [SqlFact]
     public async Task ARowOfAnotherCompany_FailsTheAttempt_NothingIsPublished()
     {
-        if (string.IsNullOrWhiteSpace(ConnectionString)) return;
         await Reset();
         await Pact(4, "TP101-101", "D1", "Dina One", "+971500000001", "dina@example.test", 1011, "A1", "2026-09-15", 60);
         await Exec("UPDATE dbo.FakeEdgeRows SET CompanyId = 4", "PACTRPT");
@@ -516,10 +496,9 @@ public sealed partial class RcvRealSqlTests
         finally { await Reset2(); }
     }
 
-    [Fact]
+    [SqlFact]
     public async Task ASuddenlyMuchSmallerResult_IsRefused_AndThePreviousSnapshotStays()
     {
-        if (string.IsNullOrWhiteSpace(ConnectionString)) return;
         await Reset();
         for (var i = 1; i <= 300; i++) await Pact(4, $"TP101-{i}", "T" + i, "Customer " + i, "+9715000" + i.ToString("D5"), "", 10000 + i, "V" + i, "2026-09-01", 100 + i);
         Assert.Equal("Succeeded", (await Refresher().RefreshAsync("Test", 4, default)).Status);
@@ -531,10 +510,9 @@ public sealed partial class RcvRealSqlTests
     }
 
     // ---- 5. lifecycle: concurrent refreshes, loading, timeout, killed session ----
-    [Fact]
+    [SqlFact]
     public async Task WhileDubaiLoads_OnlyDubaiIsLoading_ASecondDubaiRefreshIsRefused_AndSharjahRefreshesIndependently()
     {
-        if (string.IsNullOrWhiteSpace(ConnectionString)) return;
         await Seed();
         await Exec("UPDATE dbo.FakeConfig SET DelaySeconds = 8 WHERE CompanyId = 4", "PACTRPT");
         try
@@ -569,10 +547,9 @@ public sealed partial class RcvRealSqlTests
         throw new TimeoutException("The expected state was not reached.");
     }
 
-    [Fact]
+    [SqlFact]
     public async Task ACommandTimeout_EndsTheAttemptAsFailed_NothingStaysRunning_AndThePreviousSnapshotIsKept()
     {
-        if (string.IsNullOrWhiteSpace(ConnectionString)) return;
         await Seed();
         var previous = await Scalar<string>("SELECT CAST(CurrentRunId AS varchar(40)) FROM dbo.CollectionsRcvCompany WHERE CompanyId = 32");
         await Exec("UPDATE dbo.FakeConfig SET DelaySeconds = 20 WHERE CompanyId = 32", "PACTRPT");
@@ -596,10 +573,9 @@ public sealed partial class RcvRealSqlTests
         finally { await Exec("UPDATE dbo.FakeConfig SET DelaySeconds = 0 WHERE CompanyId = 32", "PACTRPT"); }
     }
 
-    [Fact]
+    [SqlFact]
     public async Task ACancelledRefresh_IsClosed_AndAnAbandonedRunningRowIsReapedOnlyWhenNoSessionHoldsTheLock()
     {
-        if (string.IsNullOrWhiteSpace(ConnectionString)) return;
         await Seed();
         // A 'Running' row whose session is gone (what a killed process leaves): nobody holds the company's lock, so the next status read closes it.
         await Exec("INSERT dbo.CollectionsRcvRun (RunId, CompanyId, TriggerSource, StartedUtc, Status) VALUES (NEWID(), 32, N'Ghost', DATEADD(SECOND, -30, SYSUTCDATETIME()), 'Running'); " +
@@ -623,10 +599,9 @@ public sealed partial class RcvRealSqlTests
         finally { await Exec("UPDATE dbo.FakeConfig SET DelaySeconds = 0 WHERE CompanyId = 32", "PACTRPT"); }
     }
 
-    [Fact]
+    [SqlFact]
     public async Task ASessionThatDiesInsideTheFetch_IsReported_AndNeverLeavesCompanyLoading()
     {
-        if (string.IsNullOrWhiteSpace(ConnectionString)) return;
         await Seed();
         // A layout that does not match the procedure kills the SQL session inside INSERT ... EXEC without running any CATCH block (measured on SQL Server 2022, as in the field).
         await using (var connection = new SqlConnection(ConnectionString))
