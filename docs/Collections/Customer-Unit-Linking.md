@@ -26,6 +26,11 @@ A phone number only *finds the customer*; money is never looked up by phone.
 | `MatchFailed` | Failed or ambiguous match (`ProjectMappingMissing/Ambiguous`, `CompanyMappingAmbiguous`, `UnitCode…`, `CompanyMissing`, several PACT accounts). No amounts. |
 | `SourceError` | A source could not be read (`PactUnavailable`, `ProjectMappingUnreadable`). Retry; no amounts. |
 
+### Comparing the screens (what must match and what need not)
+
+For the **same unit and the same scope** (all months, current Dubai month rule), **Due and Overdue must be identical** on Receivables, Campaigns and the Payment tab (`due` / `overdue`, and the cards *Due This Month* / *Overdue*). **Total** in Collections is `Due + Overdue`.
+The Payment tab's **Remaining Balance is every unpaid payment, future ones included** (`payments.remainingBalance`, from the schedule table), so it is **not** required to equal Due + Overdue; it equals them only when nothing is due after this month. Cards and the schedule table are computed from the same rows (Due card = sum of the *Due* rows, Overdue card = sum of the *Overdue* rows, Remaining = sum of all rows). *Total Amount* and *Paid Amount* are `Unavailable` (the snapshot holds only unpaid remainders). Example: Due 4,000, Overdue 1,000, Remaining 16,500 is consistent (11,500 is not yet due).
+
 ## Entry points (all reuse the service)
 
 | Caller | Route / code |

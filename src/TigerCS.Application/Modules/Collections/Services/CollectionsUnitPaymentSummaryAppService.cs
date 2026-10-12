@@ -86,13 +86,35 @@ public sealed class CollectionsUnitPaymentSummaryAppService(
 
         var (financial, detail, due, overdue, total, instalments, reason) = Financials(oneAccount, data, today, maxAgeMinutes, accounts.Count > 1);
         var companyStatus = data.Snapshot.Companies.FirstOrDefault(c => c.CompanyId == (oneAccount?.CompanyId ?? companyId));
+        var payments = financial is "Available" or "NoDues" ? Figures(oneAccount!, data, today, companyStatus?.LastSuccessUtc) : null;
         var linkStatus = reasons.Count > 0 ? "NeedsReview" : oneAccount is null && crm is null ? "NotFound" : "Linked";
         return new(key, oneAccount?.UnitCode ?? key, oneAccount?.CompanyId ?? companyId, oneAccount?.TowerNumber ?? CollectionsTowerNumber.Parse(key), oneAccount?.TowerName,
             linkStatus, reasons,
             new CollectionsUnitPartyDto(linked.Name, linked.Phone, linked.Email, linked.NameSource, linked.PhoneSource, linked.EmailSource),
             status switch { CrmLinkStatus.Single => "Single", CrmLinkStatus.Ambiguous => "Ambiguous", CrmLinkStatus.None when data.CrmLoaded => "None", _ => "Unavailable" },
             status == CrmLinkStatus.Single ? crm!.CustomerId : null, status == CrmLinkStatus.Single ? crm!.CrmUnitId : null, oneAccount?.TenantId, oneAccount?.UnitId,
-            financial, detail, due, overdue, total, instalments, today, companyStatus?.LastSuccessUtc, companyStatus?.Freshness ?? "Missing", reason);
+            financial, detail, due, overdue, total, instalments, today, companyStatus?.LastSuccessUtc, companyStatus?.Freshness ?? "Missing", reason, payments);
+    }
+
+    private const string TotalAndPaidUnavailable =
+        "The receivables snapshot holds only the unpaid part of each instalment, and EDSM's totals are per customer and company, not per unit. Total and paid amounts are therefore not available for this unit.";
+
+    /// <summary>
+    /// The Payment tab's figures. The month is the current Dubai calendar month of <paramref name="today"/>: Overdue = due before its first day, Due = due in it (any day, so also later
+    /// than today), Not yet due = after it. Remaining balance is every unpaid instalment of the unit, future ones included; it is not Due + Overdue.
+    /// </summary>
+    private static CollectionsUnitPaymentFiguresDto Figures(PactUnitIdentity account, PactUnitReceivables data, DateOnly today, DateTime? lastUpdatedUtc)
+    {
+        var monthStart = CollectionsDueMonth.MonthStart(today);
+        var monthEnd = CollectionsDueMonth.MonthEnd(today);
+        var rows = data.Instalments.Where(i => i.CompanyId == account.CompanyId && i.TenantId == account.TenantId && i.UnitId == account.UnitId && i.RemainingAmount > 0)
+            .OrderBy(i => i.DueDate).ThenBy(i => i.VoucherNumber, StringComparer.Ordinal).ToList();
+        var schedule = rows.Select((i, index) => new CollectionsUnitScheduleLineDto(
+            i.VoucherNumber.Length > 0 ? $"Voucher {i.VoucherNumber}" : $"Instalment {index + 1}", i.DueDate, i.OriginalAmount, i.PaidAmount, i.RemainingAmount,
+            CollectionsDueMonth.Classify(i.DueDate, today) switch { CollectionsDueClass.Overdue => "Overdue", CollectionsDueClass.Due => "Due", _ => "NotYetDue" },
+            i.DueDate < today ? today.DayNumber - i.DueDate.DayNumber : null)).ToList();
+        return new(null, null, schedule.Sum(l => l.RemainingAmount), schedule.Where(l => l.Status == "Due").Sum(l => l.RemainingAmount),
+            schedule.Where(l => l.Status == "Overdue").Sum(l => l.RemainingAmount), monthStart, monthEnd, schedule, lastUpdatedUtc, TotalAndPaidUnavailable);
     }
 
     private static (string Status, string? Detail, decimal? Due, decimal? Overdue, decimal? Total, IReadOnlyList<CollectionsUnitInstalmentDto> Instalments, string? Reason) Financials(

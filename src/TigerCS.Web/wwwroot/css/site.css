@@ -2078,3 +2078,26 @@ a.badge:hover { text-decoration: underline; }
     .receivables-workspace .filter-bar > .field-group { min-width: 100%; }
     .receivables-pagination { flex-wrap: wrap; }
 }
+
+/* Unit Payment Summary: unit header, one compact contact block, five summary cards. */
+.unit-head { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: var(--space-3) var(--space-5); padding: var(--space-3) 0; border-bottom: 1px solid var(--color-border); }
+.unit-head__id { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.unit-head__tower { font-size: var(--text-xs); font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: var(--color-text-secondary); }
+.unit-head__unit { font-size: 22px; line-height: 1.15; letter-spacing: -0.02em; }
+.unit-head__unit-word { font-weight: 500; color: var(--color-text-secondary); }
+.unit-head__meta { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-5); margin: 0; font-size: var(--text-sm); }
+.unit-head__meta div { display: flex; flex-direction: column; gap: 1px; }
+.unit-head__meta dt { font-size: var(--text-2xs); font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: var(--color-text-secondary); }
+.unit-head__meta dd { margin: 0; font-weight: 600; }
+.unit-head__meta dd small { font-weight: 500; color: var(--color-text-secondary); }
+.unit-contact { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-4); margin: 0; font-size: var(--text-sm); }
+.unit-contact__item { font-weight: 600; overflow-wrap: anywhere; }
+.unit-contact__item small { font-weight: 500; color: var(--color-text-secondary); }
+.unit-payment > * + * { margin-top: var(--space-3); }
+.payment-kpis--five { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.payment-kpis--five .kpi-card strong { font-size: 22px; overflow-wrap: anywhere; }
+.payment-kpis--five .kpi-card small { font-size: var(--text-xs); color: var(--color-text-secondary); }
+.payment-kpis--five .kpi-card--unavailable strong { font-size: 18px; font-weight: 600; letter-spacing: 0; color: var(--color-text-secondary); }
+.payment-nodue { margin: 0; padding: var(--space-2) var(--space-3); border-radius: var(--radius-md); background: var(--color-bg); border: 1px dashed var(--color-border-strong); color: var(--color-text-secondary); font-size: var(--text-sm); font-weight: 600; }
+@media (max-width: 1180px) { .payment-kpis--five { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 640px) { .payment-kpis--five { grid-template-columns: repeat(2, minmax(0, 1fr)); } }

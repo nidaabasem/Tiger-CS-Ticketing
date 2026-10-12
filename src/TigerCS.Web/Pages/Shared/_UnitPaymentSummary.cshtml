@@ -8,8 +8,10 @@
     var links = panel.Links;
     var selectId = links.AccountParameter == "account" ? "paymentAccount" : $"paymentAccount-{links.AccountParameter}";
     var warnIcon = "M12 9v4M12 17h.01M10.3 3.9 2.5 18a1.6 1.6 0 0 0 1.4 2.4h16.2a1.6 1.6 0 0 0 1.4-2.4L13.7 3.9a1.6 1.6 0 0 0-2.8 0Z";
-    string Aed(decimal? amount) => amount is { } v ? $"AED {v.ToString("N2", System.Globalization.CultureInfo.InvariantCulture)}" : "—";
+    // A figure the sources did not provide is "Unavailable" - never zero and never a dash.
+    string Aed(decimal? amount) => CustomerPaymentPanel.Money(amount, "AED");
     string Source(string value) => value switch { "Crm" => "CRM", "Pact" => "PACT", _ => "" };
+    string TowerOf(LinkedUnitCandidateDto c) => c.TowerName ?? c.ProjectName ?? (c.TowerNumber is null ? "—" : $"Tower {c.TowerNumber}");
 }
 
 <section class="unit-payment" data-unit-payment data-crm-status="@link.CrmStatus" data-pact-status="@link.PactStatus">
@@ -47,7 +49,7 @@
                     <a class="payment-account-card" href="@links.AccountHref(option.SelectionId)" data-unit-link="@option.SelectionId">
                         <span class="payment-account-card__unit">@panel.UnitLabel(option)</span>
                         <span class="badge badge-pay-@CustomerPaymentPanel.UnitStatusCss(option.FinancialStatus)">@CustomerPaymentPanel.UnitStatusText(option.FinancialStatus)</span>
-                        <span class="payment-account-card__due">@(option.Total is { } t ? Aed(t) : "—") <small>total due</small></span>
+                        <span class="payment-account-card__due">@Aed(option.Payments?.RemainingBalance) <small>remaining balance</small></span>
                     </a>
                 </li>
             }
@@ -61,26 +63,52 @@
 
     @if (unit is not null)
     {
-        <div class="payment-toolbar">
-            <div class="payment-toolbar__single">
-                <span class="field-label">Unit</span>
-                <strong data-unit-label>@panel.UnitLabel(unit)</strong>
-            </div>
-            <div class="payment-toolbar__meta">
-                <span>Source <strong>@(unit.Source == "Crm" ? "CRM → PACT" : unit.Source == "Leasing" ? "PACT Leasing" : "PACT")</strong></span>
-                @if (unit.UnitKey is not null) { <span>Unit code <strong>@unit.UnitKey</strong></span> }
-                <span>As of <strong>@CustomerPaymentPanel.Date(unit.AsOf)</strong></span>
-            </div>
-        </div>
+        var figures = unit.Payments;
+        var contact = new List<(string Label, string Value, string Source)>();
+        if (unit.Customer.Name.Length > 0) contact.Add(("Customer", unit.Customer.Name, Source(unit.Customer.NameSource)));
+        if (unit.Customer.Mobile.Length > 0) contact.Add(("Mobile", unit.Customer.Mobile, Source(unit.Customer.MobileSource)));
+        if (unit.Customer.Email.Length > 0) contact.Add(("Email", unit.Customer.Email, Source(unit.Customer.EmailSource)));
+        // One source for every detail is said once; only a mixed contact (CRM first, PACT completing it) tags each detail.
+        var contactSources = contact.Select(c => c.Source).Where(c => c.Length > 0).Distinct().ToList();
+        var singleContactSource = contactSources.Count == 1 && contact.All(c => c.Source == contactSources[0]) ? contactSources[0] : null;
 
-        <div class="facts-panel facts-panel--flat" data-unit-customer>
-            <dl>
-                <div class="facts-row"><dt>Customer</dt><dd>@(unit.Customer.Name.Length > 0 ? unit.Customer.Name : "—") <small class="text-secondary">@Source(unit.Customer.NameSource)</small></dd></div>
-                <div class="facts-row"><dt>Mobile</dt><dd>@(unit.Customer.Mobile.Length > 0 ? unit.Customer.Mobile : "—") <small class="text-secondary">@Source(unit.Customer.MobileSource)</small></dd></div>
-                <div class="facts-row"><dt>Email</dt><dd>@(unit.Customer.Email.Length > 0 ? unit.Customer.Email : "—") <small class="text-secondary">@Source(unit.Customer.EmailSource)</small></dd></div>
-                <div class="facts-row"><dt>Tower / apartment</dt><dd>@(unit.TowerName ?? unit.ProjectName ?? "—") · @(unit.UnitNumber ?? "—")</dd></div>
+        <div class="unit-head" data-unit-header>
+            <div class="unit-head__id">
+                <span class="unit-head__tower" data-unit-tower>@TowerOf(unit)</span>
+                <strong class="unit-head__unit" data-unit-label><span class="unit-head__unit-word">Unit</span> @(unit.UnitNumber ?? "—")</strong>
+            </div>
+            <dl class="unit-head__meta">
+                @if (unit.UnitKey is not null) { <div><dt>Unit code</dt><dd>@unit.UnitKey</dd></div> }
+                @if (unit.ContractNumber is { Length: > 0 } contractNumber) { <div><dt>Contract</dt><dd>@contractNumber</dd></div> }
+                <div><dt>Source</dt><dd>@(unit.Source == "Crm" ? "CRM → PACT" : unit.Source == "Leasing" ? "PACT Leasing" : "PACT")</dd></div>
+                @if (figures?.LastUpdatedUtc is { } updated)
+                {
+                    <div><dt>Last updated</dt><dd data-unit-updated title="@updated.ToString("O")">@CustomerPaymentPanel.DubaiTime(updated) <small>Dubai</small></dd></div>
+                }
+                else
+                {
+                    <div><dt>Last updated</dt><dd data-unit-updated>@CustomerPaymentPanel.Date(unit.AsOf)</dd></div>
+                }
             </dl>
         </div>
+
+        <p class="unit-contact" data-unit-customer>
+            @if (contact.Count == 0)
+            {
+                <span class="text-secondary">No contact details are held for this unit.</span>
+            }
+            else
+            {
+                foreach (var item in contact)
+                {
+                    <span class="unit-contact__item" data-contact="@item.Label.ToLowerInvariant()">@item.Value@if (singleContactSource is null && item.Source.Length > 0) { <small> @item.Source</small> }</span>
+                }
+                if (singleContactSource is not null)
+                {
+                    <span class="badge badge-pay-neutral" data-contact-source>@singleContactSource</span>
+                }
+            }
+        </p>
 
         @if (unit.ReviewReasons.Count > 0)
         {
@@ -92,8 +120,11 @@
 
         @switch (unit.FinancialStatus)
         {
-            case "NoDues":
+            case "NoDues" when figures is null:
                 <div class="alert alert-success" role="status" data-unit-state="NoDues"><span><strong>Confirmed: nothing is due.</strong> PACT holds this unit and nothing is due on or before today.@(unit.FinancialDetail is { Length: > 0 } zeroDetail ? " " + zeroDetail : "")</span></div>
+                break;
+            case "NoDues":
+                <span hidden data-unit-state="NoDues"></span>
                 break;
             case "NoFinancialData":
                 <div class="alert alert-info" role="status" data-unit-state="NoFinancialData">
@@ -114,39 +145,75 @@
                 </div>
                 break;
             default:
-                <section class="kpi-grid payment-kpis" aria-label="Balance summary" data-unit-state="Available">
-                    <div class="kpi-card @(unit.Overdue > 0 ? "kpi-card--attention" : "")"><strong>@Aed(unit.Overdue)</strong><span>Overdue</span></div>
-                    <div class="kpi-card"><strong>@Aed(unit.Due)</strong><span>Due</span></div>
-                    <div class="kpi-card kpi-card--attention"><strong>@Aed(unit.Total)</strong><span>Total (Due + Overdue)</span></div>
-                </section>
-                @if (!string.IsNullOrWhiteSpace(unit.FinancialDetail))
-                {
-                    <p class="field-hint">@unit.FinancialDetail</p>
-                }
+                <span hidden data-unit-state="Available"></span>
                 break;
         }
 
-        @if (unit.Instalments.Count > 0)
-        {
-            <h3 class="payment-section-title">Unpaid instalments due this month or earlier</h3>
-            <div class="table-scroll">
-                <table class="data-table">
-                    <thead><tr><th>Instalment</th><th>Due date</th><th class="col-num">Scheduled</th><th class="col-num">Paid</th><th class="col-num">Remaining</th><th>Status</th></tr></thead>
-                    <tbody>
-                        @foreach (var instalment in unit.Instalments)
-                        {
-                            <tr>
-                                <td>@instalment.Description</td>
-                                <td>@CustomerPaymentPanel.Date(instalment.DueDate)</td>
-                                <td class="col-num">@Aed(instalment.OriginalAmount)</td>
-                                <td class="col-num">@Aed(instalment.PaidAmount)</td>
-                                <td class="col-num">@Aed(instalment.RemainingAmount)</td>
-                                <td><span class="badge badge-pay-@(instalment.Status == "Overdue" ? "critical" : "pending")">@instalment.Status@(instalment.DaysLate is { } days ? $" · {days} d" : "")</span></td>
-                            </tr>
-                        }
-                    </tbody>
-                </table>
+        @* The summary and the schedule are always shown for a unit: a value that is not available says "Unavailable", it never disappears or becomes zero. *@
+        <section class="kpi-grid payment-kpis payment-kpis--five" aria-label="Payment summary" data-payment-summary>
+            <div class="kpi-card @(figures?.TotalAmount is null ? "kpi-card--unavailable" : "")" data-kpi="total">
+                <strong>@Aed(figures?.TotalAmount)</strong><span>Total Amount</span>
             </div>
+            <div class="kpi-card @(figures?.PaidAmount is null ? "kpi-card--unavailable" : "")" data-kpi="paid">
+                <strong>@Aed(figures?.PaidAmount)</strong><span>Paid Amount</span>
+            </div>
+            <div class="kpi-card @(figures is null ? "kpi-card--unavailable" : "")" data-kpi="remaining">
+                <strong>@Aed(figures?.RemainingBalance)</strong><span>Remaining Balance</span>
+                @if (figures is not null) { <small>All unpaid, incl. future payments</small> }
+            </div>
+            <div class="kpi-card @(figures is null ? "kpi-card--unavailable" : figures.DueThisMonth > 0 ? "kpi-card--attention" : "")" data-kpi="due">
+                <strong>@Aed(figures?.DueThisMonth)</strong><span>Due This Month</span>
+                @if (figures is not null) { <small>@figures.MonthStart.ToString("MMMM yyyy", System.Globalization.CultureInfo.InvariantCulture)</small> }
+            </div>
+            <div class="kpi-card @(figures is null ? "kpi-card--unavailable" : figures.Overdue > 0 ? "kpi-card--attention" : "")" data-kpi="overdue">
+                <strong>@Aed(figures?.Overdue)</strong><span>Overdue</span>
+                @if (figures is not null) { <small>Due before @CustomerPaymentPanel.Date(figures.MonthStart)</small> }
+            </div>
+        </section>
+
+        @if (figures is { TotalAmount: null } or { PaidAmount: null })
+        {
+            <p class="field-hint" data-total-paid-unavailable>Total Amount and Paid Amount are unavailable: @figures!.TotalAndPaidUnavailableReason</p>
+        }
+
+        @if (figures is { DueThisMonth: 0, Overdue: 0 })
+        {
+            <p class="payment-nodue" role="status" data-no-due-overdue>No due or overdue payments this month</p>
+        }
+
+        @if (!string.IsNullOrWhiteSpace(unit.FinancialDetail) && unit.FinancialStatus is "Available" or "NoDues")
+        {
+            <p class="field-hint">@unit.FinancialDetail</p>
+        }
+
+        @if (figures is not null)
+        {
+            <h3 class="payment-section-title">Payment schedule</h3>
+            @if (figures.Schedule.Count == 0)
+            {
+                <div class="empty-state empty-state--compact"><p>No unpaid payments on this unit's schedule.</p></div>
+            }
+            else
+            {
+                <div class="table-scroll">
+                    <table class="data-table" data-payment-schedule>
+                        <thead><tr><th>Due date</th><th>Payment</th><th class="col-num">Amount</th><th class="col-num">Paid</th><th class="col-num">Remaining</th><th>Status</th></tr></thead>
+                        <tbody>
+                            @foreach (var line in figures.Schedule)
+                            {
+                                <tr data-schedule-status="@line.Status">
+                                    <td class="text-mono">@CustomerPaymentPanel.Date(line.DueDate)</td>
+                                    <td>@line.Description</td>
+                                    <td class="col-num text-mono">@Aed(line.ScheduledAmount)</td>
+                                    <td class="col-num text-mono">@Aed(line.PaidAmount)</td>
+                                    <td class="col-num text-mono cell-primary">@Aed(line.RemainingAmount)</td>
+                                    <td><span class="badge badge-pay-@CustomerPaymentPanel.ScheduleStatusCss(line.Status)">@CustomerPaymentPanel.ScheduleStatusText(line.Status)@(line.Status == "Overdue" && line.DaysLate is { } days ? $" · {days} d" : "")</span></td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
         }
     }
 </section>

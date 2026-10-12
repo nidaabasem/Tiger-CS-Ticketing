@@ -313,6 +313,6 @@ public sealed class CustomerUnitLinkService(
         var linkStatus = financial == "MatchFailed" ? "MatchFailed" : reasons.Count > 0 ? "NeedsReview" : "Linked";
         return new(id, source, s.CompanyId, s.TowerNumber, s.TowerName, projectName, unitNumber, s.UnitKey, linkStatus, reasons, party,
             crmCustomerId ?? s.CrmCustomerId, crmUnitId ?? s.CrmUnitId, crmProjectId, s.PactTenantId, s.PactUnitId, contractNumber, contractEnd,
-            financial, s.FinancialReason, s.FinancialDetail, s.Due, s.Overdue, s.Total, s.Instalments, s.AsOf, s.PactFreshness);
+            financial, s.FinancialReason, s.FinancialDetail, s.Due, s.Overdue, s.Total, s.Instalments, s.AsOf, s.PactFreshness, s.Payments);
     }
 }

@@ -486,11 +486,27 @@ public sealed class CustomerPaymentTabRenderTests : IDisposable
     private static LinkedUnitCandidateDto UnitCandidate(
         string id = "crm:9090", string status = "Available", string? reason = null, string? detail = null, decimal? due = 300m, decimal? overdue = 700m, string unit = "909",
         int? company = 4, string source = "Crm", string name = "Sreesaran Maru Sudhakar", string tenant = "T-909", string? contract = null,
-        IReadOnlyList<string>? review = null, IReadOnlyList<CollectionsUnitInstalmentDto>? instalments = null) =>
+        IReadOnlyList<string>? review = null, IReadOnlyList<CollectionsUnitInstalmentDto>? instalments = null, CollectionsUnitPaymentFiguresDto? payments = null) =>
         new(id, source, company, "140", "Al Ghaf Tower", "Al Ghaf Tower", unit, "TP140-" + unit, status == "MatchFailed" ? "MatchFailed" : "Linked", review ?? [],
             new CollectionsUnitPartyDto(name, "+971501234567", "sree@example.test", "Crm", "Crm", "Crm"), 498397, 9090, 79, tenant, 1400909, contract, null,
             status, reason, detail, due, overdue, due is null || overdue is null ? null : due + overdue,
-            instalments ?? (status == "Available" ? [new("Voucher V1", DateOnly.FromDateTime(Now).AddDays(-40), 700m, 0m, 700m, "Overdue", 40)] : []), DateOnly.FromDateTime(Now), "Fresh");
+            instalments ?? (status == "Available" ? [new("Voucher V1", DateOnly.FromDateTime(Now).AddDays(-40), 700m, 0m, 700m, "Overdue", 40)] : []), DateOnly.FromDateTime(Now), "Fresh",
+            payments ?? (status == "Available" ? Figures(overdue ?? 0m, due ?? 0m, 500m) : status == "NoDues" ? Figures(0m, 0m, 0m) : null));
+
+    /// <summary>The tab's figures: an overdue line (before this month), a line due this month and, when there is one, a not-yet-due line (next month). Total and paid are never provided by the snapshot.</summary>
+    private static CollectionsUnitPaymentFiguresDto Figures(decimal overdue, decimal due, decimal future)
+    {
+        var monthStart = new DateOnly(Now.Year, Now.Month, 1);
+        var lines = new List<CollectionsUnitScheduleLineDto>();
+        if (overdue > 0) lines.Add(new("Voucher V1", monthStart.AddDays(-5), null, null, overdue, "Overdue", 5));
+        if (due > 0) lines.Add(new("Voucher V2", monthStart.AddDays(2), null, null, due, "Due", null));
+        if (future > 0) lines.Add(new("Voucher V3", monthStart.AddMonths(1).AddDays(9), null, null, future, "NotYetDue", null));
+        return new(null, null, overdue + due + future, due, overdue, monthStart, monthStart.AddMonths(1).AddDays(-1), lines, Now, "Only unpaid instalments are held.");
+    }
+
+    /// <summary>The text of one summary card's value (the rendered HTML, decoded).</summary>
+    private static string Kpi(string html, string key) =>
+        WebUtility.HtmlDecode(Regex.Match(html, $"data-kpi=\"{key}\">\\s*<strong>(.*?)</strong>", RegexOptions.Singleline).Groups[1].Value.Trim());
 
     private static CustomerUnitLinkResultDto Link(params LinkedUnitCandidateDto[] units) =>
         new("+971501234567", "Found", "NotSearched", units, units.Length > 1, units.Length == 1 ? units[0].SelectionId : null, []);
@@ -507,12 +523,23 @@ public sealed class CustomerPaymentTabRenderTests : IDisposable
 
         Assert.Contains("data-payment-state=\"UnitSummary\"", html, StringComparison.Ordinal);
         Assert.Contains("data-unit-state=\"Available\"", html, StringComparison.Ordinal);
-        Assert.Contains("AED 1,000.00", html, StringComparison.Ordinal);            // Total = Due + Overdue
-        Assert.Contains("AED 700.00", html, StringComparison.Ordinal);
+        Assert.Contains("data-payment-summary", html, StringComparison.Ordinal);
+        Assert.Equal("AED 1,500.00", Kpi(html, "remaining"));                       // every unpaid payment, the not-yet-due 500 included (not Due + Overdue = 1,000)
+        Assert.Equal("AED 300.00", Kpi(html, "due"));
+        Assert.Equal("AED 700.00", Kpi(html, "overdue"));
+        Assert.Equal("Unavailable", Kpi(html, "total"));                            // the snapshot cannot provide them: never zero, never inferred
+        Assert.Equal("Unavailable", Kpi(html, "paid"));
+        Assert.Contains("data-total-paid-unavailable", html, StringComparison.Ordinal);
+        Assert.DoesNotContain("data-no-due-overdue", html, StringComparison.Ordinal);
+        Assert.Contains("data-payment-schedule", html, StringComparison.Ordinal);
+        Assert.Contains("data-schedule-status=\"NotYetDue\"", html, StringComparison.Ordinal);
+        Assert.Contains(">Not yet due<", html, StringComparison.Ordinal);
+        Assert.Contains("Last updated", html, StringComparison.Ordinal);
+        Assert.Contains("Al Ghaf Tower", html, StringComparison.Ordinal);
+        Assert.Single(Regex.Matches(html, "sree@example\\.test"));          // the contact is shown once, its (single) source said once
         Assert.Contains("Sreesaran Maru Sudhakar", html, StringComparison.Ordinal);
         Assert.Contains("971501234567", html, StringComparison.Ordinal);
         Assert.Contains("sree@example.test", html, StringComparison.Ordinal);
-        Assert.Contains("Al Ghaf Tower", html, StringComparison.Ordinal);
         Assert.Contains("Voucher V1", html, StringComparison.Ordinal);
         Assert.DoesNotContain("No payment figures for this customer", html, StringComparison.Ordinal);
         // The unit route is what the tab asked first; the figures never came from a phone search.
@@ -544,13 +571,20 @@ public sealed class CustomerPaymentTabRenderTests : IDisposable
         _api.UnitLink = Link(UnitCandidate(status: "NoDues", due: 0m, overdue: 0m, detail: "Nothing is due on or before today."));
         var zero = await Ok(await Client().GetAsync("/Customers/crm:9001?tab=payment"));
         Assert.Contains("data-unit-state=\"NoDues\"", zero, StringComparison.Ordinal);
-        Assert.Contains("Confirmed: nothing is due.", zero, StringComparison.Ordinal);
+        // Nothing due or overdue: the summary and the schedule stay, with the short message - the values are real zeros here (PACT confirmed), the other two are unavailable.
+        Assert.Contains("data-payment-summary", zero, StringComparison.Ordinal);
+        Assert.Contains("No due or overdue payments this month", zero, StringComparison.Ordinal);
+        Assert.Equal(("AED 0.00", "AED 0.00", "AED 0.00"), (Kpi(zero, "due"), Kpi(zero, "overdue"), Kpi(zero, "remaining")));
+        Assert.Equal("Unavailable", Kpi(zero, "total"));
+        Assert.Contains("No unpaid payments on this unit", zero, StringComparison.Ordinal);
 
         _api.UnitLink = Link(UnitCandidate(status: "NoFinancialData", reason: "PactHoldsNoRecord", due: null, overdue: null, detail: "PACT holds no receivable record for this unit."));
         var none = await Ok(await Client().GetAsync("/Customers/crm:9001?tab=payment"));
         Assert.Contains("data-unit-state=\"NoFinancialData\"", none, StringComparison.Ordinal);
         Assert.Contains("No financial data available.", none, StringComparison.Ordinal);
         Assert.Contains("This is not a zero balance.", none, StringComparison.Ordinal);
+        Assert.Equal(["Unavailable", "Unavailable", "Unavailable", "Unavailable", "Unavailable"], new[] { "total", "paid", "remaining", "due", "overdue" }.Select(k => Kpi(none, k)));
+        Assert.DoesNotContain("data-no-due-overdue", none, StringComparison.Ordinal);                 // unknown is not "nothing due"
         Assert.DoesNotContain("Confirmed: nothing is due", none, StringComparison.Ordinal);
 
         _api.UnitLink = Link(UnitCandidate(status: "SourceError", reason: "PactUnavailable", due: null, overdue: null, detail: "The unit could not be read from the PACT receivables snapshot. Please retry."));
@@ -577,9 +611,10 @@ public sealed class CustomerPaymentTabRenderTests : IDisposable
 
         _api.UnitLink = Link(first, second) with { SelectedId = "crm:9091", SelectionRequired = false };
         var chosen = await Ok(await Client().GetAsync("/Customers/crm:9001?tab=payment&account=crm%3A9091"));
-        Assert.Contains("Voucher V2", chosen, StringComparison.Ordinal);
-        Assert.Contains("AED 55.00", chosen, StringComparison.Ordinal);
-        Assert.DoesNotContain("Voucher V1", chosen, StringComparison.Ordinal);            // the other unit's instalments are not mixed in
+        Assert.Contains("Voucher V1", chosen, StringComparison.Ordinal);                  // this unit's own schedule ...
+        Assert.Equal("AED 555.00", Kpi(chosen, "remaining"));                             // ... and only its own amounts (55 overdue + 500 not yet due)
+        Assert.Equal("AED 55.00", Kpi(chosen, "overdue"));
+        Assert.DoesNotContain("AED 1,500.00", chosen, StringComparison.Ordinal);          // the other unit's amounts are not mixed in
         Assert.Contains(_api.Requests, r => r.Contains("selection=crm%3A9091", StringComparison.OrdinalIgnoreCase));
     }
 
@@ -596,7 +631,7 @@ public sealed class CustomerPaymentTabRenderTests : IDisposable
         Assert.Contains("data-payment-state=\"UnitSummary\"", html, StringComparison.Ordinal);
         Assert.Contains("No company-7 (Leasing) receivables source exists.", html, StringComparison.Ordinal);
         Assert.Contains("PACT Leasing", html, StringComparison.Ordinal);
-        Assert.Contains("contract LC-1", html, StringComparison.Ordinal);
+        Assert.Contains("<dt>Contract</dt><dd>LC-1</dd>", html, StringComparison.Ordinal);
         Assert.DoesNotContain("No payment figures for this customer", html, StringComparison.Ordinal);
     }
 
@@ -606,7 +641,7 @@ public sealed class CustomerPaymentTabRenderTests : IDisposable
         _api.UnitLink = Link(UnitCandidate());
         var html = await Ok(await Client().GetAsync("/Customers/Payments?phoneNumber=971501234567&customerKey=crm%3A9001"));
         Assert.Contains("data-unit-state=\"Available\"", html, StringComparison.Ordinal);
-        Assert.Contains("AED 1,000.00", html, StringComparison.Ordinal);
+        Assert.Equal("AED 1,500.00", Kpi(html, "remaining"));
         Assert.Contains("phone=971501234567", _api.Requests.First(r => r.Contains("/units")), StringComparison.Ordinal);
         Assert.DoesNotContain(_api.Requests, r => r.Contains("customer-lookup/payment-summary", StringComparison.Ordinal));   // figures found: no phone-based EDSM search needed
     }
