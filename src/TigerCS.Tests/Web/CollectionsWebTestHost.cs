@@ -71,11 +71,11 @@ internal sealed class FakeCollectionsApi : HttpMessageHandler
                     g.Sum(r => r.RemainingAmount), g.Count(r => r.Classification == "Overdue"), g.Where(r => r.Classification == "Overdue").Sum(r => r.RemainingAmount))).ToList();
                 var dueMonth = q["dueMonth"];
                 var rows = dueMonth is null ? all : all.Where(r => r.DueDate.ToString("yyyy-MM") == dueMonth).ToList();
-                // Unit view only: the units having an instalment of the chosen status (today = 2026-10-09, Dubai), with ALL of their instalments.
-                var today = new DateOnly(2026, 10, 9);
+                // Unit view only: the units having an instalment of the chosen status (today = 2026-10-09, Dubai; Overdue: before 1 Oct, Due: inside October), with ALL of their instalments.
+                var monthStart = new DateOnly(2026, 10, 1);
                 if (q["view"] == "units" && q["status"] is { Length: > 0 } wanted)
                     rows = rows.GroupBy(r => (r.CompanyId, r.TenantId, r.UnitId, r.UnitCode))
-                        .Where(g => g.Any(r => wanted switch { "overdue" => r.DueDate < today, "due" => r.DueDate == today, _ => true }))
+                        .Where(g => g.Any(r => wanted switch { "overdue" => r.DueDate < monthStart, "due" => r.DueDate >= monthStart && r.DueDate < monthStart.AddMonths(1), _ => true }))
                         .SelectMany(g => g).ToList();
                 if (!string.IsNullOrWhiteSpace(q["search"]))
                     rows = rows.Where(r => new[] { r.CustomerName, r.Mobile, r.Email, r.UnitCode, r.TowerNumber ?? "", r.TowerName ?? "" }.Any(v => v.Contains(q["search"]!, StringComparison.OrdinalIgnoreCase))).ToList();

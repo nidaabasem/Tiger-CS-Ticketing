@@ -189,22 +189,22 @@ public sealed class CollectionsCampaignAppServiceTests
     }
 
     [Theory]
-    [InlineData("OverdueReminder", 2026, 10, 8, 2026, 10, 8)]
-    [InlineData("LegalNotice", 2026, 10, 8, 2026, 10, 8)]
-    [InlineData("LegalReferral", 2026, 10, 8, 2026, 10, 8)]
+    [InlineData("OverdueReminder", 2026, 10, 8, 2026, 10, 31)]
+    [InlineData("LegalNotice", 2026, 10, 8, 2026, 10, 31)]
+    [InlineData("LegalReferral", 2026, 10, 8, 2026, 10, 31)]
     [InlineData("CurrentMonthReminder", 2026, 10, 8, 2026, 10, 31)]
     [InlineData("FollowUpReminder", 2026, 10, 8, 2026, 10, 31)]
     [InlineData("CurrentMonthReminder", 2026, 2, 14, 2026, 2, 28)]   // non-leap February
     [InlineData("FollowUpReminder", 2028, 2, 3, 2028, 2, 29)]        // leap February
     [InlineData("CurrentMonthReminder", 2026, 12, 31, 2026, 12, 31)] // year end
-    [InlineData("OverdueReminder", 2027, 1, 1, 2027, 1, 1)]          // From is the configured StartDate, NOT the preview year: Dec 2026 arrears must stay reachable in 2027
+    [InlineData("OverdueReminder", 2027, 1, 1, 2027, 1, 31)]         // From is the configured StartDate, NOT the preview year: Dec 2026 arrears must stay reachable in 2027
     public async Task DefaultWindowDependsOnTheStage_TheReadStartsAtTheHistory_TheEligibilityAtTheConfiguredStartDate(
         string stage, int y, int m, int d, int toY, int toM, int toD)
     {
         var h = new Harness();
         var report = (await h.Service.PreviewAsync(h.Manager, stage, new(y, m, d))).Value!;
-        // The stage default end never goes past TODAY (14 Oct 2026, Dubai): later instalments are not listed.
-        var expectedTo = new DateOnly(toY, toM, toD) > new DateOnly(2026, 10, 14) ? new DateOnly(2026, 10, 14) : new DateOnly(toY, toM, toD);
+        // The default end is the last day of the preview month for EVERY stage, and it never goes past the end of the CURRENT month (October 2026, Dubai): later months are neither Due nor Overdue.
+        var expectedTo = new DateOnly(toY, toM, toD) > new DateOnly(2026, 10, 31) ? new DateOnly(2026, 10, 31) : new DateOnly(toY, toM, toD);
         // READ scope: the whole history (All months). The stage ELIGIBILITY still starts at the configured StartDate (2026-01-01): see CampaignReadScopeTests and the Verification tests.
         Assert.Equal(new PactReceivablesRequest(new(2000, 1, 1), expectedTo, null), h.Source.LastRequest);
         Assert.Equal(new DateOnly(2000, 1, 1), report.DateFrom); Assert.Equal(expectedTo, report.DateTo);
@@ -212,13 +212,16 @@ public sealed class CollectionsCampaignAppServiceTests
     }
 
     [Fact]
-    public async Task CurrentMonthDefault_DoesNotReadLaterInstalments_AndOverdueDefaultNeverReadsThem()
+    public async Task CurrentMonthDefault_ReadsTheRestOfTheMonth_NeverNextMonth_AndTheOverdueStageKeepsItsPolicy()
     {
-        var h = new Harness(); h.Source.Items.Add(Row(day: 25));   // due after today (14 Oct): never listed
+        var h = new Harness(); h.Source.Items.Add(Row(tenant: "3009") with { DueDate = new(2026, 11, 5) });   // next month: never read, never listed
         var current = (await h.Service.PreviewAsync(h.Manager, "CurrentMonthReminder", new(2026, 10, 8))).Value!;
         Assert.Empty(current.Items);
-        h.Source.Items.Add(Row(tenant: "3002", day: 10));
-        Assert.Equal("3002", Assert.Single((await h.Service.PreviewAsync(h.Manager, "CurrentMonthReminder", new(2026, 10, 8))).Value!.Items).TenantId);
+        h.Source.Items.Add(Row(tenant: "3002", day: 25));   // ONLY a coming day of the current month (today is 14 Oct): shown as Due once a unit is a candidate, but alone it is NOT one
+        Assert.Empty((await h.Service.PreviewAsync(h.Manager, "CurrentMonthReminder", new(2026, 10, 8))).Value!.Items);
+        h.Source.Items.Add(Row(tenant: "3002", day: 10));   // an instalment up to today makes the unit a candidate; the coming day then counts in Due
+        var item = Assert.Single((await h.Service.PreviewAsync(h.Manager, "CurrentMonthReminder", new(2026, 10, 8))).Value!.Items);
+        Assert.Equal(("3002", 1000m, 0m, 500m), (item.TenantId, item.DueAmount, item.OverdueAmount, item.Amount));
         var overdue = (await h.Service.PreviewAsync(h.Manager, "OverdueReminder", new(2026, 10, 8))).Value!;
         Assert.Empty(overdue.Items);
     }
@@ -240,7 +243,7 @@ public sealed class CollectionsCampaignAppServiceTests
         h.Source.Items.AddRange([Row(), Row(tenant: "3002", company: 32), Row(tenant: "3003") with { DueDate = new(2026, 3, 1) }]);
         var report = (await h.Service.PreviewAsync(h.Manager, "CurrentMonthReminder", new(2026, 10, 8), 4,
             dateFrom: new(2026, 10, 1), dateTo: new(2026, 10, 31))).Value!;
-        Assert.Equal(new PactReceivablesRequest(new(2026, 10, 1), new(2026, 10, 14), 4), h.Source.LastRequest);   // To is capped at today
+        Assert.Equal(new PactReceivablesRequest(new(2026, 10, 1), new(2026, 10, 31), 4), h.Source.LastRequest);   // To is the end of the current month
         Assert.Equal("3001", Assert.Single(report.Items).TenantId);
         Assert.Equal(new DateOnly(2026, 10, 8), report.BusinessDate);
     }

@@ -95,10 +95,11 @@ public sealed class FakeInstalmentSource(DateTime nowUtc) : IPactReceivablesSour
         if (unavailable) return Task.FromResult(new PactInstalmentsPage(empty, [], true, status, ReceivablesSnapshotComposer.ReadAt(status), 0));
 
         var min = filter is "paid" or "all" ? 0m : request.MinAmount;
-        var monthStart = request.AsOf; var nextMonth = request.ClassifyByDay ? monthStart.AddDays(1) : monthStart.AddMonths(1);
+        // By unit (ClassifyByDay) classifies against the CALENDAR MONTH of AsOf (today): Overdue before its first day, Due inside it, nothing from the next month on (CollectionsDueMonth).
+        var monthStart = request.ClassifyByDay ? CollectionsDueMonth.MonthStart(request.AsOf) : request.AsOf; var nextMonth = monthStart.AddMonths(1);
         var rows = Rows.Where(r => loaded.Any(c => c.CompanyId == r.Company && c.HasSnapshot) && r.UnitId > 0 && r.UnitCode.Trim() is not ("" or "0") && !r.UnitCode.Contains('*'))
             .Where(r => towerNumber is null || CollectionsTowerNumber.Parse(r.UnitCode) == towerNumber)
-            .Where(r => { var d = DateOnly.FromDateTime(r.Due); return d >= request.From && d <= request.To; })
+            .Where(r => { var d = DateOnly.FromDateTime(r.Due); return d >= request.From && d <= request.To && (!request.ClassifyByDay || d < nextMonth); })
             .Where(r => filter switch
             {
                 "outstanding" => r.Remaining > 0, "unpaid" => r.PaymentStatus == "Unpaid", "partial" => r.PaymentStatus == "PartiallyPaid",

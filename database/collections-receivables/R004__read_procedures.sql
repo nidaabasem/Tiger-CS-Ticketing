@@ -6,10 +6,14 @@
     dbo.usp_CollectionsRcv_GetUnit    Payment Summary: one unit by its normalised key (tower + unit code), never by a phone number
     dbo.usp_CollectionsRcv_GetTowers  active towers for the dropdown
 
-  SEMANTICS (all dates are calendar days; @Today is today in Asia/Dubai, passed by the application)
-    * Only unpaid or partly paid payments exist (remaining Amount > 0).  Overdue = due BEFORE @Today, Due = due ON @Today, anything later is NEVER read,
-      listed, totalled or exported.  Total = Due + Overdue = the sum of the payments the details list.
-    * @FromDate / @ToDate are the DUE-date window (NULL = no bound; @ToDate is capped at @Today).  A month filter passes that month's first and last day.
+  SEMANTICS (all dates are calendar days; @Today is today in Asia/Dubai, passed by the application; the reference is its CALENDAR MONTH, never the day)
+      @MonthStart = first day of @Today's month, @NextMonthStart = first day of the following month (December rolls into January):
+        Overdue = DueDate <  @MonthStart
+        Due     = DueDate >= @MonthStart AND DueDate < @NextMonthStart      (any day of the current month: past, today or still to come)
+        DueDate >= @NextMonthStart is NEVER read, listed, totalled or exported.
+    * Only unpaid or partly paid payments exist (remaining Amount > 0; the amount is the REMAINING amount).  Total = Due + Overdue = the sum of the payments the details list.
+    * @FromDate / @ToDate only NARROW the DUE-date window (NULL = no bound; @ToDate is capped at the last day of the current month).  A Month/Year filter passes that month's
+      first and last day; it never moves @MonthStart: a payment is Due / Overdue against the current month whatever window is chosen.  No window = historic overdue + the whole current month.
     * @Status: all (Due + Overdue, the default) | due | overdue - applied to the PAYMENTS, so every figure below is computed from the payments that match.
     * @MinTotal (NULL = none): applied AFTER the payments of one apartment are summed (Total > @MinTotal, strictly greater), before the counts, paging and export.
     * Excluded before aggregation and paging: unit code containing '*', UnitID <= 0, unit code blank or 0.  Only that apartment is dropped.
@@ -69,7 +73,9 @@ BEGIN
     DECLARE @Like nvarchar(420) = NULL;
     IF NULLIF(LTRIM(RTRIM(@Search)), N'') IS NOT NULL
         SET @Like = N'%' + REPLACE(REPLACE(REPLACE(REPLACE(LTRIM(RTRIM(@Search)), N'\', N'\\'), N'%', N'\%'), N'_', N'\_'), N'[', N'\[') + N'%';
-    DECLARE @Last date = CASE WHEN @ToDate IS NULL OR @ToDate > @Today THEN @Today ELSE @ToDate END;   -- nothing due after today is ever read
+    DECLARE @MonthStart date = DATEFROMPARTS(YEAR(@Today), MONTH(@Today), 1);
+    DECLARE @NextMonthStart date = DATEADD(MONTH, 1, @MonthStart);
+    DECLARE @LastExclusive date = CASE WHEN @ToDate IS NULL OR @ToDate >= @NextMonthStart THEN @NextMonthStart ELSE DATEADD(DAY, 1, @ToDate) END;   -- nothing from the next month on is ever read
 
     -- Towers whose NAME matches the search (a handful of rows), so the payment scan below does a keyed lookup instead of a correlated subquery per payment.
     DECLARE @TowerHits TABLE (CompanyId int NOT NULL, TowerNumber nvarchar(20) NOT NULL, PRIMARY KEY (CompanyId, TowerNumber));
@@ -95,8 +101,8 @@ BEGIN
       JOIN dbo.CollectionsRcvLine s ON s.CompanyId = c.CompanyId AND s.RunId = c.CurrentRunId
      WHERE c.CurrentRunId IS NOT NULL AND (@Scope IS NULL OR c.CompanyId = @Scope)
        AND (@TowerId IS NULL OR s.TowerNumber = @TowerNumber)
-       AND s.DueDate <= @Last AND (@FromDate IS NULL OR s.DueDate >= @FromDate)
-       AND (@Status = 'all' OR (@Status = 'due' AND s.DueDate = @Today) OR (@Status = 'overdue' AND s.DueDate < @Today))
+       AND s.DueDate < @LastExclusive AND (@FromDate IS NULL OR s.DueDate >= @FromDate)
+       AND (@Status = 'all' OR (@Status = 'due' AND s.DueDate >= @MonthStart) OR (@Status = 'overdue' AND s.DueDate < @MonthStart))
        AND s.Amount > 0 AND s.UnitId > 0 AND LTRIM(RTRIM(s.UnitCode)) NOT IN (N'', N'0') AND s.UnitCode NOT LIKE N'%*%'
     OPTION (RECOMPILE);
 
@@ -108,8 +114,8 @@ BEGIN
     );
     INSERT #u
     SELECT CompanyId, RunId, TenantId, UnitId, UnitCode,
-           SUM(CASE WHEN DueDate = @Today THEN Amount ELSE 0 END), SUM(CASE WHEN DueDate < @Today THEN Amount ELSE 0 END), SUM(Amount), COUNT(*),
-           SUM(CASE WHEN DueDate = @Today THEN 1 ELSE 0 END), SUM(CASE WHEN DueDate < @Today THEN 1 ELSE 0 END), MAX(DueDate), MAX(CAST(Hit AS int))
+           SUM(CASE WHEN DueDate >= @MonthStart THEN Amount ELSE 0 END), SUM(CASE WHEN DueDate < @MonthStart THEN Amount ELSE 0 END), SUM(Amount), COUNT(*),
+           SUM(CASE WHEN DueDate >= @MonthStart THEN 1 ELSE 0 END), SUM(CASE WHEN DueDate < @MonthStart THEN 1 ELSE 0 END), MAX(DueDate), MAX(CAST(Hit AS int))
       FROM #l GROUP BY CompanyId, RunId, TenantId, UnitId, UnitCode;
 
     -- Search also matches the linked CRM contact (CRM first, PACT completing): keep an apartment whose payments matched OR whose CRM customer does.
@@ -155,7 +161,7 @@ BEGIN
     IF @Only IS NULL OR @Only = 5
     SELECT s.CompanyId, s.TenantId COLLATE DATABASE_DEFAULT AS TenantId, s.UnitId, s.UnitCode COLLATE DATABASE_DEFAULT AS UnitCode, s.VoucherNumber, s.ChequeNumber, s.DueDate,
            s.Amount AS RemainingAmount, s.Mobile, s.Email, s.SourceStatus,
-           CASE WHEN s.DueDate < @Today THEN 'Overdue' ELSE 'Due' END AS Classification
+           CASE WHEN s.DueDate < @MonthStart THEN 'Overdue' ELSE 'Due' END AS Classification
       FROM #p p
       JOIN dbo.CollectionsRcvLine s ON s.CompanyId = p.CompanyId AND s.RunId = p.RunId AND s.TenantId = p.TenantId AND s.UnitId = p.UnitId
       JOIN #l l ON l.LineId = s.LineId
@@ -167,7 +173,8 @@ GO
 
 /*
   Payment rows of a due-date window for the Campaigns evaluation and the Review workflow.  Same exclusions as above (unpaid only, never a cancelled / invalid
-  apartment).  The window is the CALLER's: Campaigns pass a window that ends today, the Review workflow its month end.  @MinAmount keeps payments whose remaining
+  apartment).  The window is the CALLER's: Campaigns pass a window that ends at the end of the current month (Dubai), the Review workflow its month end.
+  This procedure applies NO Due / Overdue classification: the application classifies the rows against the current month (CollectionsDueMonth).  @MinAmount keeps payments whose remaining
   amount is >= it (0 = every unpaid payment).
     1 scope   ScopeValid, TowerId, CompanyId, TowerNumber, TowerName
     2 status  usp_CollectionsRcv_GetStatus for the companies in scope
@@ -218,20 +225,22 @@ GO
   Payment Summary by unit.  @UnitKey is the normalised key (TP140-101); @CompanyId narrows to one company (NULL = every company that holds the unit).
     1 status        usp_CollectionsRcv_GetStatus
     2 identities    per (company, tenant, unit): the PACT customer of the unit (name / mobile / e-mail as PACT holds them - mobile may be empty), tower, payment count
-    3 instalments   the unit's unpaid payments due on or before @AsOfDate, newest first
+    3 instalments   ALL the unit's unpaid payments, future months included, newest first. The application classifies them with the one month rule (CollectionsDueMonth: Overdue < first day of the month of @AsOfDate, Due inside it, later = Not yet due) - @AsOfDate is only that reference date
     4 crm           the CRM link of the unit (usp_Collections_GetCrmUnitLinks shape), all companies
   Rows with UnitID <= 0 or a cancelled ('*') / blank / 0 code never match.
 */
 CREATE OR ALTER PROCEDURE dbo.usp_CollectionsRcv_GetUnit
     @UnitKey   nvarchar(220),
     @CompanyId int = NULL,
-    @AsOfDate  date
+    @AsOfDate  date,
+    @Only      tinyint = NULL      -- NULL = all four result sets (what the application reads); 3 = ONLY the instalments, so tools/verify_unit_payment_summary.sql can INSERT ... EXEC it
 AS
 BEGIN
     SET NOCOUNT ON;
     IF @CompanyId IS NOT NULL AND @CompanyId NOT IN (4, 32) THROW 50031, N'Company must be 4, 32 or NULL.', 1;
+    IF @Only IS NOT NULL AND @Only <> 3 THROW 50036, N'@Only must be NULL or 3.', 1;
     DECLARE @Bare nvarchar(220) = SUBSTRING(@UnitKey, 3, 220);
-    EXEC dbo.usp_CollectionsRcv_GetStatus @CompanyId = @CompanyId;
+    IF @Only IS NULL EXEC dbo.usp_CollectionsRcv_GetStatus @CompanyId = @CompanyId;
 
     SELECT s.CompanyId, s.RunId, s.TenantId, s.UnitId, s.UnitCode, COUNT(*) AS Cnt, MAX(s.DueDate) AS Latest
       INTO #k
@@ -243,6 +252,7 @@ BEGIN
      GROUP BY s.CompanyId, s.RunId, s.TenantId, s.UnitId, s.UnitCode
     OPTION (RECOMPILE);
 
+    IF @Only IS NULL
     SELECT k.CompanyId, k.TenantId COLLATE DATABASE_DEFAULT AS TenantId, k.UnitCode COLLATE DATABASE_DEFAULT AS UnitCode, k.UnitId, r.FullName, r.Mobile, r.Email, r.TowerNumber,
            CONVERT(nvarchar(400), tw.TowerName) AS TowerName, k.Cnt AS AllRows, k.Cnt AS OpenRows
       FROM #k k
@@ -256,9 +266,10 @@ BEGIN
     SELECT s.CompanyId, s.TenantId COLLATE DATABASE_DEFAULT AS TenantId, s.UnitId, s.VoucherNumber, s.ChequeNumber, s.DueDate, s.Amount AS RemainingAmount, s.SourceStatus
       FROM #k k
       JOIN dbo.CollectionsRcvLine s ON s.CompanyId = k.CompanyId AND s.RunId = k.RunId AND s.TenantId = k.TenantId AND s.UnitId = k.UnitId
-     WHERE s.UnitCode = k.UnitCode AND s.Amount > 0 AND s.DueDate <= @AsOfDate
+     WHERE s.UnitCode = k.UnitCode AND s.Amount > 0   -- ALL unpaid instalments of the unit, future ones too: the Payment tab's Remaining Balance and its Not yet due rows; the application classifies by date
      ORDER BY k.CompanyId, k.TenantId, k.UnitId, s.DueDate DESC, s.VoucherNumber COLLATE Latin1_General_BIN2, s.LineId;
 
+    IF @Only IS NULL
     SELECT l.CompanyId, l.UnitKey, l.Customers, l.CustomerId, l.CrmUnitId, l.LeadId, l.FullName, l.PhoneNorm, l.EmailNorm
       FROM dbo.fn_Collections_CrmUnitLinks() l
      WHERE l.UnitKey = @UnitKey COLLATE Latin1_General_BIN2 AND (@CompanyId IS NULL OR l.CompanyId = @CompanyId);

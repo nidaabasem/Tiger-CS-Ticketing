@@ -31,19 +31,19 @@ public sealed class ReceivablesModel(CollectionsApiClient api) : PageModel
         return decimal.TryParse(text, NumberStyles.Number, CultureInfo.InvariantCulture, out var value) && value >= 0 ? value : DefaultMinTotal;
     }
 
-    /// <summary>Every unpaid instalment due today or earlier, whatever its size: from the widest start the snapshot is loaded for through today (Dubai). Nothing due later is listed.</summary>
+    /// <summary>Every unpaid instalment due before the end of the current Dubai month, whatever its size: from the widest start the snapshot is loaded for through that month end. Nothing due from the next month on is listed.</summary>
     public static readonly DateOnly WindowFrom = new(2000, 1, 1);
 
     public static readonly IReadOnlyList<(string Value, string Label)> StatusOptions =
         [("all", "Due + Overdue"), ("due", "Due"), ("overdue", "Overdue")];
 
     public int? TowerId { get; private set; }
-    /// <summary>Month and year of the instalments' DUE date; both empty = All months (everything due today or earlier).</summary>
+    /// <summary>Month and year of the instalments' DUE date; both empty = All months (historic overdue plus the whole current month). Narrows the results only: Due / Overdue stay classified against the current month.</summary>
     public int? Month { get; private set; }
     public int? Year { get; private set; }
     public decimal? MinTotal { get; private set; } = DefaultMinTotal;
     public string MinTotalText => MinTotal?.ToString("0.####", CultureInfo.InvariantCulture) ?? "";
-    /// <summary>The chosen month starts after today: nothing is due in it yet (no data call is made).</summary>
+    /// <summary>The chosen month starts after the current month: it is neither Due nor Overdue (no data call is made).</summary>
     public bool NothingDueYet { get; private set; }
     public IEnumerable<int> YearOptions()
     {
@@ -105,15 +105,15 @@ public sealed class ReceivablesModel(CollectionsApiClient api) : PageModel
 
     private async Task LoadReportAsync(CancellationToken cancellationToken)
     {
-        // The dates are the instalments' DUE dates: the chosen month, or everything up to today. Never beyond today (nothing future is listed), and the
-        // Due / Overdue classification stays against today whatever month is chosen.
+        // The dates are the instalments' DUE dates: the chosen month, or everything up to the end of the current month. Never from the next month on (neither Due nor
+        // Overdue), and the Due / Overdue classification stays against the current Dubai month whatever month is chosen.
         var today = CollectionsDisplay.DubaiToday();
-        var (from, to) = (WindowFrom, today);
+        var (from, to) = (WindowFrom, CollectionsDueMonth.MonthEnd(today));
         if (Month is { } m && Year is { } y)
         {
             var (first, last) = TigerCS.Domain.Modules.Collections.CollectionsDateRanges.Month(y, m);
-            if (first > today) { NothingDueYet = true; return; }
-            (from, to) = (first, last < today ? last : today);
+            if (!CollectionsDueMonth.IsInScope(first, today)) { NothingDueYet = true; return; }
+            (from, to) = (first, CollectionsDueMonth.ClampTo(last, today));
         }
         var result = await api.GetInstalmentsAsync(TowerId, from, to, "outstanding", null, Search, PageNumber, cancellationToken, "units", null, Status == "all" ? null : Status, MinTotal);
         Outcome = result.Outcome;
@@ -151,10 +151,10 @@ public sealed class ReceivablesModel(CollectionsApiClient api) : PageModel
 
     public const string Overdue = "Overdue", Due = "Due";
 
-    /// <summary>Overdue: due before today; Due: due today (today = the Dubai date of the report). Instalments due later are not part of this page.</summary>
-    public static string Classify(DateOnly dueDate, DateOnly today) => dueDate < today ? Overdue : Due;
+    /// <summary>Overdue: due before the first day of the current month; Due: due anywhere inside it (today = the Dubai date of the report). Instalments due from the next month on are not part of this page.</summary>
+    public static string Classify(DateOnly dueDate, DateOnly today) => CollectionsDueMonth.IsOverdue(dueDate, today) ? Overdue : Due;
 
-    /// <summary>Whole days between the due date and today for an overdue instalment; null otherwise.</summary>
+    /// <summary>Whole days between the due date and today for an instalment that is already past due (before today); null otherwise. A Due instalment of a coming day has none.</summary>
     public static int? DaysLate(DateOnly dueDate, DateOnly today) => dueDate < today ? today.DayNumber - dueDate.DayNumber : null;
 
     public sealed record InstalmentLine(int Number, string Description, DateOnly DueDate, decimal? Original, decimal? Paid, decimal Remaining, string Status, int? DaysLate);
@@ -170,7 +170,7 @@ public sealed record UnitLine(string Customer, string Phone, string Email, strin
         foreach (var unit in report.Units ?? [])
         {
             // Newest due date first; a remaining balance is what makes an instalment unpaid.
-            var rows = unit.Instalments.Where(i => i.RemainingAmount > 0 && i.DueDate <= today).OrderByDescending(i => i.DueDate).ThenBy(i => i.VoucherNumber, StringComparer.Ordinal).ToList();
+            var rows = unit.Instalments.Where(i => i.RemainingAmount > 0 && CollectionsDueMonth.IsInScope(i.DueDate, today)).OrderByDescending(i => i.DueDate).ThenBy(i => i.VoucherNumber, StringComparer.Ordinal).ToList();
             var instalments = rows.Select((i, index) => new InstalmentLine(index + 1,
                 i.VoucherNumber.Length > 0 ? $"Voucher {i.VoucherNumber}" : $"Instalment {index + 1}", i.DueDate, i.OriginalAmount, i.PaidAmount, i.RemainingAmount,
                 Classify(i.DueDate, today), DaysLate(i.DueDate, today))).ToList();

@@ -109,7 +109,7 @@ public sealed class CollectionsCampaignVerificationTests
         var report = (await h.Service.PreviewAsync(h.Manager, "OverdueReminder", new(2026, 10, 8), dateFrom: new(2025, 1, 1))).Value!;
 
         Assert.Equal(["NEW", "OLD"], report.Items.Select(c => c.TenantId).Order());
-        Assert.Equal(new PactReceivablesRequest(new(2025, 1, 1), new(2026, 10, 8), null), h.Source.LastRequest);
+        Assert.Equal(new PactReceivablesRequest(new(2025, 1, 1), new(2026, 10, 31), null), h.Source.LastRequest);
     }
 
     // =====================================================================
@@ -148,7 +148,7 @@ public sealed class CollectionsCampaignVerificationTests
         Assert.Equal(["D1-DEC2026", "D2-OCT2026"], await Tenants(h, "OverdueReminder", new(2027, 2, 1)));
         Assert.Equal(["D2-OCT2026"], await Tenants(h, "LegalReferral", new(2027, 2, 1)));
         Assert.Equal(["D3-JAN2027"], await Tenants(h, "LegalNotice", new(2027, 2, 1)));
-        Assert.Equal(new PactReceivablesRequest(new(2000, 1, 1), new(2027, 2, 1), null), h.Source.LastRequest);   // read scope: the whole history; D4-PRESTART is not eligible (asserted above)
+        Assert.Equal(new PactReceivablesRequest(new(2000, 1, 1), new(2027, 2, 28), null), h.Source.LastRequest);   // read scope: the whole history through the end of the current month; D4-PRESTART is not eligible (asserted above)
     }
 
     [Fact]

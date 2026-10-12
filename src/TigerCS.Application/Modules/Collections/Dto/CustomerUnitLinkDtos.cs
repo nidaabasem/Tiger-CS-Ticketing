@@ -17,7 +17,8 @@ public sealed record LinkedUnitCandidateDto(
     string LinkStatus, IReadOnlyList<string> ReviewReasons,
     CollectionsUnitPartyDto Customer, int? CrmCustomerId, int? CrmUnitId, int? CrmProjectId, string? PactTenantId, int? PactUnitId, string? ContractNumber, DateOnly? ContractEndDate,
     string FinancialStatus, string? FinancialReason, string? FinancialDetail, decimal? Due, decimal? Overdue, decimal? Total,
-    IReadOnlyList<CollectionsUnitInstalmentDto> Instalments, DateOnly AsOf, string PactFreshness);
+    IReadOnlyList<CollectionsUnitInstalmentDto> Instalments, DateOnly AsOf, string PactFreshness,
+    CollectionsUnitPaymentFiguresDto? Payments = null);
 
 /// <summary>
 /// The answer of the customer / unit linking: every candidate unit with its financial result, and whether the caller has to choose. <c>CrmStatus</c>: <c>Found</c>,

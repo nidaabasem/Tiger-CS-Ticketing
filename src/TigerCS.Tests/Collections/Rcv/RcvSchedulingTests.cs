@@ -54,11 +54,10 @@ public sealed class RcvSchedulingTests
     }
 
     /// <summary>Real Hangfire storage on the local SQL Server (TIGERCS_PERF_SQL): what Hangfire stored, and when it will fire next.</summary>
-    [Fact]
+    [SqlFact]
     public async Task HangfireStoresTheCronTheZoneAndANextRunOnAnEvenDubaiHour()
     {
-        var connectionString = Environment.GetEnvironmentVariable("TIGERCS_PERF_SQL");
-        if (string.IsNullOrWhiteSpace(connectionString)) return;
+        var connectionString = Environment.GetEnvironmentVariable("TIGERCS_PERF_SQL")!;
         var storage = new SqlServerStorage(connectionString, new SqlServerStorageOptions { SchemaName = "HangfireRcvScheduleTest", PrepareSchemaIfNecessary = true, DisableGlobalLocks = true });
         var manager = new RecurringJobManager(storage);
         manager.AddOrUpdate("collections-receivables-refresh", () => Console.WriteLine("legacy"), "*/30 * * * *");        // what the previous release registered

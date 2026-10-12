@@ -23,7 +23,7 @@ public sealed class CampaignsModel(CollectionsApiClient api, Microsoft.Extension
     /// <summary>Minimum Total (AED): a unit is listed only when its Due + Overdue is greater than this. Default 100; null (cleared) = every unit that has a Due or Overdue amount.</summary>
     public decimal? MinTotal { get; private set; } = ReceivablesModel.DefaultMinTotal;
     public string MinTotalText => MinTotal?.ToString("0.####", CultureInfo.InvariantCulture) ?? "";
-    /// <summary>The chosen dates start after today: nothing is due yet, so no data call is made.</summary>
+    /// <summary>The chosen dates start in a month after the current one: neither Due nor Overdue, so no data call is made.</summary>
     public bool NothingDueYet { get; private set; }
     public IReadOnlyList<CollectionsTowerDto> Towers { get; private set; } = [];
     public bool TowersFailed { get; private set; }
@@ -74,14 +74,14 @@ public sealed class CampaignsModel(CollectionsApiClient api, Microsoft.Extension
     private async Task LoadReportAsync(CancellationToken cancellationToken)
     {
         if (!ModelState.IsValid) { Outcome = ApiOutcome.ValidationError; Error = "Choose valid filters and retry."; return; }
-        // Instalments due after today are never listed: a period that starts after today has nothing to ask the API for.
-        if (DateFrom is { } start && start > CollectionsDisplay.DubaiToday()) { NothingDueYet = true; return; }
+        // Instalments due from the next month on are neither Due nor Overdue and never listed: a period that starts there has nothing to ask the API for.
+        if (DateFrom is { } start && !CollectionsDueMonth.IsInScope(start, CollectionsDisplay.DubaiToday())) { NothingDueYet = true; return; }
         var result = await api.GetCampaignPreviewAsync(Stage, BusinessDate, null, Search, PageNumber, cancellationToken, DateFrom, DateTo, TowerId, MinTotal);
         Outcome = result.Outcome;
         Report = result.IsSuccess ? result.Value : null;
         Error = result.Detail;
         BusinessDate ??= Report?.BusinessDate;
-        // To shows the effective end. From stays EMPTY unless the user chose it: empty = All months = the whole history up to today (the read scope); the stage
+        // To shows the effective end. From stays EMPTY unless the user chose it: empty = All months = the whole history up to the end of the current month (the read scope); the stage
         // eligibility scope is unchanged. Writing the effective 2000-01-01 back into the input would turn the next page / export request into an explicit From
         // and widen the stage eligibility, so it is never done. Unedited To follows stage / preview-date changes in the browser (collections-campaign-dates.js).
         DateTo ??= Report?.DateTo;

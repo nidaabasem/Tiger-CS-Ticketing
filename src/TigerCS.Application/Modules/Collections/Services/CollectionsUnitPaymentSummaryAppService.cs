@@ -86,13 +86,29 @@ public sealed class CollectionsUnitPaymentSummaryAppService(
 
         var (financial, detail, due, overdue, total, instalments, reason) = Financials(oneAccount, data, today, maxAgeMinutes, accounts.Count > 1);
         var companyStatus = data.Snapshot.Companies.FirstOrDefault(c => c.CompanyId == (oneAccount?.CompanyId ?? companyId));
+        var payments = financial is "Available" or "NoDues" ? Figures(oneAccount!, data, today, companyStatus?.LastSuccessUtc) : null;
         var linkStatus = reasons.Count > 0 ? "NeedsReview" : oneAccount is null && crm is null ? "NotFound" : "Linked";
         return new(key, oneAccount?.UnitCode ?? key, oneAccount?.CompanyId ?? companyId, oneAccount?.TowerNumber ?? CollectionsTowerNumber.Parse(key), oneAccount?.TowerName,
             linkStatus, reasons,
             new CollectionsUnitPartyDto(linked.Name, linked.Phone, linked.Email, linked.NameSource, linked.PhoneSource, linked.EmailSource),
             status switch { CrmLinkStatus.Single => "Single", CrmLinkStatus.Ambiguous => "Ambiguous", CrmLinkStatus.None when data.CrmLoaded => "None", _ => "Unavailable" },
             status == CrmLinkStatus.Single ? crm!.CustomerId : null, status == CrmLinkStatus.Single ? crm!.CrmUnitId : null, oneAccount?.TenantId, oneAccount?.UnitId,
-            financial, detail, due, overdue, total, instalments, today, companyStatus?.LastSuccessUtc, companyStatus?.Freshness ?? "Missing", reason);
+            financial, detail, due, overdue, total, instalments, today, companyStatus?.LastSuccessUtc, companyStatus?.Freshness ?? "Missing", reason, payments);
+    }
+
+    /// <summary>
+    /// The Payment tab's figures: every unpaid instalment of the unit, classified by the one Dubai month rule (<see cref="CollectionsDueMonth"/>) - Overdue before the month, Due inside it
+    /// (any day), Not yet due after it. All sums are taken from this one list, so the cards and the table agree.
+    /// </summary>
+    private static CollectionsUnitPaymentFiguresDto Figures(PactUnitIdentity account, PactUnitReceivables data, DateOnly today, DateTime? lastUpdatedUtc)
+    {
+        var rows = data.Instalments.Where(i => i.CompanyId == account.CompanyId && i.TenantId == account.TenantId && i.UnitId == account.UnitId && i.RemainingAmount > 0)
+            .OrderBy(i => i.DueDate).ThenBy(i => i.VoucherNumber, StringComparer.Ordinal).ToList();
+        var schedule = rows.Select((i, index) => new CollectionsUnitScheduleLineDto(
+            i.VoucherNumber.Length > 0 ? $"Voucher {i.VoucherNumber}" : $"Instalment {index + 1}", i.DueDate, i.OriginalAmount, i.PaidAmount, i.RemainingAmount,
+            CollectionsDueMonth.Classify(i.DueDate, today) switch { CollectionsDueClass.Overdue => "Overdue", CollectionsDueClass.Due => "Due", _ => "NotYetDue" },
+            i.DueDate < today ? today.DayNumber - i.DueDate.DayNumber : null)).ToList();
+        return new(CollectionsDueMonth.MonthStart(today), CollectionsDueMonth.MonthEnd(today), schedule, lastUpdatedUtc);
     }
 
     private static (string Status, string? Detail, decimal? Due, decimal? Overdue, decimal? Total, IReadOnlyList<CollectionsUnitInstalmentDto> Instalments, string? Reason) Financials(
@@ -105,16 +121,16 @@ public sealed class CollectionsUnitPaymentSummaryAppService(
         var company = data.Snapshot.Companies.FirstOrDefault(c => c.CompanyId == account.CompanyId);
         if (company is null || !company.HasSnapshot)
             return ("NoFinancialData", "The PACT receivables of this company are not loaded. This is not a zero balance.", null, null, null, [], "CompanySnapshotNotLoaded");
-        var rows = data.Instalments.Where(i => i.CompanyId == account.CompanyId && i.TenantId == account.TenantId && i.UnitId == account.UnitId && i.RemainingAmount > 0 && i.DueDate <= today)
+        var rows = data.Instalments.Where(i => i.CompanyId == account.CompanyId && i.TenantId == account.TenantId && i.UnitId == account.UnitId && i.RemainingAmount > 0 && CollectionsDueMonth.IsInScope(i.DueDate, today))
             .OrderBy(i => i.DueDate).ThenBy(i => i.VoucherNumber, StringComparer.Ordinal).ToList();
         var lines = rows.Select((i, index) => new CollectionsUnitInstalmentDto(i.VoucherNumber.Length > 0 ? $"Voucher {i.VoucherNumber}" : $"Instalment {index + 1}", i.DueDate, i.OriginalAmount, i.PaidAmount,
-            i.RemainingAmount, i.DueDate < today ? "Overdue" : "Due", i.DueDate < today ? today.DayNumber - i.DueDate.DayNumber : null)).ToList();
+            i.RemainingAmount, CollectionsDueMonth.IsOverdue(i.DueDate, today) ? "Overdue" : "Due", i.DueDate < today ? today.DayNumber - i.DueDate.DayNumber : null)).ToList();
         var due = lines.Where(l => l.Status == "Due").Sum(l => l.RemainingAmount);
         var overdue = lines.Where(l => l.Status == "Overdue").Sum(l => l.RemainingAmount);
         var stale = company.Freshness != "Fresh" ? $" The PACT data is {(company.AgeMinutes is { } age ? age + " minutes" : "not current")} old (limit {maxAgeMinutes})." : "";
         // Unpaid rows exist only when OpenRows > 0; a unit PACT lists with nothing open is confirmed to owe nothing due.
         if (lines.Count == 0)
-            return account.AllRows > 0 ? ("NoDues", ("Nothing is due on or before today." + stale).Trim(), 0m, 0m, 0m, lines, null) : ("NoFinancialData", "PACT holds no receivable record for this unit.", null, null, null, lines, "PactHoldsNoRecord");
+            return account.AllRows > 0 ? ("NoDues", ("Nothing is due in the current month or earlier." + stale).Trim(), 0m, 0m, 0m, lines, null) : ("NoFinancialData", "PACT holds no receivable record for this unit.", null, null, null, lines, "PactHoldsNoRecord");
         return ("Available", stale.Length > 0 ? stale.Trim() : null, due, overdue, due + overdue, lines, null);
     }
 }

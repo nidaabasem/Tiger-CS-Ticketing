@@ -20,7 +20,7 @@ public sealed class CollectionsCampaignEndpointsTests
             Reads++;
             return Task.FromResult(new PactReceivablesSnapshot([
                 new(4, "3001", "Campaign Customer", "971500003001", "", 101, "TP140-101", "TP140", "INV", "",
-                    throughDate.ToDateTime(TimeOnly.MinValue), 600m, "Installment")
+                    DateOnly.FromDateTime(DateTime.UtcNow.AddHours(4)).ToDateTime(TimeOnly.MinValue), 600m, "Installment")   // due today (Dubai): the read now ends at the month end, but eligibility is up to today
             ], DateTime.UtcNow, false));
         }
     }

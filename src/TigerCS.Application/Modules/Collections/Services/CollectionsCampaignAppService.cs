@@ -43,14 +43,12 @@ public sealed class CollectionsCampaignAppService(
         // instalments - before the counts, the pages and both CSV exports, so all of them agree.
         decimal? unitMinTotal = minTotal is { } requested ? decimal.Round(requested, 4) : null;
         const decimal min = 0m;   // no per-instalment minimum any more
-        var today = clock.BusinessDate;   // the real Dubai date: Due = due today, Overdue = before it; nothing later is ever listed
+        var today = clock.BusinessDate;   // the real Dubai date; its CALENDAR MONTH is the reference (CollectionsDueMonth): Overdue = before its first day, Due = inside it; nothing from the next month on is listed
 
-        // Instalment due-date window. Defaults: the configured receivables StartDate through the preview date, except the
-        // whole-month stages (current month, follow-up), which default to the end of the preview month so upcoming
-        // instalments of that month are not cut off. The preview date still alone drives stage scheduling/eligibility;
-        // the window only limits which instalments are read.
-        var to = dateTo ?? CollectionsCampaignPolicy.DefaultDateTo(selected, date);
-        if (to > today) to = today;   // future instalments are not part of any list, total or export
+        // Instalment due-date window. Default To: the end of the preview month for every stage, so the days still to come in the current month are never cut off of the
+        // Due figure. It is clamped to the end of the CURRENT Dubai month: instalments due from the next month on are neither Due nor Overdue and are not part of any list,
+        // total or export. The preview date still alone drives stage scheduling/eligibility; the window only limits which instalments are read.
+        var to = CollectionsDueMonth.ClampTo(dateTo ?? CollectionsCampaignPolicy.DefaultDateTo(selected, date), today);
         // TWO scopes, deliberately separate:
         //  * ELIGIBILITY scope (stage policy, unchanged): instalments from the explicit From, else the configured receivables StartDate (not 1 January of the preview year:
         //    overdue and legal stages look back months). It decides WHICH units are candidates, their stage amount, flags and review reasons.
@@ -66,7 +64,7 @@ public sealed class CollectionsCampaignAppService(
         var from = dateFrom ?? HistoryStart;
         if (!CollectionsDateRanges.IsSupported(from, to))
             return CollectionsResult<CollectionsCampaignPreviewDto>.Fail(CollectionsOutcome.InvalidRequest,
-                "From date must not be after To date (instalments due after today are not listed), and both must be within 2000-2100.");
+                "From date must not be after To date (instalments due from the next month on are not listed), and both must be within 2000-2100.");
 
         // Search: the same term semantics for both evaluation paths (name, customer id, unit code, normalised phone / e-mail, phone digits).
         var term = string.IsNullOrWhiteSpace(search) ? null : search.Trim();
@@ -275,7 +273,10 @@ public sealed class CollectionsCampaignAppService(
         if (rows.Any(r => r.CompanyId is not (4 or 32) || string.IsNullOrWhiteSpace(r.TenantId)))
             throw new InvalidDataException("PACT returned a receivable without a valid company/customer identity.");
         // The originals can repeat one instalment under different apartments of the same tenant.
-        var eligibleRows = rows.Where(r => DateOnly.FromDateTime(r.DueDate) >= eligibleStart).ToList();
+        // ELIGIBILITY ends where it always did - at the earlier of To and TODAY - even though the READ scope now reaches the end of the current month. The days of the month still
+        // to come feed only the Due / Total figures; they never make a unit a candidate, never change a stage amount, flag or review reason, and never move a reminder.
+        var eligibleEnd = today is { } t0 && t0 < to ? t0 : to;
+        var eligibleRows = rows.Where(r => DateOnly.FromDateTime(r.DueDate) >= eligibleStart && DateOnly.FromDateTime(r.DueDate) <= eligibleEnd).ToList();
         var ambiguousTenants = eligibleRows.GroupBy(r => (r.CompanyId, Tenant: r.TenantId.Trim()))
             .Where(g => g.GroupBy(r => DateOnly.FromDateTime(r.DueDate))
                 .Any(d => d.Select(r => (r.UnitId, Code: r.UnitCode.Trim())).Distinct().Count() > 1)
@@ -291,9 +292,10 @@ public sealed class CollectionsCampaignAppService(
                 var amount = CollectionsCampaignPolicy.Evaluate(g.Select(r =>
                     new CampaignInstalment(DateOnly.FromDateTime(r.DueDate), r.Amount)), selected, date);
                 if (amount.Reason is "NoQualifyingBalance" or "BelowThreshold") return null;
-                // Due = due today, Overdue = due before it (the window never reaches past today). Nothing Due or Overdue: not listed; Minimum Total is on the unit's sum.
-                var dueAmount = today is { } t1 ? all.Where(r => DateOnly.FromDateTime(r.DueDate) == t1).Sum(r => r.Amount) : 0m;
-                var overdueAmount = today is { } t2 ? all.Where(r => DateOnly.FromDateTime(r.DueDate) < t2).Sum(r => r.Amount) : 0m;
+                // Due = due inside the current month of today, Overdue = due before its first day (CollectionsDueMonth; the window never reaches the next month).
+                // Nothing Due or Overdue: not listed; Minimum Total is on the unit's sum of the remaining amounts.
+                var dueAmount = today is { } t1 ? all.Where(r => CollectionsDueMonth.IsDue(DateOnly.FromDateTime(r.DueDate), t1)).Sum(r => r.Amount) : 0m;
+                var overdueAmount = today is { } t2 ? all.Where(r => CollectionsDueMonth.IsOverdue(DateOnly.FromDateTime(r.DueDate), t2)).Sum(r => r.Amount) : 0m;
                 if (today is not null && dueAmount + overdueAmount <= 0) return null;
                 if (minTotal is { } floor && dueAmount + overdueAmount <= floor) return null;
                 // CRM first, PACT completing; several CRM customers or conflicting people are flagged, never merged (CollectionsContactLinker).

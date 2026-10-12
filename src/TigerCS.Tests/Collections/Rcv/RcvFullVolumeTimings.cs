@@ -18,7 +18,7 @@ namespace TigerCS.Tests.Collections.Rcv;
 [Collection("RcvRealSql")]
 public sealed class RcvFullVolumeTimings
 {
-    [Fact]
+    [SqlFact("TIGERCS_PERF_TIMINGS")]
     public async Task ReadTimingsOverTheFullWindow()
     {
         var connectionString = Environment.GetEnvironmentVariable("TIGERCS_PERF_SQL"); var output = Environment.GetEnvironmentVariable("TIGERCS_PERF_TIMINGS");
