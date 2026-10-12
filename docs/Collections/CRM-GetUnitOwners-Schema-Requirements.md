@@ -1,22 +1,14 @@
-# CRM `GetUnitOwners` - minimal schema requirements
+# CRM `GetUnitOwners` - confirmed schema (no further schema is needed)
 
-Purpose: lets Receivables, Campaigns and the Payment tab show the CRM buyer's name, mobile and e-mail for a PACT unit (CRM first, PACT only completing). Full response contract: `CRM-GetUnitOwners-Contract.md`. Nothing below is guessed; the action is a single paged LINQ query once these are known.
+The CRM owners implemented `GetUnitOwners` and it was tested successfully (`success=true`, `total=10086`). This page records the confirmed mapping; **no schema information is outstanding**.
 
-## Already confirmed from the repository (no action needed)
-| Fact | Source |
+| Response field | CRM source |
 |---|---|
-| Ownership = `tblLeadCustomers` (`LeadID`, `CustomerID`, `CustomerType` Buyer, `UnitID` long?) joined to `tblLeads` (`ID`, `Status`), `tblUnits` (`ID`, `Number`, `ProjectID`), `tblProjects` (`ID`, `Name`, `ArabicName`) | `GetBuyerByPhone` / `GetUnitDetails` insertion notes |
-| `tblCustomers.MobileNumber` | `GetBuyerByPhone` (substring match on it) |
-| The legacy EDSM exclusion query builds the PACT unit code in CRMDB as `TRIM(ProjectCode) + '-' + TRIM(UnitNumber)` from **`tblLead`** (`ProjectCode`, `UnitNumber`, `Status`; `Status = 6` cancelled) | `PactSqlReceivablesSource.ReadDownPaymentsAsync` |
-| Auth header `X-SECRET-KEY` vs `AppSettings["TicketingSecretKey"]`, JSON 401/503 without a login redirect | `GetUnitDetails` insertion file |
+| `fullNameEnglish`, `fullNameArabic`, `mobileNumber`, `email` | `tblCustomers.FullNameEnglish`, `FullNameArabic`, `MobileNumber`, `Email` |
+| `customerId`, `leadId`, `unitId` | `tblLeadCustomers.CustomerID`, `LeadID`, `UnitID` |
+| `unitNumber`, project link | `tblUnits.Number`, `tblUnits.ProjectID` |
+| `projectCode` / `projectName` | `tblProjects.Code` / `tblProjects.Name` |
+| `leadStatus` | Sold = 8, Contract = 9 (eligible); Approved = 4, Cancelled = 6 (never owners) |
+| `customerType` | 1 = Buyer |
 
-## Required from CRM (only these)
-1. **`tblCustomers`**: the property names holding the customer's **English name**, **Arabic name** and **e-mail** (`GetBuyerByPhone` already returns them as `fullNameEnglish`, `fullNameArabic`, `email`; the EF/column names behind them are not in this repository).
-2. **`tblLead` / `tblLeads`**: confirm the EF property names for **`ProjectCode`** and **`UnitNumber`** (the raw table `tblLead` has both), and confirm they are the same values that make the PACT unit code (`TP140-407`).
-3. **`tblLeads.Status` enum labels** for Sold and Contract (observed 8 = Sold, 4 = Contract in the contract notes; `6` = cancelled from the legacy query) so cancelled leads are never sent.
-4. Optional: **`tblProjects`** column holding the `TP###` code, if different from `tblLead.ProjectCode`.
-
-Send either the EF classes of those tables or the output of `docs/Genesys/crm-insertion/CRM-Schema-Discovery.sql` (section 1) and `database/collections-receivables/tools/probe_crm_pact_payment.sql` (section 3).
-
-## Result
-One row per (lead, buyer customer) for Sold/Contract leads: `leadId, leadStatus, leadStatusName, customerType, customerId, fullNameEnglish, fullNameArabic, mobileNumber, email, unitId, unitNumber, projectId, projectCode, projectName`, paged and ordered by `leadId`. A unit code containing `*` is never sent as an owner.
+Ticketing side: `CollectionsSource:CrmOwners:EligibleLeadStatuses = [8, 9]` (fallback for a row without a status name), `BuyerCustomerType = 1`. Response contract: `CRM-GetUnitOwners-Contract.md`. Verification after deployment: `database/collections-receivables/tools/verify_crm_owner_ingestion.sql`.

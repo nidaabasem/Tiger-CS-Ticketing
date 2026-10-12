@@ -39,7 +39,7 @@ public sealed class ReceivablesSnapshotOptions
 
     /// <summary>
     /// Accept the unit/account directory (every unit PACT's receivables procedure returned per tenant, fully paid ones included) as COMPLETE scope evidence for the payment statement. Default false: the procedure
-    /// omits units without a payment plan / ledger row, and EDSM's tenant scope has not been compared with it. Switch on only after the live comparison (tools/verify_account_directory.sql). While false, a statement is shown
+    /// omits units without a payment plan / ledger row, and EDSM's tenant scope has not been compared with it. Switch on only once it is CONFIRMED (by PACT or a full reconciliation, not a few samples) that the source lists every unit and contract of each account. While false, a statement is shown
     /// only when PACT's contract list for the customer's phone proves the account.
     /// </summary>
     public bool AccountDirectoryComplete { get; set; }

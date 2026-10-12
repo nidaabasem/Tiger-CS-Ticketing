@@ -328,7 +328,7 @@ public sealed partial class CustomerUnitLinkServiceTests
         var r = new Rig();
         r.Map.Rows.Add(new(79, "TP140", null, "Manual"));
         CrmReturns(r, Buyer(1, "Owner", PhoneE164, null,
-            CrmUnit(11, "101", status: "Sold"), CrmUnit(12, "102", status: "Contract", leadStatus: 4), CrmUnit(13, "103", status: "Hot", leadStatus: 2),
+            CrmUnit(11, "101", status: "Sold"), CrmUnit(12, "102", status: "Contract", leadStatus: 9), CrmUnit(13, "103", status: "Hot", leadStatus: 2),
             CrmUnit(14, "104", status: "Cancelled", leadStatus: 9), CrmUnit(15, "105", customerType: 2)));
         foreach (var apt in new[] { 101, 102, 103, 104, 105 }) r.Pact4("140", apt, "T" + apt, 100m);
 
@@ -340,14 +340,16 @@ public sealed partial class CustomerUnitLinkServiceTests
 
     [Theory]
     [InlineData("Sold", 8, true)]
-    [InlineData("Contract", 4, true)]
+    [InlineData("Contract", 9, true)]
     [InlineData("contract", 99, true)]
+    [InlineData("Approved", 4, false)]
     [InlineData("Cancelled", 8, false)]
     [InlineData("Sold - cancelled", 8, false)]
     [InlineData("Hot", 8, false)]
     [InlineData(null, 8, true)]
-    [InlineData(null, 4, true)]
-    [InlineData(null, 9, false)]
+    [InlineData(null, 9, true)]
+    [InlineData(null, 4, false)]
+    [InlineData(null, 6, false)]
     public void SaleEligibility_IsDecidedByTheCrmStatusName_NumbersOnlyWhenNoNameWasSent(string? name, int number, bool expected) =>
         Assert.Equal(expected, CustomerUnitLinkService.IsEligibleSale(new(1, number, name, 5, "1", 3, 2, null, 79, "P", null, 1, "Buyer"), new CollectionsCrmOwnersOptions()));
 
