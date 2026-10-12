@@ -57,9 +57,10 @@ public sealed class PactInstalmentsAppService(
                 return CollectionsResult<PactInstalmentsPageDto>.Fail(CollectionsOutcome.InvalidRequest, "status must be all, overdue or due, and needs view=units.");
         }
         if (byUnit && source is not IPactInstalmentUnitSource)
-            return CollectionsResult<PactInstalmentsPageDto>.Fail(CollectionsOutcome.Disabled, "The unit view needs the local receivables snapshot (Collections:ReceivablesSnapshot:UseLocalSnapshot).");
-        if (source is not IPactInstalmentSource instalments)
-            return CollectionsResult<PactInstalmentsPageDto>.Fail(CollectionsOutcome.Disabled, "The instalment list needs the local receivables snapshot (Collections:ReceivablesSnapshot:UseLocalSnapshot).");
+            return CollectionsResult<PactInstalmentsPageDto>.Fail(CollectionsOutcome.Disabled, "The unit view needs the local receivables snapshot.");
+        var instalments = source as IPactInstalmentSource;
+        if (!byUnit && instalments is null)
+            return CollectionsResult<PactInstalmentsPageDto>.Fail(CollectionsOutcome.Disabled, "The instalment-level list is not available; use view=units.");
 
         var today = clock.BusinessDate;
         var monthStart = new DateOnly(today.Year, today.Month, 1);
@@ -114,7 +115,7 @@ public sealed class PactInstalmentsAppService(
                 units = unitPage.Units;
                 result = new PactInstalmentsPage(unitPage.Totals, [], unitPage.Unavailable, unitPage.Snapshot, unitPage.ReadAtUtc, unitPage.SqlMs);
             }
-            else result = await instalments.ReadInstalmentsAsync(request, budget.Token);
+            else result = await instalments!.ReadInstalmentsAsync(request, budget.Token);
         }
         catch (PactReceivablesScopeException ex)
         {

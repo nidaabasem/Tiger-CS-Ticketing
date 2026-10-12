@@ -12,8 +12,8 @@ namespace TigerCS.Tests.Collections.Snapshot;
 
 /// <summary>
 /// The Campaigns service on top of a source that evaluates campaigns in the data store (IPactCampaignSource): what it asks for, how it turns unit flags and
-/// the global gates into statuses / reasons / counts, and its fallback. The SQL itself is proven against the in-memory evaluation by
-/// RealSqlCampaignEquivalenceTests (real SQL Server, not available to CI).
+/// the global gates into statuses / reasons / counts, and its fallback. (The production source reads payment rows and the application evaluates the rules in memory; this
+/// engine contract stays for a source that evaluates campaigns itself.)
 /// </summary>
 public sealed class CampaignSqlEngineTests
 {
@@ -255,24 +255,4 @@ public sealed class CampaignSqlEngineTests
     [InlineData("", "")]
     [InlineData("a@b", "a@b")]
     public void EmailNormalisation_IsTheSingleDefinition(string raw, string expected) => Assert.Equal(expected, CollectionsContactNormalizer.NormalizeEmail(raw));
-
-    [Fact]
-    public void CampaignScript_PinsTheRulesTheApplicationDependsOn()
-    {
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir is not null && !Directory.Exists(Path.Combine(dir.FullName, "database", "collections-receivables"))) dir = dir.Parent;
-        var sql = File.ReadAllText(Path.Combine(dir!.FullName, "database", "collections-receivables", "V007__usp_Collections_GetCampaignUnits.sql"));
-        Assert.Contains("OFFSET @Offset ROWS FETCH NEXT @Take ROWS ONLY", sql);                   // paging in SQL ...
-        Assert.Contains("WHERE g.StageRows > 0 AND (g.StageAmb = 1 OR g.StageAmt > @Threshold)", sql);  // ... after eligibility, which includes the threshold
-        Assert.Contains("s.Amount > 0 AND s.Amount >= @MinAmount", sql);                          // the per-instalment filter exists but the application always sends 0
-        Assert.Contains("g.DueAmt + g.OverAmt > @MinTotal", sql);                                  // Minimum Total: the unit's Due + Overdue, strictly greater, before the counts and the paging
-        Assert.Contains("g.DueAmt + g.OverAmt > 0", sql);                                          // nothing Due or Overdue: not a candidate
-        Assert.Contains("ut.UnitCode NOT LIKE N'%*%'", sql);                                       // cancelled apartments are excluded before the aggregation
-        Assert.Contains("st.CurrentRunId", sql);                                                   // only the published run is read (through #run)
-        Assert.Contains("'LegacyRequired'", sql);                                                 // unprepared / ambiguous-text snapshots are never answered with an empty list
-        Assert.DoesNotContain("NOLOCK", sql, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("READ UNCOMMITTED", sql, StringComparison.OrdinalIgnoreCase);
-        foreach (var flag in Enum.GetValues<CollectionsCampaignFlags>().Where(f => f != CollectionsCampaignFlags.None))
-            Assert.Contains($"THEN {(int)flag} ELSE 0", sql);                                     // the SQL bit values are the C# enum values
-    }
 }

@@ -1,64 +1,48 @@
 namespace TigerCS.Application.Modules.Collections;
 
 /// <summary>
-/// Local receivables snapshot (section <c>Collections:ReceivablesSnapshot</c>). No credentials belong here: the Ticketing
-/// connection string is <c>ConnectionStrings:TigerCsDatabase</c>, supplied through the deployment's secret store.
+/// Local receivables snapshot (section <c>Collections:ReceivablesSnapshot</c>): PACT -> <c>dbo.CollectionsRcvLine</c> every two hours, pages read the last published copy.
+/// No credentials belong here: the Ticketing connection string is <c>ConnectionStrings:TigerCsDatabase</c>, supplied through the deployment's secret store.
 /// </summary>
 public sealed class ReceivablesSnapshotOptions
 {
     public const string SectionName = "Collections:ReceivablesSnapshot";
 
-    /// <summary>True: pages read the local snapshot. False: the legacy direct PACT read is used (kept as an escape hatch).</summary>
-    public bool UseLocalSnapshot { get; set; } = true;
-
-    /// <summary>Registers the recurring Hangfire refresh. Requires <c>BackgroundJobs:Enabled</c> and a running Hangfire server (SQL Agent is NOT used).</summary>
+    /// <summary>Registers the recurring Hangfire refreshes (one job per company). Needs <c>BackgroundJobs:Enabled</c> and a running Hangfire server (SQL Agent is NOT used).</summary>
     public bool RefreshEnabled { get; set; } = true;
 
-    /// <summary>Hangfire cron for the refresh (server local time). Default: every 30 minutes.</summary>
-    public string RefreshCron { get; set; } = "*/30 * * * *";
+    /// <summary>Hangfire cron of the refresh: every two hours, on the hour, in <see cref="RefreshTimeZoneId"/>.</summary>
+    public string RefreshCron { get; set; } = "0 */2 * * *";
 
-    /// <summary>Also trigger one refresh when the application starts so a new deployment is not empty until the first cron tick.</summary>
+    /// <summary>The time zone the cron is evaluated in (explicit, never the server's local zone).</summary>
+    public string RefreshTimeZoneId { get; set; } = "Asia/Dubai";
+
+    /// <summary>Also trigger one refresh per company when the application starts so a new deployment is not empty until the first cron tick.</summary>
     public bool RefreshOnStartup { get; set; } = true;
 
     /// <summary>
-    /// Freshness requirement. A company snapshot older than this is "Stale": previews show a warning and mark rows for review;
-    /// campaign exports (review and Genesys) are REFUSED. Keep it above <see cref="RefreshCron"/> plus the longest expected refresh
-    /// duration so one slow or failed run does not block exports. Default 90 minutes for a 30 minute cadence.
+    /// Freshness requirement. A company snapshot older than this is "Stale": previews show a warning and mark rows for review; exports (review and Genesys) are REFUSED.
+    /// Must exceed the refresh interval (120 min) plus the longest expected refresh (<see cref="RefreshCommandTimeoutSeconds"/>, 30 min) plus slack, so a snapshot is never
+    /// stale before its next normal refresh and one slow run does not block exports: 180 minutes. If the setting is lower the snapshot reads "Stale" in the hour before every refresh.
     /// </summary>
-    public int MaxAgeMinutes { get; set; } = 90;
+    public int MaxAgeMinutes { get; set; } = 180;
 
-    /// <summary>Instalment due-date coverage requested from PACT. Wide on purpose: any supported From/To must be answerable.</summary>
+    /// <summary>Instalment due-date window requested from PACT. Wide on purpose: the history 2000-2099 is always stored; the pages decide what to show.</summary>
     public DateTime SourceFromDate { get; set; } = new(2000, 1, 1);
     public DateTime SourceThroughDate { get; set; } = new(2099, 12, 31);
 
     /// <summary>
-    /// Passed as @MinAmount. Keep 0: it is an int filter inside PACT, so any higher value permanently removes small positive balances.
-    /// Zero-balance rows are dropped during staging validation instead.
+    /// Passed as @MinAmount. Keep 0: it is an int filter inside PACT (Amount >= @MinAmount), so any higher value permanently removes small balances.
+    /// The Minimum Total of the pages is NOT sent to PACT; it is applied to the summed payments of an apartment when a page is read.
     /// </summary>
     public int SourceMinAmount { get; set; }
 
-    /// <summary>
-    /// Keep fully paid instalments in the snapshot so the "Fully paid" and "All" views can be offered. Costs rows (the deployed procedures return every
-    /// paid instalment since 2000 when called with MinAmount 0); set false to keep an outstanding-only snapshot - the two views are then disabled, never faked.
-    /// </summary>
-    public bool RetainPaidInstalments { get; set; } = true;
-
-    /// <summary>
-    /// Empty = the deployed dbo.p4AccountReceivables / dbo.p32AccountReceivables (output: remaining Amount + Status only, so Unpaid and Partially paid cannot be told apart).
-    /// A companion suffix such as "V2" selects a separately deployed procedure that also returns the original and allocated amounts (see docs/Collections/pact-sql).
-    /// Letters and digits only.
-    /// </summary>
-    public string SourceProcedureSuffix { get; set; } = "";
-
-    /// <summary>Companion procedures only: true fails the refresh instead of guessing when a voucher maps to several tags/units.</summary>
-    public bool StrictIdentity { get; set; }
-
-    public int MaxRawRows { get; set; } = 1_000_000;
+    public int MaxRawRows { get; set; } = 2_000_000;
 
     /// <summary>A refresh that would shrink a company's snapshot by more than this percentage is rejected (previous snapshot kept).</summary>
     public int MaxShrinkPercent { get; set; } = 60;
 
-    /// <summary>SQL command timeout of the refresh procedure (both PACT procedures run inside it, sequentially).</summary>
+    /// <summary>SQL command timeout of ONE company's refresh (the PACT call runs inside it). A hung PACT call ends the attempt as Failed at this limit.</summary>
     public int RefreshCommandTimeoutSeconds { get; set; } = 1800;
 
     public int ReadCommandTimeoutSeconds { get; set; } = 60;

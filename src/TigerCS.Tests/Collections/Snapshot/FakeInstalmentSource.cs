@@ -58,9 +58,9 @@ public sealed class FakeInstalmentSource(DateTime nowUtc) : IPactReceivablesSour
         }
         var units = kept.GroupBy(r => (r.CompanyId, r.TenantId, r.UnitId, r.UnitCode))
             .Select(g => new PactInstalmentUnitDto(g.Key.CompanyId, ReceivablesSnapshotStatusBuilder.CompanyName(g.Key.CompanyId), g.First().TowerNumber, g.First().TowerName, g.Key.UnitId ?? 0,
-                g.Key.UnitCode, g.Key.TenantId, g.First().CustomerName, g.Count(), g.Sum(r => r.RemainingAmount), g.Min(r => r.DueDate),
-                g.OrderBy(r => r.DueDate).ThenBy(r => r.VoucherNumber, StringComparer.Ordinal).ToList()))
-            .OrderBy(u => u.OldestDueDate).ThenBy(u => u.CompanyId).ThenBy(u => u.TenantId, StringComparer.Ordinal).ThenBy(u => u.UnitCode, StringComparer.Ordinal).ThenBy(u => u.UnitId).ToList();
+                g.Key.UnitCode, g.Key.TenantId, g.First().CustomerName, g.Count(), g.Sum(r => r.RemainingAmount), g.Max(r => r.DueDate),
+                g.OrderByDescending(r => r.DueDate).ThenBy(r => r.VoucherNumber, StringComparer.Ordinal).ToList()))
+            .OrderByDescending(u => u.LatestDueDate).ThenBy(u => u.CompanyId).ThenBy(u => u.TenantId, StringComparer.Ordinal).ThenBy(u => u.UnitCode, StringComparer.Ordinal).ThenBy(u => u.UnitId).ToList();
         var page = units.Skip((request.Page - 1) * request.PageSize).Take(request.PageSize).ToList();
         return Task.FromResult(new PactInstalmentUnitsPage(all.Totals with { UnitCount = units.Count }, page, false, all.Snapshot, all.ReadAtUtc, 1));
     }

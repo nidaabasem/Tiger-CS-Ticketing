@@ -148,13 +148,13 @@ public sealed record PactCampaignRequest(
     DateOnly From, DateOnly To, decimal MinAmount, DateOnly? StageFrom, DateOnly StageToExclusive, decimal Threshold, bool ContactRequired,
     string? Search, string? PhoneDigits, int Offset, int Take, int? CompanyId, int? TowerId, DateOnly? Today = null, decimal? MinTotal = null);
 
-/// <summary>Unit-level facts of one campaign candidate. <c>Flags</c> is a <see cref="TigerCS.Domain.Modules.Collections.CollectionsCampaignFlags"/> mask;
+/// <summary>Unit-level facts of one campaign candidate. <c>LatestDue</c> is the newest due date among the unit's payments in the filtered window (the list is ordered by it, newest first). <c>Flags</c> is a <see cref="TigerCS.Domain.Modules.Collections.CollectionsCampaignFlags"/> mask;
 /// <c>Amount</c> is null when the unit's stage instalments are ambiguous. FullName / Phone / Email are the LINKED contact (CRM first, PACT completing, see
 /// <c>CollectionsContactLinker</c>); <c>CrmStatus</c> is 0 (CRM holds no eligible sale / not loaded), 1 (one customer) or 2 (several: review).</summary>
 public sealed record CampaignUnitFacts(
     int CompanyId, string TenantId, string FullName, string Phone, string Email, int? UnitId, string UnitCode, string ProjectCode,
     decimal? Amount, DateOnly? EarliestDue, int Flags, string? TowerNumber, string? TowerName, decimal DueAmount = 0m, decimal OverdueAmount = 0m,
-    int CrmStatus = 0, int? CrmCustomerId = null);
+    int CrmStatus = 0, int? CrmCustomerId = null, DateOnly? LatestDue = null);
 
 /// <remarks>
 /// Supported = false: the data store could not use its campaign engine for the snapshot (the caller evaluates in memory). BadIdentityRows: rows without
