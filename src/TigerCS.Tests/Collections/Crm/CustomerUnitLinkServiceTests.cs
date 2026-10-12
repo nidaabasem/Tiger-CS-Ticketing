@@ -17,7 +17,7 @@ namespace TigerCS.Tests.Collections.Crm;
 /// The customer / unit linking behind the Payment tab and New Ticket: CRM first, PACT by company + tower + apartment, Leasing, review and failure states.
 /// These tests use in-memory CRM / PACT / mapping fakes: they prove the linking RULES, not that the real CRM / PACT sources return what the fakes return.
 /// </summary>
-public sealed class CustomerUnitLinkServiceTests
+public sealed partial class CustomerUnitLinkServiceTests
 {
     private static readonly DateTime Now = new(2026, 10, 14, 8, 0, 0, DateTimeKind.Utc);   // 12:00 in Dubai
     private const string Phone = "0501234567";

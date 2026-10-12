@@ -76,3 +76,31 @@ Traced by reading the code path (the real CRM / PACT / production database canno
 **A CRM service problem is not "CRM has no mobile".** `CrmAvailability`: `Disabled` (linking switched off: PACT contacts only, nothing flagged), `Ready`, `NotLoaded`, `Stale` (last successful load older than `CollectionsSource:CrmOwners:MaxAgeMinutes`, default 360) and `ReadFailed`. The last three block: every unit gets the review reason `CrmUnavailable`, the pages show a banner, **no Genesys list can be exported or dispatched** until CRM is back (the internal review CSV stays available). A failed latest refresh with recent data is a warning only.
 
 **Order.** Receivables, Campaigns and the tower picker list the newest tower first: the tower **number as an integer, descending** (TP140, TP132, TP131 ... TP119; never the text, never the name; a non-numeric tower after the numeric ones). Inside a tower: unit number ascending (numeric before lettered), then the unit code, company, customer, unit id. The order is decided over the WHOLE filtered result before paging (SQL `ROW_NUMBER` for Receivables, the full in-memory result for Campaigns), so pages never repeat or skip a unit. The application (`CollectionsTowerOrder`) and SQL implement the same order; tests compare them.
+
+
+## Round 2: per-unit Payment Summary, project mapping evidence, contact states, cancelled units
+
+**What could and could not be verified.** No real CRM or PACT was reachable from the build environment. Everything below is proven with synthetic fakes and a throw-away SQL Server; none of it proves what production CRM/PACT return for BEN ISRAELI (project 94 / unit 3302) or TP140-407 (lead 307092). Use the read-only checks at the end.
+
+### Payment Summary (Due | Outstanding | Paid | Fines | Total + Payment Details)
+* Source: PACT's EDSM payment summary and transactions (the "Pact Payment" source), never the Due/Overdue snapshot. The snapshot cards stay, relabelled "unpaid instalments only".
+* EDSM has no unit scope (per company + tenant). `CollectionsUnitStatementService.Resolve` therefore shows amounts only when PACT's contract list (`v1/contracts/{mobile}`, all units of the tenant) proves the (company, tenant) account holds **only** the selected unit. Another unit, parking, a cancelled (`*`) or ended contract, a contract without a unit code, or an incomplete PACT answer withholds the amounts with the reason (`NotExclusive`, `Unverified`, `ContractEnded`, `IdentityMismatch`, `Ambiguous`, `UnitNotFound`, ...). Missing is never zero.
+* Fines: owned companies report only fines above zero, so an empty value is shown as 0; rented companies never compute fines ("Not computed").
+* Consequence to know: a customer who owns several units sees the withheld notice instead of the statement, because EDSM cannot split the account. A unit-scoped PACT route would lift this.
+
+### CRM project -> PACT mapping
+* The mapping is consumed by `CustomerUnitLinkService` through `usp_Collections_GetCrmProjectMap`: manual rows (`CollectionsCrmProjectMap`) first, then the project/code pairs of the CRM owner feed. In production the owner feed is switched off, so nothing populated it: a project without a manual row failed with "CRM project has no verified PACT tower mapping."
+* New fallback (per unit, no names, nothing hardcoded): the CRM unit number must equal the apartment of exactly one active, non-cancelled PACT contract of the SAME customer; that contract's unit code gives tower and company. Several matches -> `ProjectMappingAmbiguous`; none -> `ProjectMappingMissing` with a reason. Each observation is stored (V013) for review.
+* `94 -> Tower 125 -> Company 4` could **not** be verified from the repository or any available source and is not applied. Run `tools/review_crm_project_map.sql` after a few lookups; it lists project 94 as ReadyToPromote only if the customers' own contracts prove one tower/company.
+
+### Contacts
+* Root cause of the empty contact on TP140-407: `CollectionsSource:CrmOwners:Enabled=false` (CRM has not published `GetUnitOwners`), so no unit is linked to a CRM owner and the page showed PACT's empty contact under the wording "No mobile or email in CRM or PACT". That wording was false.
+* Now: **switched off** ("CRM linking is switched off, so CRM was not checked"), **owner not linked** ("no CRM owner is linked to this unit"), **ambiguous owner / company**, **CRM unavailable** (service problem) and **linked but empty** ("in CRM or PACT") are different messages; the page also shows a notice when the feed is switched off. CRM stays first; PACT only fills missing fields; different people are never merged.
+
+### Cancelled units (`*` anywhere in the PACT unit code, including `**`)
+Excluded before matching, aggregation and paging in SQL (`R002` refresh, `R004` procedures), in `ReviewRecordBuilder`, from the CRM unit candidates and PACT-evidence matching, and from the Payment statement. The mark is never stripped to match an active unit. `DispatchService` re-checks the prepared items before any Genesys upload (reason "Cancelled unit (code contains *)"), and again when batches are planned. A cancelled sibling unit on the same EDSM account withholds the statement (its amounts cannot be separated).
+
+### Read-only checks for the two failing units (run in production, nothing is written)
+1. `GET /api/collections/crm-owners/status` - is the CRM owner feed enabled/loaded? (If Disabled, TP140-407 cannot link; enable it only after CRM publishes `GetUnitOwners`.)
+2. Mapping 94: open the BEN ISRAELI Payment tab once, then run `database/collections-receivables/tools/review_crm_project_map.sql` (preview). Compare any ReadyToPromote row with CRM `tblProjects` 94 and PACT tower 125 / company 4 before `@Apply = 1`.
+3. TP140-407: in CRM run `SELECT TOP 5 * FROM tblLeads WHERE ID = 307092` and the buyer's mobile/email in `tblCustomers`; in PACT call `v1/contracts/971529586320` and confirm the unit code `TP140-407` and its company/tenant.

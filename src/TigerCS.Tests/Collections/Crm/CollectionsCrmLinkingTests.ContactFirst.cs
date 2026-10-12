@@ -38,6 +38,25 @@ public sealed partial class CollectionsCrmLinkingTests
     }
 
     [Fact]
+    public async Task ReportedCase_Tp140_407_Lead307092_TakesTheCrmMobileAndEmail_WhenPactHoldsNone_AndTheDisabledFeedIsSaidSo()
+    {
+        var r = new Rig(); r.Store.CompanyOfTower["140"] = 4;
+        r.Source.Items.Add(new PactReceivableInstalment(4, "T407", "Pact Holder", "", "", 407, "TP140-407", "TP140", "INV-407", "", new(2026, 10, 10), 500m, "Installment", "140", null, "Tower"));
+        r.Owners(FakeCrmUnitOwnersGateway.Owner(4070, "TP140", "407", "AFTAB ALAM KHAN MOHAMMAD MAZAHARUDDIN KHAN", "+971529586320", "kaftab.alam@yahoo.co.in", leadId: 307092));
+        var unit = Assert.Single((await Preview(r)).Items);
+        Assert.Equal(("+971529586320", "kaftab.alam@yahoo.co.in"), (unit.Phone, unit.Email));
+        Assert.Equal("AFTAB ALAM KHAN MOHAMMAD MAZAHARUDDIN KHAN", unit.CustomerName);
+        Assert.DoesNotContain("NoValidContact", unit.Reason);
+
+        // The same unit while CRM linking is switched off: PACT's (empty) contact, and the page is told CRM was not consulted.
+        var off = new Rig(); off.Crm.Enabled = false;
+        off.Source.Items.Add(new PactReceivableInstalment(4, "T407", "Pact Holder", "", "", 407, "TP140-407", "TP140", "INV-407", "", new(2026, 10, 10), 500m, "Installment", "140", null, "Tower"));
+        var report = await Preview(off);
+        Assert.Equal(("Disabled", false), (report.Crm!.State, report.Crm.Blocks));
+        Assert.Contains("switched off", report.Crm.Message);
+    }
+
+    [Fact]
     public void TheFeedRow_OfTheReportedCase_IsEligible_AndKeepsTheSaudiNumberAndTheProjectName()
     {
         var service = new CollectionsCrmOwnersRefreshService(new() { Enabled = true }, new FakeCrmUnitOwnersGateway(), new FakeCrmOwnerStore(), NullLogger<CollectionsCrmOwnersRefreshService>.Instance);

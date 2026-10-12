@@ -512,6 +512,51 @@ public sealed class CustomerPaymentTabRenderTests : IDisposable
     private static CustomerUnitLinkResultDto Link(params LinkedUnitCandidateDto[] units) =>
         new("+971501234567", "Found", "NotSearched", units, units.Length > 1, units.Length == 1 ? units[0].SelectionId : null, []);
 
+    private static StatementAmountDto Amt(decimal v) => new("Provided", v, v.ToString("N2"));
+
+    [Fact]
+    public async Task TheCompleteStatement_ShowsDueOutstandingPaidFinesTotal_AndThePaymentDetails_PaidGreenDueRed()
+    {
+        _api.Mode = "nosource";
+        var statement = new UnitPaymentStatementDto("Available", null, "TP140-909", 4, "Tiger Group Dubai", "Owned", "T-909", [],
+            Amt(0m), Amt(889393.44m), Amt(594467.56m), new("ZeroOrLess", 0m, null), Amt(1483861m), "Outstanding",
+            [new(new DateOnly(2026, 1, 5), null, "Paid", 100000m, "100,000.00", "CHQ-1", "Cheque"), new(new DateOnly(2026, 1, 5), null, "Paid", 20000m, "20,000.00", "CHQ-2", "Cheque"),
+             new(new DateOnly(2027, 3, 1), null, "Outstanding", 300000m, "300,000.00", "CHQ-9", "Cheque")],
+            true, [], "AED", Now, "Edsm");
+        _api.UnitLink = Link(UnitCandidate()) with { Statement = statement };
+
+        var html = await Ok(await Client().GetAsync("/Customers/crm:9001?tab=payment"));
+
+        Assert.Contains("data-unit-statement", html, StringComparison.Ordinal);
+        Assert.Matches(@"data-statement=""due"">\s*<strong[^>]*>AED 0\.00<", html);
+        Assert.Matches(@"data-statement=""outstanding"">\s*<strong[^>]*statement-red-text[^>]*>AED 889,393\.44<", html);
+        Assert.Matches(@"data-statement=""paid"">\s*<strong[^>]*statement-green-text[^>]*>AED 594,467\.56<", html);
+        Assert.Matches(@"data-statement=""fines"">\s*<strong[^>]*>AED 0\.00<", html);
+        Assert.Matches(@"data-statement=""total"">\s*<strong[^>]*>AED 1,483,861\.00<", html);
+        Assert.True(html.IndexOf("data-statement=\"due\"", StringComparison.Ordinal) < html.IndexOf("data-statement=\"outstanding\"", StringComparison.Ordinal));
+        Assert.True(html.IndexOf("data-statement=\"outstanding\"", StringComparison.Ordinal) < html.IndexOf("data-statement=\"paid\"", StringComparison.Ordinal));
+        Assert.Contains("<th>Cheque Number</th>", html, StringComparison.Ordinal);
+        Assert.Equal(2, Regex.Matches(html, "data-statement-row=\"Paid\"").Count);          // a split of one date stays two rows
+        Assert.Single(Regex.Matches(html, "data-statement-row=\"Outstanding\""));         // a future row is listed
+        Assert.Contains("CHQ-9", html, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task AWithheldStatement_NamesTheReason_ShowsNoAmount_AndNeverZero()
+    {
+        _api.Mode = "nosource";
+        var withheld = UnitPaymentStatementDto.Withheld("NotExclusive", "PACT's payment statement is kept per customer account, and this account also covers TP140-407.", "TP140-909", 4, "T-909", ["TP140-407"]);
+        _api.UnitLink = Link(UnitCandidate()) with { Statement = withheld };
+
+        var html = await Ok(await Client().GetAsync("/Customers/crm:9001?tab=payment"));
+
+        Assert.Contains("data-statement-status=\"NotExclusive\"", html, StringComparison.Ordinal);
+        Assert.Contains("Payment summary not shown", html, StringComparison.Ordinal);
+        Assert.Contains("TP140-407", html, StringComparison.Ordinal);
+        Assert.DoesNotContain("data-statement=\"total\"", html, StringComparison.Ordinal);
+        Assert.Equal("Unavailable", Kpi(html, "total"));                                  // the snapshot cards still never show zero
+    }
+
     [Fact]
     public async Task ReportedCase_CrmCustomerAbsentFromPact_ShowsTheUnitsFigures_NotTheGenericNoFiguresMessage()
     {

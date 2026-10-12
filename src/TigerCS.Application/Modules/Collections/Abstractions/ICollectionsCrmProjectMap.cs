@@ -17,3 +17,12 @@ public interface ICollectionsCrmProjectMap
     /// <summary>Every mapping row of the given CRM projects. A project absent from the result has no verified mapping; several rows for one project are an ambiguous mapping.</summary>
     Task<IReadOnlyDictionary<int, IReadOnlyList<CrmProjectTowerMapping>>> GetAsync(IReadOnlyCollection<int> crmProjectIds, CancellationToken cancellationToken);
 }
+
+/// <summary>One observation that a CRM project's unit is a given PACT unit: the CRM project id and apartment number, and the PACT contract (company, tenant, unit code) of the SAME customer with that apartment number.</summary>
+public sealed record CrmProjectEvidence(int CrmProjectId, string ProjectCode, int CompanyId, int CrmCustomerId, int CrmUnitId, string UnitNumber, string PactTenantId, string PactUnitCode);
+
+/// <summary>Keeps what the lookups observed (V013). It never creates a mapping: <c>tools/review_crm_project_map.sql</c> shows the evidence per project and promotes only what is consistent.</summary>
+public interface ICollectionsCrmProjectEvidenceStore
+{
+    Task RecordAsync(IReadOnlyList<CrmProjectEvidence> evidence, CancellationToken cancellationToken);
+}

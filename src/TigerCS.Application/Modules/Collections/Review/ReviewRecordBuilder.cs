@@ -14,7 +14,7 @@ public sealed record ReviewBuildContext(
     bool LegalNoticeReleased, bool LegalCaseApproved, decimal FloatTolerance,
     IReadOnlyDictionary<string, string> StatusMap, CrmLinkSet? Crm = null);
 
-public sealed record ReviewBuildResult(IReadOnlyList<CollectionsReviewRecord> Records, int FloatNormalizedRows, int SettledRows);
+public sealed record ReviewBuildResult(IReadOnlyList<CollectionsReviewRecord> Records, int FloatNormalizedRows, int SettledRows, int CancelledRows = 0);
 
 /// <summary>
 /// Turns one financial-source read into validated review records: one per unit and reminder type that the approved
@@ -23,13 +23,19 @@ public sealed record ReviewBuildResult(IReadOnlyList<CollectionsReviewRecord> Re
 /// </summary>
 public static class ReviewRecordBuilder
 {
+    /// <summary>True when the PACT unit code carries a cancellation asterisk anywhere.</summary>
+    public static bool IsCancelledUnit(string? unitCode) => unitCode is not null && unitCode.Contains('*');
+
     public static ReviewBuildResult Build(IEnumerable<PactReceivableInstalment> source, ReviewBuildContext context)
     {
         var floatNormalized = 0;
         var settled = 0;
         var rows = new List<(PactReceivableInstalment Row, DateOnly Due, decimal Amount, MoneyResult Money)>();
+        var cancelled = 0;
         foreach (var row in source)
         {
+            // PACT marks a cancelled unit with an asterisk anywhere in its code ('*', '**'): dropped before any matching or grouping, and never matched to a CRM unit with the mark removed.
+            if (IsCancelledUnit(row.UnitCode)) { cancelled++; continue; }
             var money = MoneyNormalizer.Normalize(row.Amount, row.AmountIsFloatingPoint, context.FloatTolerance);
             if (money.Precision == AmountPrecision.FloatingPointNoise) floatNormalized++;
             // Settled or noise-only remainders are not receivables. An unresolved precision issue is kept and flagged.
@@ -140,7 +146,7 @@ public static class ReviewRecordBuilder
         }
 
         MarkRepeatedCalls(records);
-        return new ReviewBuildResult(records, floatNormalized, settled);
+        return new ReviewBuildResult(records, floatNormalized, settled, cancelled);
     }
 
     /// <summary>

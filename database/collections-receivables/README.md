@@ -5,7 +5,7 @@ Full design, semantics, schedule, deployment order and verification: [`docs/Coll
 
 ## Execution order (before the application is deployed)
 
-`V001` -> `V003` -> `V010` -> `V011` -> **`R001`** -> **`V012`** -> **`R002` -> `R003` -> `R004`** -> `migration/M01` (backup) ... deploy the application ... verify ... `migration/M02` (cleanup).
+`V001` -> `V003` -> `V010` -> `V011` -> **`R001`** -> **`V012`** -> **`V013`** -> **`R002` -> `R003` -> `R004`** -> `migration/M01` (backup) ... deploy the application ... verify ... `migration/M02` (cleanup).
 (V001, V003, V010, V011 are usually already deployed; re-running them is harmless. V010 no longer needs the old snapshot objects. **V012 is new and must be deployed BEFORE R004** - R004 reads `fn_Collections_TowerNames` and the new CRM columns - and AFTER R001 - V012 reads the snapshot tables.)
 
 | Script | Purpose |
@@ -15,6 +15,8 @@ Full design, semantics, schedule, deployment order and verification: [`docs/Coll
 | `V010__create_crm_unit_owner_tables.sql` | CRM unit owners (Sold / Contract sales per tower + unit), `fn_CollectionsUnitKey`, `fn_Collections_CrmUnitLinks` and its load procedures. |
 | `V011__create_crm_project_map.sql` | CRM project -> PACT tower mapping (`dbo.CollectionsCrmProjectMap`, empty; **no mapping is invented**). |
 | `V012__crm_owner_company_resolution_and_tower_names.sql` | CRM owners get their company from the exact unit (never the tower number alone), keep the CRM project name, `fn_Collections_TowerNames` (the one source of tower names), `usp_Collections_ResolveCrmOwnerCompanies`; backfills the current CRM run. Idempotent. |
+| `V013__create_crm_project_map_evidence.sql` | `dbo.CollectionsCrmProjectMapEvidence` + `usp_Collections_RecordCrmProjectEvidence`: what customer lookups observed (CRM project -> PACT tower/company, from the SAME customer's PACT contract). Never creates a mapping; units with `*` in the PACT code are never recorded. Idempotent. |
+| `tools/review_crm_project_map.sql` | Preview (default, read-only) of every CRM project: Mapped / ReadyToPromote / Ambiguous / Unresolved, with the evidence; `@Apply = 1` inserts only ReadyToPromote rows (idempotent). |
 | `R001__create_tables.sql` | **New snapshot:** `CollectionsRcvRun`, `CollectionsRcvCompany`, `CollectionsRcvLine`. |
 | `R002__usp_CollectionsRcv_Refresh.sql` | `usp_CollectionsRcv_Refresh @CompanyId` (PACT -> temp table -> validated atomic publish, per-company lock), `usp_CollectionsRcv_ReapDeadRuns`, `usp_CollectionsRcv_NoteClientAbort`. |
 | `R003__usp_CollectionsRcv_GetStatus.sql` | Per-company state for the pages (closes orphaned attempts first; `IsLoading` is true only while that company's refresh really runs). |

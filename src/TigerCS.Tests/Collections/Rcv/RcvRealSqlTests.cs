@@ -85,6 +85,8 @@ public sealed partial class RcvRealSqlTests
         await Pact(4, "TP102-201", "D2", "Dani Two", "+971500000002", "dani@example.test", 2021, "C3", "2026-01-01", 0, "Paid");
         // D3: a cancelled apartment (513*) next to a live one of the same customer.
         await Pact(4, "TP103-513*", "D3", "Dara Three", "+971500000003", "dara@example.test", 3135, "E1", "2026-08-01", 900);
+        await Pact(4, "TP103-5**15", "D3", "Dara Three", "+971500000003", "dara@example.test", 3150, "E3", "2026-08-01", 700);   // several asterisks, in the middle
+        await Pact(4, "**TP103-516", "D3", "Dara Three", "+971500000003", "dara@example.test", 3160, "E4", "2026-08-01", 650);    // leading asterisks: never matched as TP103-516
         await Pact(4, "TP103-514", "D3", "Dara Three", "+971500000003", "dara@example.test", 3140, "E2", "2026-08-01", 200);
         // D4: invalid units - UnitID 0, unit code 0, blank unit code.
         await Pact(4, "TP104-401", "D4", "Dino Four", "+971500000004", "dino@example.test", 0, "F1", "2026-08-01", 500);
@@ -109,7 +111,7 @@ public sealed partial class RcvRealSqlTests
         // Dubai: 12 PACT rows with a positive amount... minus the cancelled (E1), the three invalid units (F1-F3); the settled one (C3) and the future November one stay out / in as shown.
         Assert.Equal(0, await Scalar<int>("SELECT COUNT(*) FROM dbo.CollectionsRcvLine WHERE CompanyId = 4 AND (UnitCode LIKE '%*%' OR UnitId <= 0 OR UnitCode IN ('', '0') OR Amount <= 0)"));
         var run4 = await Scalar<string>("SELECT CONCAT(RawRows, '/', PublishedRows, '/', ExcludedSettledRows, '/', ExcludedInvalidRows, '/', ExcludedCancelledRows, '/', ExcludedCancelledAmount, '/', Layout) FROM dbo.CollectionsRcvRun WHERE CompanyId = 4");
-        Assert.Equal("13/8/1/3/1/900.0000/1", run4);
+        Assert.Equal("15/8/1/3/3/2250.0000/1", run4);
         var run32 = await Scalar<string>("SELECT CONCAT(RawRows, '/', PublishedRows, '/', ExcludedSettledRows, '/', ExcludedInvalidRows, '/', ExcludedCancelledRows, '/', Layout) FROM dbo.CollectionsRcvRun WHERE CompanyId = 32");
         Assert.Equal("3/3/0/0/0/3", run32);                                       // Sharjah: its own 12-column procedure, no ProjectCode
         Assert.Equal(0, await Scalar<int>("SELECT COUNT(*) FROM dbo.CollectionsRcvLine l JOIN dbo.CollectionsRcvCompany c ON c.CompanyId = l.CompanyId AND c.CurrentRunId <> l.RunId"));   // only published lines exist

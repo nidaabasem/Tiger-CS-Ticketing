@@ -189,7 +189,7 @@ public sealed record UnitLine(string Customer, string Phone, string Email, strin
             if (linked.SourceConflict) notes.Add("CRM and PACT contacts differ: needs review");
             // A CRM SERVICE problem is not "CRM has no value": when CRM linking is on but unusable, the contact below is PACT-only and unconfirmed.
             if (report.Crm is { Blocks: true }) notes.Add("CRM unavailable: contact unconfirmed, needs review");
-            else if (!linked.HasContact) notes.Add("No mobile or email in CRM or PACT: cannot be contacted");
+            else if (!linked.HasContact) notes.Add(NoContactNote(report.Crm?.State, crmStatus));
             else if (linked.Phone.Length == 0) notes.Add("No mobile");
             else if (linked.Email.Length == 0) notes.Add("No email");
             lines.Add(new UnitLine(linked.Name.Length > 0 ? linked.Name : unit.CustomerName,
@@ -199,6 +199,14 @@ public sealed record UnitLine(string Customer, string Phone, string Email, strin
         }
         return lines;
     }
+
+    /// <summary>Why nobody can be reached: only claims "CRM or PACT" when CRM was really consulted for this unit's owner. Switched off and not linked are different from CRM holding nothing.</summary>
+    public static string NoContactNote(string? crmState, CrmLinkStatus unitLink) => crmState switch
+    {
+        "Disabled" => "No mobile or email in PACT; CRM linking is switched off, so CRM was not checked: cannot be contacted",
+        not null when unitLink == CrmLinkStatus.None => "No mobile or email in PACT; no CRM owner is linked to this unit: cannot be contacted",
+        _ => "No mobile or email in CRM or PACT: cannot be contacted",
+    };
 
     private static string First(IEnumerable<string> values, string fallback = "—") => values.FirstOrDefault(v => !string.IsNullOrWhiteSpace(v))?.Trim() ?? fallback;
 
