@@ -78,22 +78,20 @@ public class CrmBuyerLookupAppServiceTests
     // can safely hard-code) — this service must never re-filter by LeadStatus. ----
 
     [Fact]
-    public async Task GetBuyerByPhoneAsync_RealCrmContractLeadStatus4_UnitRemainsInResult()
+    public async Task GetBuyerByPhoneAsync_RealCrmContractLeadStatus9_UnitRemainsInResult()
     {
-        // Regression: production CRM has been observed returning leadStatus=4/
-        // leadStatusName="Contract" for a legitimately eligible unit — an
-        // earlier hard-coded Sold(8)/Contract(9) allow-list would have
-        // incorrectly dropped it.
+        // CRM's confirmed enum: Sold = 8, Contract = 9 (Approved = 4, Cancelled = 6).
+        // This service passes the lead status through and never re-filters by it.
         var gateway = new FakeCrmBuyerLookupGateway().Returns(
             CrmBuyerLookupResult.Success(
-                [new CrmBuyerMatchDto(Customer(), [Unit(leadStatus: 4, leadStatusName: "Contract", customerType: 1)])]));
+                [new CrmBuyerMatchDto(Customer(), [Unit(leadStatus: 9, leadStatusName: "Contract", customerType: 1)])]));
         var service = new CrmBuyerLookupAppService(gateway, NullLogger<CrmBuyerLookupAppService>.Instance);
 
         var result = await service.GetBuyerByPhoneAsync("+971500000000");
 
         Assert.Equal(CrmBuyerLookupOutcome.Success, result.Outcome);
         var unit = Assert.Single(result.Buyers!.Single().Units);
-        Assert.Equal(4, unit.LeadStatus);
+        Assert.Equal(9, unit.LeadStatus);
         Assert.Equal("Contract", unit.LeadStatusName);
     }
 
