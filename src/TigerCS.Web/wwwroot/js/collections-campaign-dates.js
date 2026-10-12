@@ -1,7 +1,7 @@
 /*
   Keeps the campaign From/To dates in step with the stage and preview date UNTIL the user edits them.
-  Same rules as the server (CollectionsCampaignPolicy.DefaultDateTo and the preview): From = empty (All months: the whole history up to today);
-  To = last day of the preview month for the current-month and follow-up stages, otherwise the preview date.
+  Same rules as the server (CollectionsCampaignPolicy.DefaultDateTo and the preview): From = empty (All months: the whole history);
+  To = last day of the preview month for every stage (Due is the whole current month; the server clamps it to the end of the current month).
 */
 (() => {
     document.addEventListener('DOMContentLoaded', () => {
@@ -15,9 +15,8 @@
             const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date.value);
             if (!m) return null;
             const y = +m[1], mo = +m[2];
-            const wholeMonth = stage.value === 'CurrentMonthReminder' || stage.value === 'FollowUpReminder';
             const last = new Date(Date.UTC(y, mo, 0)).getUTCDate();
-            return { from: from.dataset.default ?? '', to: wholeMonth ? `${y}-${pad(mo)}-${pad(last)}` : date.value };
+            return { from: from.dataset.default ?? '', to: `${y}-${pad(mo)}-${pad(last)}` };
         };
         // A field is "unedited" while it still holds the default the page was rendered with (or the last one we wrote).
         const track = input => { input.dataset.auto = input.value === (input.dataset.default || '') || input.value === '' ? 'true' : 'false'; };

@@ -16,7 +16,7 @@ namespace TigerCS.Api.Controllers;
 [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
 public sealed class CollectionsCampaignsController(CollectionsCampaignAppService service) : ControllerBase
 {
-    /// <summary>Preview one communication stage, per unit, using current remaining balances from PACT companies 4 and 32. Only instalments due today or earlier (Dubai) are listed; <c>minTotal</c> keeps units whose Due + Overdue is greater than it (omit for no minimum).</summary>
+    /// <summary>Preview one communication stage, per unit, using current remaining balances from PACT companies 4 and 32. Only instalments due before the end of the current Dubai month are listed (Overdue: before the first day of the month, Due: inside it); <c>minTotal</c> keeps units whose Due + Overdue is greater than it (omit for no minimum).</summary>
     [HttpGet("preview")]
     [ProducesResponseType<CollectionsCampaignPreviewDto>(StatusCodes.Status200OK)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]

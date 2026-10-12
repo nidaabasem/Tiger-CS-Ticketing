@@ -116,8 +116,8 @@ public interface IPactInstalmentSource
 }
 
 /// <remarks>
-/// AsOf is the first day of the classification month, or - when <see cref="ClassifyByDay"/> is set (the By unit view) - TODAY (Dubai): Overdue = due before it,
-/// Due = due on it, Not yet due (Upcoming) = due after it. PaymentFilter is outstanding, unpaid, partial, paid or all. Status (By unit only) keeps the units that have
+/// AsOf is the first day of the classification month, or - when <see cref="ClassifyByDay"/> is set (the By unit view) - TODAY (Dubai), whose CALENDAR MONTH is the
+/// reference (<c>CollectionsDueMonth</c>): Overdue = due before the first day of that month, Due = due inside it (any day), anything later is not in scope. PaymentFilter is outstanding, unpaid, partial, paid or all. Status (By unit only) keeps the units that have
 /// at least one instalment of that class: overdue or due (null = every unit). MinTotal (By unit): keep units whose summed remaining amount is GREATER than it (null = no minimum).
 /// </remarks>
 public sealed record PactInstalmentsRequest(
@@ -141,8 +141,8 @@ public interface IPactCampaignSource
 /// The unit's rows are those inside [From, To] (due DAY) with remaining Amount &gt; 0 and &gt;= MinAmount. Stage rows are the ones whose due day is in
 /// [StageFrom, StageToExclusive) (StageFrom null = unbounded); a stage amount qualifies when its sum is &gt; Threshold. ContactRequired is false for the
 /// internal legal-referral stage. PhoneDigits are the digits of a phone-like search term, else null. Offset/Take page the ordered units
-/// (company, tenant, unit code, unit id). Today (Dubai): units carry DueAmount (due on it) and OverdueAmount (due before it); a unit with neither is not a candidate,
-/// and MinTotal (null = none) keeps units whose DueAmount + OverdueAmount is greater than it. Units whose code contains '*' (cancelled) are never candidates.
+/// (company, tenant, unit code, unit id). Today (Dubai): units carry DueAmount (due inside the month of Today) and OverdueAmount (due before that month); a unit with neither is not a candidate,
+/// and MinTotal (null = none) keeps units whose DueAmount + OverdueAmount is greater than it. Units whose code contains '*' (cancelled) are never candidates. [From, To] is the READ scope (it reaches the end of the current month); stage eligibility, the stage amount and the unit flags only look at rows due up to the earlier of To and Today, exactly as the in-memory evaluation does.
 /// </remarks>
 public sealed record PactCampaignRequest(
     DateOnly From, DateOnly To, decimal MinAmount, DateOnly? StageFrom, DateOnly StageToExclusive, decimal Threshold, bool ContactRequired,
