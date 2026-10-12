@@ -428,6 +428,49 @@ public sealed partial class RcvRealSqlTests
     }
 
     [SqlFact]
+    public async Task TheUnitRead_ListsTheOtherUnitsOfTheSameAccount_NeverAStarredOne_AndNeverAnotherTenant()
+    {
+        await Seed();
+        var source = Source();
+        var d1 = await source.ReadUnitAsync("TP101-101", 4, Today, default);
+        Assert.Equal([(4, "D1", 1011), (4, "D1", 1012)], d1.TenantUnits!.Select(u => (u.CompanyId, u.TenantId, u.UnitId)).OrderBy(u => u.UnitId));      // D1's second apartment is what a per-account statement would mix in
+        var d2 = await source.ReadUnitAsync("TP102-201", 4, Today, default);
+        Assert.Equal([2021], d2.TenantUnits!.Select(u => u.UnitId));
+        var d3 = await source.ReadUnitAsync("TP103-514", 4, Today, default);
+        Assert.Equal([3140], d3.TenantUnits!.Select(u => u.UnitId));                                  // the cancelled 513*, 5**15 and **516 of the same tenant are not units of the account
+        Assert.Equal((4, "D1", 1011), (d1.Identities.Single().CompanyId, d1.Identities.Single().TenantId, d1.Identities.Single().UnitId));
+        Assert.Empty((await source.ReadUnitAsync("TP103-513*", null, Today, default)).Identities);
+        Assert.Empty((await source.ReadUnitAsync("TP103-5**15", null, Today, default)).Identities);
+        Assert.Empty((await source.ReadUnitAsync("**TP103-516", null, Today, default)).Identities);
+    }
+
+    [SqlFact]
+    public async Task Tp140_407_Lead307092_IsTraced_FromTheCrmFeedThroughIngestionAndTheJoin_WhenPactHoldsNoMobile()
+    {
+        await Seed();
+        await Pact(32, "TP140-407", "T407", "Pact Holder", "", "", 4071, "V407", "2026-09-01", 500);
+        Assert.Equal("Succeeded", (await Refresher().RefreshAsync("Test", 32, default)).Status);
+        var gateway = new TigerCS.Tests.Collections.Crm.FakeCrmUnitOwnersGateway();
+        gateway.Owners.Add(TigerCS.Tests.Collections.Crm.FakeCrmUnitOwnersGateway.Owner(900407, "TP140", "407", "AFTAB ALAM KHAN MOHAMMAD MAZAHARUDDIN KHAN", "+971529586320", "kaftab.alam@yahoo.co.in", leadId: 307092));
+        var store = new SqlCollectionsCrmOwnerStore(Config(), new ReceivablesSnapshotOptions());
+        var refresh = new CollectionsCrmOwnersRefreshService(new CollectionsCrmOwnersOptions { Enabled = true }, gateway, store, NullLogger<CollectionsCrmOwnersRefreshService>.Instance);
+        try
+        {
+            var result = await refresh.RefreshAsync(default);                                          // ingestion through the real store: stage -> resolve company from the exact unit -> publish
+            Assert.True(result.Succeeded, result.Message);
+            Assert.Equal((1, 1, 0), (result.Fetched, result.Stored, result.Unlinked));
+            Assert.Equal(32, await Scalar<int>("SELECT CompanyId FROM dbo.CollectionsCrmUnitOwner WHERE UnitKey = N'TP140-407'"));   // the harness's tower list puts tower 140 in company 32, where this unit is held
+            var unit = (await Page(minTotal: null)).Units.Single(u => u.CompanyId == 32 && u.UnitCode == "TP140-407");     // the join: PACT mobile is blank, CRM supplies the contact
+            Assert.Equal(("", 1), (unit.Instalments.First().Mobile, unit.CrmCustomers));
+            Assert.Equal(("AFTAB ALAM KHAN MOHAMMAD MAZAHARUDDIN KHAN", "+971529586320", "kaftab.alam@yahoo.co.in"), (unit.CrmName, unit.CrmPhone, unit.CrmEmail));
+            // The same unit read for the Payment tab links to the same CRM owner.
+            var read = await Source().ReadUnitAsync("TP140-407", null, Today, default);
+            Assert.Equal(900407, read.CrmLinks[32].CustomerId);
+        }
+        finally { await Exec("UPDATE dbo.CollectionsCrmOwnerState SET CurrentRunId = NULL WHERE Id = 1; DELETE FROM dbo.CollectionsCrmUnitOwner;"); }
+    }
+
+    [SqlFact]
     public async Task Leasing_Company7_IsNeverLoadedNorRead_ItStaysAPaymentSummaryByPhoneFeature()
     {
         await Seed();

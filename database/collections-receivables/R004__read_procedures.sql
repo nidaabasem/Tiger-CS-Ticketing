@@ -243,6 +243,7 @@ GO
     2 identities    per (company, tenant, unit): the PACT customer of the unit (name / mobile / e-mail as PACT holds them - mobile may be empty), tower, payment count
     3 instalments   ALL the unit's unpaid payments, future months included, newest first. The application classifies them with the one month rule (CollectionsDueMonth: Overdue < first day of the month of @AsOfDate, Due inside it, later = Not yet due) - @AsOfDate is only that reference date
     4 crm           the CRM link of the unit (usp_Collections_GetCrmUnitLinks shape), all companies
+    5 tenant units  the units (with an open balance) of the same (company, tenant) accounts
   Rows with UnitID <= 0 or a cancelled ('*') / blank / 0 code never match.
 */
 CREATE OR ALTER PROCEDURE dbo.usp_CollectionsRcv_GetUnit
@@ -290,6 +291,15 @@ BEGIN
     SELECT l.CompanyId, l.UnitKey, l.Customers, l.CustomerId, l.CrmUnitId, l.LeadId, l.FullName, l.PhoneNorm, l.EmailNorm, l.CompanyAmbiguous
       FROM dbo.fn_Collections_CrmUnitLinks() l
      WHERE l.UnitKey = @UnitKey COLLATE Latin1_General_BIN2 AND (@CompanyId IS NULL OR l.CompanyId = @CompanyId);
+
+    -- 5 tenant units  every OTHER unit with an open balance under the same (company, tenant) as the matched unit(s): EDSM's payment statement is per (company, tenant), so the application
+    --                 withholds the statement of a unit whose account also covers one of these. A unit with nothing open is not in the snapshot and cannot be listed here.
+    IF @Only IS NULL
+    SELECT DISTINCT s.CompanyId, s.TenantId COLLATE DATABASE_DEFAULT AS TenantId, s.UnitId, s.UnitCode COLLATE DATABASE_DEFAULT AS UnitCode
+      FROM (SELECT DISTINCT CompanyId, RunId, TenantId FROM #k) k
+      JOIN dbo.CollectionsRcvLine s ON s.CompanyId = k.CompanyId AND s.RunId = k.RunId AND s.TenantId = k.TenantId
+     WHERE s.UnitId > 0 AND s.UnitCode NOT LIKE N'%*%' AND LTRIM(RTRIM(s.UnitCode)) NOT IN (N'', N'0') AND s.Amount > 0
+     ORDER BY s.CompanyId, TenantId, s.UnitId;
 END;
 GO
 

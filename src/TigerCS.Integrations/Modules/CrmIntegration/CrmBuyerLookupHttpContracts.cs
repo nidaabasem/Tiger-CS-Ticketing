@@ -29,4 +29,5 @@ internal sealed record CrmBuyerUnitHttpDto(
     string? ProjectName,
     string? ProjectArabicName,
     int CustomerType,
-    string? CustomerTypeName);
+    string? CustomerTypeName,
+    string? ProjectCode = null);

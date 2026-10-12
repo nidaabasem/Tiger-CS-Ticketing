@@ -177,7 +177,7 @@ public sealed class CustomerUnitLinkService(
             return UnitPaymentStatementDto.Withheld("UnitNotResolved", "The unit is not tied to one active PACT unit code yet, so no payment statement can be read for it.", key);
         if (unit.ReviewReasons.Contains("CrmOwnershipConflict") || unit.ReviewReasons.Contains("CrmCustomerAmbiguous") || unit.ReviewReasons.Contains("CrmCompanyAmbiguous"))
             return UnitPaymentStatementDto.Withheld("IdentityMismatch", "CRM does not name this customer as the single owner of the unit, so no payment statement is shown until a person confirms the owner.", key, unit.CompanyId);
-        try { return await statements!.GetAsync(new UnitStatementRequest(unit.CompanyId, unit.UnitKey, unit.PactTenantId, phones), cancellationToken); }
+        try { return await statements!.GetAsync(new UnitStatementRequest(unit.CompanyId, unit.UnitKey, unit.PactTenantId, phones) { FallbackMobile = unit.Customer.Mobile }, cancellationToken); }
         catch (Exception ex) when (ex is DbException or HttpRequestException or InvalidOperationException)
         {
             logger.LogWarning("The unit statement could not be read ({ExceptionType}).", ex.GetType().Name);
@@ -263,7 +263,10 @@ public sealed class CustomerUnitLinkService(
             {
                 // No verified mapping row. The customer's OWN PACT contracts (found by phone, then matched by apartment number) can still identify the unit - the evidence is PACT's contract row,
                 // never a project name. One match = that unit; several = ambiguous; none = the mapping really is missing. The pair seen is recorded for the review script (never auto-promoted).
-                var evidence = await EvidenceAsync(customer, unit, phones, today, cancellationToken);
+                // First choice: the project code CRM itself publishes with the unit (GetBuyerByPhone `projectCode`), when it does.
+                var evidence = !string.IsNullOrWhiteSpace(unit.ProjectCode) && CollectionsUnitKey.Normalize(unit.ProjectCode) is not null
+                    ? new EvidenceResult(new CrmProjectTowerMapping(unit.ProjectId, unit.ProjectCode.Trim(), null, "CrmUnit"), "", "")
+                    : await EvidenceAsync(customer, unit, phones, today, cancellationToken);
                 if (evidence.Mapping is { } derived) distinct = [derived];
                 else
                 {

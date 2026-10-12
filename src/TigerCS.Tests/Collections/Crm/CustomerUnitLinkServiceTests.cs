@@ -71,7 +71,8 @@ public sealed partial class CustomerUnitLinkServiceTests
             var instalments = Instalments.Where(n => ids.Any(i => i.CompanyId == n.CompanyId && i.TenantId == n.TenantId && i.UnitId == n.UnitId) && n.RemainingAmount > 0).ToList();   // like the real read: future instalments too
             var links = CrmLinks.Where(l => l.Key.Key == unitKey && (companyId is null || l.Key.Company == companyId)).ToDictionary(l => l.Key.Company, l => l.Value);
             var snapshot = new SnapshotStatusDto(LoadedCompanies.Select(c => new SnapshotCompanyStatusDto(c, "Co" + c, true, Now, Now, "Succeeded", null, 0, 10, null, null, 0, 0, 0, 0, 0, 0, "Fresh", 1)).ToList(), [], 120);
-            return Task.FromResult(new PactUnitReceivables(snapshot, ids, instalments, links, true, Now));
+            var tenantUnits = Identities.Where(o => ids.Any(i => i.CompanyId == o.CompanyId && i.TenantId == o.TenantId)).Select(o => new PactTenantUnit(o.CompanyId, o.TenantId, o.UnitId, o.UnitCode)).ToList();
+            return Task.FromResult(new PactUnitReceivables(snapshot, ids, instalments, links, true, Now, tenantUnits));
         }
     }
 

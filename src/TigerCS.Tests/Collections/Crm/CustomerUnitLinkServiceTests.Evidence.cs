@@ -135,4 +135,129 @@ public sealed partial class CustomerUnitLinkServiceTests
         Assert.Empty(r.Pact.Calls);
         Assert.Empty(evidence.Recorded);
     }
+
+    // ---- the whole flow: CRM unit -> exact unit code in the PACT unit data -> company / tenant / unit -> statement; no PACT mobile, no contract lookup ----
+
+    private sealed class RecordingEdsm(TigerCS.Application.Modules.Collections.Abstractions.IEdsmCollectionsGateway inner) : TigerCS.Application.Modules.Collections.Abstractions.IEdsmCollectionsGateway
+    {
+        public List<(int, string)> Summaries { get; } = [];
+        public string SourceName => "Test";
+        public Task<TigerCS.Application.Modules.Collections.Abstractions.EdsmResult<TigerCS.Application.Modules.Collections.Abstractions.EdsmPaymentSummary>> GetPaymentSummaryAsync(int companyId, string tenantId, CancellationToken cancellationToken = default) { Summaries.Add((companyId, tenantId)); return inner.GetPaymentSummaryAsync(companyId, tenantId, cancellationToken); }
+        public Task<TigerCS.Application.Modules.Collections.Abstractions.EdsmResult<TigerCS.Application.Modules.Collections.Abstractions.EdsmPaymentTransactions>> GetPaymentTransactionsAsync(int companyId, string tenantId, string mobile, TigerCS.Application.Modules.Collections.Abstractions.EdsmTransactionType type, CancellationToken cancellationToken = default) => inner.GetPaymentTransactionsAsync(companyId, tenantId, mobile, type, cancellationToken);
+        public Task<TigerCS.Application.Modules.Collections.Abstractions.EdsmResult<IReadOnlyList<TigerCS.Application.Modules.Collections.Abstractions.EdsmDueInstallment>>> GetDueInstallmentsAsync(int companyId, DateOnly fromDate, DateOnly toDate, CancellationToken cancellationToken = default) => inner.GetDueInstallmentsAsync(companyId, fromDate, toDate, cancellationToken);
+    }
+
+    private sealed class NoProfiles : TigerCS.Application.Modules.Collections.Services.ICollectionsCustomerProfiles
+    {
+        public Task<TigerCS.Application.Modules.Ticketing.Dto.CustomerDirectoryProfileResult> GetProfileAsync(Guid callerEmployeeId, IReadOnlyCollection<string> callerRoles, string customerKey, CancellationToken cancellationToken = default) =>
+            Task.FromResult(TigerCS.Application.Modules.Ticketing.Dto.CustomerDirectoryProfileResult.Failure(TigerCS.Application.Modules.Ticketing.Dto.CustomerDirectoryProfileOutcome.NotFound));
+    }
+
+    private static (CustomerUnitLinkService Service, RecordingEdsm Edsm) WithStatements(Rig r)
+    {
+        PactContractDiscovery.ClearCache();
+        var edsmOptions = new CollectionsEdsmOptions { EdsmNumberCulture = "en-US" };
+        var time = new FakeTimeProvider(Now);
+        var edsm = new RecordingEdsm(new TigerCS.Integrations.Modules.CollectionsIntegration.FixtureEdsmCollectionsGateway(Microsoft.Extensions.Options.Options.Create(edsmOptions)));
+        var clock = new CollectionsClock(r.Options, time);
+        var account = new CollectionsPaymentSummaryAppService(r.Options, edsmOptions, new CollectionsAuthorizationService(r.Options, new FakeDepartmentRepository()), clock, new NoProfiles(), r.Pact, edsm, new PactAccountMappingCache(time));
+        var statements = new CollectionsUnitStatementService(edsmOptions, clock, new PactContractDiscovery(r.Pact, time), account, edsm, r.Units, NullLogger<CollectionsUnitStatementService>.Instance);
+        var service = new CustomerUnitLinkService(r.Options, new PactReceivablesOptions { Enabled = true }, new ReceivablesSnapshotOptions(), new CollectionsCrmOwnersOptions { Enabled = true },
+            new(r.Options, new FakeDepartmentRepository()), clock, r.Crm, r.Pact, r.Map, r.Towers, r.Units, NullLogger<CustomerUnitLinkService>.Instance, new PactContractDiscovery(r.Pact, time), statements, null);
+        return (service, edsm);
+    }
+
+    [Fact]
+    public async Task FullService_AUnitWithNoPactMobile_GetsItsStatementThroughItsUnitCode_EvenWhenPactsContractListIsDown()
+    {
+        var r = new Rig();
+        r.Map.Rows.Add(new(79, "TP140", 4, "Manual"));
+        CrmReturns(r, Buyer(498397, "Sreesaran Maru Sudhakar", PhoneE164, "s@example.test", CrmUnit(9090, "909")));
+        r.Units.Identities.Add(new(4, "3001", 41230, "TP140-909", "Pact Holder", "", "", "140", "Al Ghaf Tower", 3, 3));   // tenant 3001: the fixture's EDSM account; PACT holds no mobile
+        r.Units.Instalments.Add(new(4, "3001", 41230, "V1", new(2026, 9, 1), 700m, 700m, 0m, "Installment"));
+        r.Pact.Result = PactCustomerLookupResult.Unavailable();       // PACT's contract list is down: it is optional, the statement must not depend on it
+        var (service, edsm) = WithStatements(r);
+
+        var result = (await service.FindForCrmCustomerAsync(r.Manager, 498397, [Phone], null)).Value!;
+
+        var statement = result.Statement!;
+        Assert.True(statement.IsAvailable, statement.Detail);
+        Assert.Equal((4, "3001", "TP140-909"), (statement.CompanyId, statement.TenantId, statement.UnitKey));
+        Assert.Equal((1250000m, 812500m, 62500m, 375000m), (statement.Total!.Value, statement.Paid!.Value, statement.Due!.Value, statement.Outstanding!.Value));
+        Assert.Equal([(4, "3001")], edsm.Summaries);
+        Assert.Contains(statement.Notes, n => n.Contains("receivables snapshot"));   // unconfirmed by the contract list, and the statement says so
+    }
+
+    [Fact]
+    public async Task FullService_TwoUnitsOfOneCustomer_NeverShareAmounts()
+    {
+        var r = new Rig();
+        r.Map.Rows.Add(new(79, "TP140", 4, "Manual"));
+        CrmReturns(r, Buyer(498397, "Owner", PhoneE164, null, CrmUnit(9090, "909"), CrmUnit(1010, "101")));
+        r.Units.Identities.Add(new(4, "3001", 41230, "TP140-909", "Pact Holder", "", "", "140", "T", 3, 3));
+        r.Units.Identities.Add(new(4, "4444", 41231, "TP140-101", "Pact Holder", "", "", "140", "T", 3, 3));      // another account
+        var (service, edsm) = WithStatements(r);
+
+        var list = (await service.FindForCrmCustomerAsync(r.Manager, 498397, [Phone], null)).Value!;
+        Assert.True(list.SelectionRequired);                           // two units: nothing is chosen, so no statement is shown for the pair
+        Assert.Null(list.Statement);
+
+        var a = (await service.FindForCrmCustomerAsync(r.Manager, 498397, [Phone], list.Candidates.Single(c => c.UnitKey == "TP140-909").SelectionId)).Value!.Statement!;
+        var b = (await service.FindForCrmCustomerAsync(r.Manager, 498397, [Phone], list.Candidates.Single(c => c.UnitKey == "TP140-101").SelectionId)).Value!.Statement!;
+        Assert.Equal("3001", a.TenantId); Assert.Equal("4444", b.TenantId);
+        Assert.Equal(1250000m, a.Total!.Value);
+        Assert.NotEqual(a.Total.Value, b.Total?.Value);
+        Assert.Equal([(4, "3001"), (4, "4444")], edsm.Summaries);       // each unit read only its own account
+    }
+
+    [Fact]
+    public async Task FullService_TwoUnitsOnOneAccount_ShowNoStatement_AndNameTheSourceLimitation()
+    {
+        var r = new Rig();
+        r.Map.Rows.Add(new(79, "TP140", 4, "Manual"));
+        CrmReturns(r, Buyer(498397, "Owner", PhoneE164, null, CrmUnit(9090, "909"), CrmUnit(1010, "101")));
+        r.Units.Identities.Add(new(4, "3001", 41230, "TP140-909", "Pact Holder", "", "", "140", "T", 3, 3));
+        r.Units.Identities.Add(new(4, "3001", 41231, "TP140-101", "Pact Holder", "", "", "140", "T", 3, 3));      // same tenant
+        var (service, edsm) = WithStatements(r);
+        var list = (await service.FindForCrmCustomerAsync(r.Manager, 498397, [Phone], null)).Value!;
+
+        var s = (await service.FindForCrmCustomerAsync(r.Manager, 498397, [Phone], list.Candidates.Single(c => c.UnitKey == "TP140-909").SelectionId)).Value!.Statement!;
+
+        Assert.Equal("NotExclusive", s.Status);
+        Assert.Contains("TP140-101", s.OtherUnits);
+        Assert.Contains("no unit parameter", s.Detail);
+        Assert.Empty(edsm.Summaries);
+    }
+
+    [Fact]
+    public async Task FullService_Volga3302_ResolvesFromTheProjectCodeCrmPublishes_WithoutAMappingRowOrAnyPactMobile()
+    {
+        var r = new Rig();
+        CrmReturns(r, Buyer(437381, "BEN ISRAELI", PhoneE164, null, CrmUnit(3302, "3302", project: 94, projectName: "VOLGA Tower") with { ProjectCode = "TP125" }));
+        r.Units.Identities.Add(new(4, "3001", 43302, "TP125-3302", "Pact Holder", "", "", "125", "VOLGA", 3, 3));
+        r.Units.Instalments.Add(new(4, "3001", 43302, "V1", new(2026, 9, 1), 900m, 900m, 0m, "Installment"));
+        var (service, edsm) = WithStatements(r);
+
+        var unit = Assert.Single((await service.FindForCrmCustomerAsync(r.Manager, 437381, [Phone], null)).Value!.Candidates);
+
+        Assert.Equal(("TP125-3302", 4), (unit.UnitKey, unit.CompanyId));
+        Assert.NotEqual("MatchFailed", unit.FinancialStatus);
+        Assert.Equal("Available", unit.FinancialStatus);                    // resolved from CRM's own project code + the exact unit code in PACT's unit data: no mapping row, no contract-list evidence
+        
+        _ = edsm;
+    }
+
+    [Fact]
+    public async Task FullService_AStarredPactUnit_IsNeverMatchedToTheCrmUnit_AndGetsNoStatement()
+    {
+        var r = new Rig();
+        r.Map.Rows.Add(new(79, "TP140", 4, "Manual"));
+        CrmReturns(r, Buyer(498397, "Owner", PhoneE164, null, CrmUnit(9090, "909")));
+        r.Units.Identities.Add(new(4, "3001", 41230, "TP140-909*", "Pact Holder", "", "", "140", "T", 3, 3));    // only the cancelled code exists in PACT
+        var (service, edsm) = WithStatements(r);
+        var result = (await service.FindForCrmCustomerAsync(r.Manager, 498397, [Phone], null)).Value!;
+        Assert.DoesNotContain(result.Candidates, c => c.FinancialStatus == "Available");
+        Assert.True(result.Statement is null || !result.Statement.IsAvailable);
+        Assert.Empty(edsm.Summaries);
+    }
 }

@@ -12,7 +12,10 @@ public sealed record PactUnitInstalment(int CompanyId, string TenantId, int Unit
 /// <summary>Everything the local snapshot knows about ONE unit key, read with one statement: PACT identities and ALL unpaid instalments (future ones included), and the CRM link per company.</summary>
 public sealed record PactUnitReceivables(
     SnapshotStatusDto Snapshot, IReadOnlyList<PactUnitIdentity> Identities, IReadOnlyList<PactUnitInstalment> Instalments,
-    IReadOnlyDictionary<int, CrmUnitLink> CrmLinks, bool CrmLoaded, DateTime ReadAtUtc);
+    IReadOnlyDictionary<int, CrmUnitLink> CrmLinks, bool CrmLoaded, DateTime ReadAtUtc, IReadOnlyList<PactTenantUnit>? TenantUnits = null);
+
+/// <summary>A unit that has an open balance in the snapshot under the same (company, tenant) as a requested unit. EDSM's statement is per (company, tenant), so these are the units whose money it would mix in.</summary>
+public sealed record PactTenantUnit(int CompanyId, string TenantId, int UnitId, string UnitCode);
 
 /// <summary>Unit-keyed read for the Payment Summary: by tower + unit code (the normalised unit key), never by a customer phone number.</summary>
 public interface IUnitReceivablesSource

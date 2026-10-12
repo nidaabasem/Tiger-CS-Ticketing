@@ -167,6 +167,7 @@ public sealed class RcvReceivablesSource(
         var identities = new List<PactUnitIdentity>();
         var instalments = new List<PactUnitInstalment>();
         var links = new Dictionary<int, CrmUnitLink>();
+        var tenantUnits = new List<PactTenantUnit>();
         var crmLoaded = false;
         try
         {
@@ -190,6 +191,9 @@ public sealed class RcvReceivablesSource(
                         null, null, "Unknown"));
                 await reader.NextResultAsync(cancellationToken);
                 while (await reader.ReadAsync(cancellationToken)) links[reader.GetInt32(reader.GetOrdinal("CompanyId"))] = SqlCollectionsCrmOwnerStore.ReadLink(reader);
+                await reader.NextResultAsync(cancellationToken);
+                while (await reader.ReadAsync(cancellationToken))
+                    tenantUnits.Add(new PactTenantUnit(reader.GetInt32(reader.GetOrdinal("CompanyId")), reader.GetString(reader.GetOrdinal("TenantId")), (int)reader.GetInt64(reader.GetOrdinal("UnitId")), reader.GetString(reader.GetOrdinal("UnitCode"))));
             }
             await using var state = Procedure(connection, "dbo.usp_Collections_GetCrmOwnerState");
             await using var stateReader = await state.ExecuteReaderAsync(cancellationToken);
@@ -202,7 +206,7 @@ public sealed class RcvReceivablesSource(
         }
         var now = timeProvider.GetUtcNow().UtcDateTime;
         var status = ReceivablesSnapshotComposer.BuildStatus(today, today, companies, [], now, options.MaxAgeMinutes);
-        return new PactUnitReceivables(status, identities, instalments, links, crmLoaded, ReceivablesSnapshotComposer.ReadAt(status));
+        return new PactUnitReceivables(status, identities, instalments, links, crmLoaded, ReceivablesSnapshotComposer.ReadAt(status), tenantUnits);
     }
 
     private async Task<SqlConnection> OpenAsync(CancellationToken cancellationToken)
