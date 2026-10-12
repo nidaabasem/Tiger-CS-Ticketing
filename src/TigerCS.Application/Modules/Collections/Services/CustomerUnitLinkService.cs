@@ -208,9 +208,24 @@ public sealed class CustomerUnitLinkService(
                 : catalog.Where(t => CollectionsTowerNumber.Matches(tower, t.TowerNumber)).Select(t => t.CompanyId).Distinct().OrderBy(c => c).ToList();
             if (companies.Count > 1)
             {
-                result.Add(Failed(customer, crmContact, unit, "MatchFailed", "CompanyMappingAmbiguous",
-                    $"Tower {tower} exists in PACT companies {string.Join(" and ", companies)} and the CRM mapping does not say which; none is chosen.", key, tower));
-                continue;
+                // The tower number exists in several companies and the mapping does not name one. Tower number alone is not enough, but the EXACT unit code is: the company is the one
+                // whose PACT snapshot holds this unit. Held by both companies, or by neither, nothing is chosen.
+                var probe = await ReadUnitAsync(key, null, today, cancellationToken);
+                if (probe.Error is { } probeError)
+                {
+                    result.Add(Failed(customer, crmContact, unit, "SourceError", probeError.Reason, probeError.Detail, key, tower));
+                    continue;
+                }
+                var holding = probe.Data!.Identities.Select(i => i.CompanyId).Distinct().OrderBy(c => c).ToList();
+                if (holding.Count != 1)
+                {
+                    result.Add(Failed(customer, crmContact, unit, "MatchFailed", "CompanyMappingAmbiguous",
+                        holding.Count == 0
+                            ? $"Tower {tower} exists in PACT companies {string.Join(" and ", companies)}, the CRM mapping does not say which, and neither company holds unit {key}; none is chosen."
+                            : $"Tower {tower} exists in PACT companies {string.Join(" and ", companies)} and unit {key} is held by both; none is chosen.", key, tower));
+                    continue;
+                }
+                companies = holding;
             }
             var read = await ReadUnitAsync(key, companies.Count == 1 ? companies[0] : null, today, cancellationToken);
             if (read.Error is { } error)

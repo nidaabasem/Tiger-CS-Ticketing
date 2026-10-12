@@ -41,12 +41,15 @@ public sealed class CurrentBalanceReader(PactReceivablesOptions sourceOptions, I
             if (snapshot.Snapshot is { IsReady: false } status)
                 throw new PactReceivablesSourceException($"Receivables data is not ready. {status.ReadyProblem}");
 
+        // The contacts are re-linked NOW from the current CRM owner data (one bulk read) - the contact stored at approval time is never trusted. If CRM cannot be used, every
+        // record comes back CrmUnavailable (needs review), the comparison below sees a change, and nothing is sent.
+        var crm = await refresh.ReadCrmAsync(snapshots.SelectMany(s => s.Items), budget.Token);
         var byDate = new Dictionary<DateOnly, IReadOnlyDictionary<string, CollectionsReviewRecord>>();
         foreach (var asOf in asOfDates.Distinct())
         {
             var map = new Dictionary<string, CollectionsReviewRecord>(StringComparer.Ordinal);
             foreach (var snapshot in snapshots)
-                foreach (var record in ReviewRecordBuilder.Build(snapshot.Items, refresh.Context(asOf, snapshot.ReadAtUtc)).Records)
+                foreach (var record in ReviewRecordBuilder.Build(snapshot.Items, refresh.Context(asOf, snapshot.ReadAtUtc, crm)).Records)
                     map[record.RecordKey] = record;
             byDate[asOf] = map;
         }

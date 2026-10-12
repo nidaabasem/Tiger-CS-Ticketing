@@ -89,7 +89,8 @@ public sealed class CampaignParityTests
         var options = new CollectionsOptions { Enabled = true };
         var crm = new SqlCollectionsCrmOwnerStore(Config(), new ReceivablesSnapshotOptions());
         return new(options, new CollectionsCampaignOptions { FinancialSourceValidated = true, LegalNoticeExportEnabled = legalNoticeRelease }, new PactReceivablesOptions { Enabled = true },
-            new(options, new FakeDepartmentRepository()), new(options, new FakeTimeProvider(nowUtc)), source, NullLogger<CollectionsCampaignAppService>.Instance, crm, new CollectionsCrmOwnersOptions { Enabled = true });
+            new(options, new FakeDepartmentRepository()), new(options, new FakeTimeProvider(nowUtc)), source, NullLogger<CollectionsCampaignAppService>.Instance,
+            new CollectionsUnitLinkService(crm, new CollectionsCrmOwnersOptions { Enabled = true, MaxAgeMinutes = 1_000_000 }, new FakeTimeProvider(nowUtc), NullLogger<CollectionsUnitLinkService>.Instance));
     }
 
     private static RcvReceivablesSource NewSource() =>
@@ -261,7 +262,7 @@ public sealed class CampaignParityTests
     }
 
     [SqlFact]
-    public async Task TheNewOrder_IsNewestPaymentFirst_ThenCompanyCustomerUnit_AndPagesNeverOverlap()
+    public async Task TheOrder_IsNewestTowerFirst_ThenTheUnit_ThenCompanyCustomer_AndPagesNeverOverlap()
     {
         await EnsureLoaded();
         var (date, nowUtc) = Scheduled("OverdueReminder");
@@ -269,28 +270,14 @@ public sealed class CampaignParityTests
         var result = await AllPages(service, "OverdueReminder", date, null, null, new DateOnly(2026, 1, 1), null, null, 0m);
         var sequence = result.Order.Select(id => result.Items[id]).ToList();
         Assert.True(sequence.Count > 100, "needs more than one page");
-        // The facts carry the newest payment date through the Due / Overdue columns only; rebuild the key from the database: newest matching due date per unit over the READ window
-        // (explicit From 2026-01-01 .. the end of the current Dubai month, which is where the default To now ends - not the preview date).
-        var newest = new Dictionary<(int, string, int, string), DateOnly>();
-        await using var connection = new SqlConnection(ConnectionString); await connection.OpenAsync();
-        await using var command = new SqlCommand("SELECT l.CompanyId, l.TenantId, l.UnitId, l.UnitCode, MAX(l.DueDate) FROM dbo.CollectionsRcvLine l JOIN dbo.CollectionsRcvCompany c ON c.CompanyId = l.CompanyId AND c.CurrentRunId = l.RunId " +
-            "WHERE l.DueDate >= '20260101' AND l.DueDate <= @t GROUP BY l.CompanyId, l.TenantId, l.UnitId, l.UnitCode", connection);
-        command.Parameters.AddWithValue("@t", CollectionsDueMonth.MonthEnd(date).ToDateTime(TimeOnly.MinValue));
-        await using var reader = await command.ExecuteReaderAsync();
-        while (await reader.ReadAsync()) newest[(reader.GetInt32(0), reader.GetString(1).Trim(), (int)reader.GetInt64(2), reader.GetString(3).Trim())] = DateOnly.FromDateTime(reader.GetDateTime(4));
-        var keys = sequence.Select(i => (Latest: newest[(i.CompanyId, i.TenantId, i.UnitId ?? 0, i.UnitCode)], i.CompanyId, i.TenantId, i.UnitCode, UnitId: i.UnitId ?? 0)).ToList();
-        for (var n = 1; n < keys.Count; n++)
+        // Newest TOWER first (the tower number as an integer, descending), then the unit inside the tower, then company / customer / unit id: a strict total order, so no ties and pages never overlap or skip.
+        for (var n = 1; n < sequence.Count; n++)
         {
-            var (p, q) = (keys[n - 1], keys[n]);
-            Assert.True(p.Latest > q.Latest || (p.Latest == q.Latest && Compare(p, q) < 0), $"order broken at {n}: {p} then {q}");   // a strict total order: no ties, so pages never overlap or skip
+            var (p, q) = (sequence[n - 1], sequence[n]);
+            Assert.True(CollectionsTowerOrder.Compare(CollectionsTowerNumber.Parse(p.UnitCode), p.UnitCode, p.CompanyId, p.TenantId, p.UnitId ?? 0,
+                CollectionsTowerNumber.Parse(q.UnitCode), q.UnitCode, q.CompanyId, q.TenantId, q.UnitId ?? 0) < 0, $"order broken at {n}: {p.UnitCode} (company {p.CompanyId}) then {q.UnitCode} (company {q.CompanyId})");
         }
-    }
-
-    private static int Compare((DateOnly Latest, int CompanyId, string TenantId, string UnitCode, int UnitId) p, (DateOnly Latest, int CompanyId, string TenantId, string UnitCode, int UnitId) q)
-    {
-        var c = p.CompanyId.CompareTo(q.CompanyId); if (c != 0) return c;
-        c = StringComparer.Ordinal.Compare(p.TenantId, q.TenantId); if (c != 0) return c;
-        c = StringComparer.Ordinal.Compare(p.UnitCode, q.UnitCode); return c != 0 ? c : p.UnitId.CompareTo(q.UnitId);
+        Assert.Equal(sequence.Count, sequence.Select(i => i.RecordId).Distinct().Count());
     }
 
     [SqlTheory]

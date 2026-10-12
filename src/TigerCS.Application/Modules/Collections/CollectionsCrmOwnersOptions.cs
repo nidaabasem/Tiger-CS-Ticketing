@@ -18,6 +18,12 @@ public sealed class CollectionsCrmOwnersOptions
 
     public int PageSize { get; set; } = 1000;
 
+    /// <summary>
+    /// How old the last successful load may be before the CRM contact data counts as out of date (the refresh runs hourly by default). Past it the pages say so and every unit is flagged
+    /// <c>CrmUnavailable</c> instead of silently showing PACT-only contacts as if CRM had nothing.
+    /// </summary>
+    public int MaxAgeMinutes { get; set; } = 360;
+
     /// <summary>Safety bound: a feed that never ends is a fault, not data.</summary>
     public int MaxPages { get; set; } = 500;
 

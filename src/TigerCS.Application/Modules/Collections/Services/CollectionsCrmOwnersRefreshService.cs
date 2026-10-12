@@ -4,7 +4,17 @@ using TigerCS.Domain.Modules.Collections;
 
 namespace TigerCS.Application.Modules.Collections.Services;
 
-public sealed record CrmOwnersRefreshResult(bool Succeeded, int Fetched, int Stored, int Rejected, int Unlinked, string? Message);
+public sealed record CrmOwnersRefreshResult(bool Succeeded, int Fetched, int Stored, int Rejected, int Unlinked, string? Message, IReadOnlyDictionary<string, int>? RejectedByReason = null);
+
+/// <summary>Why a CRM relation is not stored as an owner (counted per refresh so a missing unit can be explained, not guessed).</summary>
+public static class CrmOwnerRejection
+{
+    public const string NotBuyer = "NotBuyer";
+    public const string NotSaleStatus = "NotSoldOrContractOrCancelled";
+    public const string NoProjectCode = "NoProjectCode";
+    public const string NoUnitNumber = "NoUnitNumber";
+    public const string UnitNotListable = "UnitZeroOrCancelled";
+}
 
 /// <summary>
 /// Loads the bulk CRM owner feed in the background: pages the gateway, keeps only eligible rows (buyer relation, configured Sold / Contract lead statuses,
@@ -12,13 +22,16 @@ public sealed record CrmOwnersRefreshResult(bool Succeeded, int Fetched, int Sto
 /// A failed or empty read keeps the previous data and is recorded. Nothing is matched by customer name or by phone.
 /// </summary>
 public sealed class CollectionsCrmOwnersRefreshService(
-    CollectionsCrmOwnersOptions options, ICrmUnitOwnersGateway gateway, ICollectionsCrmOwnerStore store, ILogger<CollectionsCrmOwnersRefreshService> logger)
+    CollectionsCrmOwnersOptions options, ICrmUnitOwnersGateway gateway, ICollectionsCrmOwnerStore store, ILogger<CollectionsCrmOwnersRefreshService> logger,
+    ICollectionsCrmProjectMap? projectMap = null)
 {
     public async Task<CrmOwnersRefreshResult> RefreshAsync(CancellationToken cancellationToken)
     {
         if (!options.Enabled) return new(false, 0, 0, 0, 0, "The CRM owner feed is disabled.");
-        var fetched = 0; var rejected = 0;
+        var fetched = 0;
         var rows = new List<CrmOwnerRow>();
+        var reasons = new Dictionary<string, int>();
+        var withoutCode = new List<CrmUnitOwnerDto>();   // an eligible sale whose CRM project has no PACT code in the feed: the verified project map may know it
         var eligible = options.EligibleLeadStatuses.ToHashSet();
         var pageSize = Math.Clamp(options.PageSize, 10, 5000);
         for (var page = 1; ; page++)
@@ -30,17 +43,31 @@ public sealed class CollectionsCrmOwnersRefreshService(
             foreach (var owner in result.Owners)
             {
                 fetched++;
-                var row = ToRow(owner, eligible);
-                if (row is null) rejected++; else rows.Add(row);
+                var (row, reason) = Evaluate(owner, eligible, null);
+                if (row is not null) rows.Add(row);
+                else if (reason == CrmOwnerRejection.NoProjectCode && projectMap is not null) withoutCode.Add(owner);
+                else reasons[reason!] = reasons.GetValueOrDefault(reason!) + 1;
             }
             if (result.Owners.Count < pageSize) break;
         }
+        if (withoutCode.Count > 0)
+        {
+            var codes = await ProjectCodesAsync(withoutCode.Select(o => o.ProjectId).Distinct().ToList(), cancellationToken);
+            foreach (var owner in withoutCode)
+            {
+                var (row, reason) = Evaluate(owner, eligible, codes);
+                if (row is not null) rows.Add(row);
+                else reasons[reason!] = reasons.GetValueOrDefault(reason!) + 1;
+            }
+        }
+        var rejected = reasons.Values.Sum();
         if (rows.Count == 0) return await FailAsync("CRM returned no eligible owner at all; the previous data was kept.", cancellationToken);
+        var note = rejected == 0 ? null : "Not stored: " + string.Join(", ", reasons.OrderBy(r => r.Key, StringComparer.Ordinal).Select(r => $"{r.Key} {r.Value}"));
         try
         {
-            var linked = await store.ReplaceAsync(rows, cancellationToken);
+            var linked = await store.ReplaceAsync(rows, cancellationToken, note);
             logger.LogInformation("CRM owners loaded: {Fetched} fetched, {Stored} stored, {Rejected} not eligible, {Unlinked} without a company.", fetched, rows.Count, rejected, rows.Count - linked);
-            return new(true, fetched, rows.Count, rejected, rows.Count - linked, null);
+            return new(true, fetched, rows.Count, rejected, rows.Count - linked, null, reasons);
         }
         catch (Exception ex) when (ex is System.Data.Common.DbException or InvalidOperationException)
         {
@@ -56,16 +83,42 @@ public sealed class CollectionsCrmOwnersRefreshService(
         return new(false, 0, 0, 0, 0, message);
     }
 
-    /// <summary>Null when the relation is not an owner we may use: not a buyer, a status that is not a sale, a cancelled lead, no unit key, a cancelled / invalid unit.</summary>
-    public CrmOwnerRow? ToRow(CrmUnitOwnerDto owner, IReadOnlySet<int>? eligible = null)
+    /// <summary>The verified PACT code of each CRM project: only a project with exactly ONE code is usable (several codes are an ambiguous mapping and nothing is chosen).</summary>
+    private async Task<IReadOnlyDictionary<int, string>> ProjectCodesAsync(IReadOnlyCollection<int> projectIds, CancellationToken cancellationToken)
     {
-        eligible ??= options.EligibleLeadStatuses.ToHashSet();
-        if (owner.CustomerType != options.BuyerCustomerType || !CrmSaleEligibility.IsEligible(owner.LeadStatus, owner.LeadStatusName, eligible)) return null;
-        var key = CollectionsUnitKey.FromCrm(owner.ProjectCode, owner.UnitNumber);
-        if (key is null || !CollectionsUnitKey.IsListable(key) || owner.UnitNumber!.Trim().TrimStart('0').Length == 0) return null; // unit 0 / 00 is no unit
+        var result = new Dictionary<int, string>();
+        try
+        {
+            foreach (var (projectId, mappings) in await projectMap!.GetAsync(projectIds, cancellationToken))
+            {
+                var distinct = mappings.Select(m => m.ProjectCode.Trim()).Where(c => c.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+                if (distinct.Count == 1) result[projectId] = distinct[0];
+            }
+        }
+        catch (Exception ex) when (ex is System.Data.Common.DbException or InvalidOperationException)
+        {
+            logger.LogWarning("The CRM project map could not be read ({ExceptionType}); sales of projects without a code in the feed are not stored.", ex.GetType().Name);
+        }
+        return result;
+    }
+
+    /// <summary>Null when the relation is not an owner we may use: not a buyer, a status that is not a sale, a cancelled lead, no unit key, a cancelled / invalid unit.</summary>
+    public CrmOwnerRow? ToRow(CrmUnitOwnerDto owner, IReadOnlySet<int>? eligible = null) => Evaluate(owner, eligible ?? options.EligibleLeadStatuses.ToHashSet(), null).Row;
+
+    /// <summary>The owner row, or the reason (<see cref="CrmOwnerRejection"/>) it is not one. <paramref name="projectCodes"/> supplies the PACT code of a CRM project that the feed sent without one.</summary>
+    internal (CrmOwnerRow? Row, string? Reason) Evaluate(CrmUnitOwnerDto owner, IReadOnlySet<int> eligible, IReadOnlyDictionary<int, string>? projectCodes)
+    {
+        if (owner.CustomerType != options.BuyerCustomerType) return (null, CrmOwnerRejection.NotBuyer);
+        if (!CrmSaleEligibility.IsEligible(owner.LeadStatus, owner.LeadStatusName, eligible)) return (null, CrmOwnerRejection.NotSaleStatus);
+        var code = owner.ProjectCode;
+        if (string.IsNullOrWhiteSpace(code)) code = projectCodes is not null && projectCodes.TryGetValue(owner.ProjectId, out var mapped) ? mapped : null;
+        if (string.IsNullOrWhiteSpace(code)) return (null, CrmOwnerRejection.NoProjectCode);
+        if (string.IsNullOrWhiteSpace(owner.UnitNumber)) return (null, CrmOwnerRejection.NoUnitNumber);
+        var key = CollectionsUnitKey.FromCrm(code, owner.UnitNumber);
+        if (key is null || !CollectionsUnitKey.IsListable(key) || owner.UnitNumber.Trim().TrimStart('0').Length == 0) return (null, CrmOwnerRejection.UnitNotListable); // unit 0 / 00 is no unit
         var name = !string.IsNullOrWhiteSpace(owner.FullNameEnglish) ? owner.FullNameEnglish!.Trim() : owner.FullNameArabic?.Trim() ?? "";
         var mobile = owner.MobileNumber?.Trim() ?? ""; var email = owner.Email?.Trim() ?? "";
-        return new(key, owner.ProjectCode!.Trim(), owner.UnitNumber!.Trim(), owner.LeadId, owner.LeadStatus, owner.CustomerId, owner.UnitId, owner.ProjectId, name, mobile, email,
-            CollectionsContactNormalizer.NormalizePhone(mobile), CollectionsContactNormalizer.NormalizeEmail(email));
+        return (new(key, code.Trim(), owner.UnitNumber.Trim(), owner.LeadId, owner.LeadStatus, owner.CustomerId, owner.UnitId, owner.ProjectId, name, mobile, email,
+            CollectionsContactNormalizer.NormalizePhone(mobile), CollectionsContactNormalizer.NormalizeEmail(email), owner.ProjectName?.Trim() ?? ""), null);
     }
 }

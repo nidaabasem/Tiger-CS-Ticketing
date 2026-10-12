@@ -3,6 +3,7 @@ using System.Net.Mail;
 using System.Security.Cryptography;
 using System.Text;
 using TigerCS.Application.Modules.Collections.Abstractions;
+using TigerCS.Application.Modules.Collections.Services;
 using TigerCS.Domain.Modules.Collections;
 using TigerCS.Domain.Modules.Collections.Review;
 
@@ -11,7 +12,7 @@ namespace TigerCS.Application.Modules.Collections.Review;
 public sealed record ReviewBuildContext(
     DateOnly AsOfDate, DateTime SourceReadAtUtc, string SourceLabel, string Currency, bool SourceReconciled,
     bool LegalNoticeReleased, bool LegalCaseApproved, decimal FloatTolerance,
-    IReadOnlyDictionary<string, string> StatusMap);
+    IReadOnlyDictionary<string, string> StatusMap, CrmLinkSet? Crm = null);
 
 public sealed record ReviewBuildResult(IReadOnlyList<CollectionsReviewRecord> Records, int FloatNormalizedRows, int SettledRows);
 
@@ -49,8 +50,12 @@ public static class ReviewRecordBuilder
         {
             var unitRows = unit.ToList();
             var first = unitRows[0].Row;
-            var phone = PhoneNormalizer.Normalize(first.Mobile);
-            var email = NormalizeEmail(first.Email);
+            // The contact to call: CRM first, PACT completing only what CRM lacks (CollectionsContactLinker). The CRM links come from the one bulk read of the local CRM owner data;
+            // without CRM (switched off) the contact is PACT's, exactly as before.
+            var crm = context.Crm ?? CrmLinkSet.None;
+            var linked = crm.Link(unit.Key.CompanyId, unit.Key.Code,
+                new SourceContact(first.FullName.Trim(), PhoneNormalizer.Normalize(first.Mobile).E164, NormalizeEmail(first.Email)));
+            var email = linked.Email;
             var contactConflict = unitRows.Select(r => (r.Row.FullName.Trim(), Phone: PhoneNormalizer.Normalize(r.Row.Mobile).E164,
                 Email: NormalizeEmail(r.Row.Email), r.Row.ProjectCode)).Distinct().Count() > 1;
 
@@ -91,7 +96,11 @@ public static class ReviewRecordBuilder
                 if (ambiguousTenants.Contains((unit.Key.CompanyId, unit.Key.Tenant))) reasons.Add(ReviewReasons.UnitAllocationNeedsReview);
                 if (!context.Currency.Equals("AED", StringComparison.Ordinal)) reasons.Add(ReviewReasons.CurrencyNeedsReview);
                 if (!context.SourceReconciled) reasons.Add(ReviewReasons.SourceReconciliationRequired);
-                if (!phone.IsValid) reasons.Add(ReviewReasons.NoValidContact);
+                if (linked.Phone.Length == 0) reasons.Add(ReviewReasons.NoValidContact);
+                if (linked.CrmCustomerAmbiguous) reasons.Add(ReviewReasons.CrmCustomerAmbiguous);
+                if (linked.CrmCompanyAmbiguous) reasons.Add(ReviewReasons.CrmCompanyAmbiguous);
+                if (linked.SourceConflict) reasons.Add(ReviewReasons.ContactSourceConflict);
+                if (crm.Availability.Blocks) reasons.Add(ReviewReasons.CrmUnavailable);
 
                 if (!CollectionsCampaignPolicy.ScheduledDates(stage, context.AsOfDate).Contains(context.AsOfDate))
                     reasons.Add(ReviewReasons.OutsideSchedule);
@@ -109,8 +118,8 @@ public static class ReviewRecordBuilder
                     ReminderType = CampaignReminderTypes.FromStage(stage),
                     CompanyId = unit.Key.CompanyId,
                     TenantId = unit.Key.Tenant,
-                    CustomerName = first.FullName.Trim(),
-                    Phone = phone.E164,
+                    CustomerName = linked.Name.Length > 0 ? linked.Name : first.FullName.Trim(),
+                    Phone = linked.Phone,
                     Email = email,
                     UnitId = unit.Key.UnitId,
                     UnitCode = unit.Key.Code,

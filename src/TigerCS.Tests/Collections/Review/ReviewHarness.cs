@@ -96,6 +96,8 @@ internal sealed class ReviewHarness : IDisposable
     public CollectionsCampaignOptions Campaign { get; } = new() { FinancialSourceValidated = true, LegalNoticeExportEnabled = true };
     public CollectionsReviewOptions Review { get; } = new();
     public GenesysOutboundOptions Genesys { get; } = new() { Enabled = true, LiveCustomerDispatchEnabled = true, SuppressionEnabled = true, LeaseHeartbeatSeconds = 0.02 };
+    /// <summary>The shared CRM link service (null = CRM linking off: contacts are PACT's, as before).</summary>
+    public TigerCS.Application.Modules.Collections.Services.CollectionsUnitLinkService? Links { get; set; }
     public FakeGenesysClient Client { get; } = new();
     public FakeJobScheduler Scheduler { get; } = new();
     public FakeTimeProvider Time { get; } = new(Now);
@@ -141,7 +143,7 @@ internal sealed class ReviewHarness : IDisposable
             var auth = new CollectionsAuthorizationService(h.Options, new FakeDepartmentRepository());
             Query = new ReviewQueryService(h.Options, h.Review, auth, clock, Store);
             Refresh = new ReviewRefreshService(h.Options, h.Campaign, h.Sql, h.Review, auth, clock, h.Source, Store, h.Scheduler, Query,
-                NullLogger<ReviewRefreshService>.Instance);
+                NullLogger<ReviewRefreshService>.Instance, h.Links);
             var balances = new CurrentBalanceReader(h.Sql, h.Source, Refresh, NullLogger<CurrentBalanceReader>.Instance);
             Dispatch = new DispatchService(h.Options, h.Genesys, auth, clock, Store, h.Scheduler, client ?? h.Client, Query, balances,
                 NullLogger<DispatchService>.Instance);

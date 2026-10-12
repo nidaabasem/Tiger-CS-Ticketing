@@ -9,7 +9,7 @@ namespace TigerCS.Domain.Modules.Collections;
 /// </summary>
 public static class CollectionsContactNormalizer
 {
-    public const byte Version = 2;   // 2: phone rule replaced by Review.PhoneNormalizer (merge of the review / dispatch workflow)
+    public const byte Version = 3;   // 3: other country codes (+966 ...) are kept as international numbers, Arabic-Indic digits are read; 2: phone rule replaced by Review.PhoneNormalizer
 
     /// <summary>The callable E.164 number of the source value, or an empty string when it cannot be confirmed (the review workflow's rule).</summary>
     public static string NormalizePhone(string value) => Review.PhoneNormalizer.Normalize(value).E164;

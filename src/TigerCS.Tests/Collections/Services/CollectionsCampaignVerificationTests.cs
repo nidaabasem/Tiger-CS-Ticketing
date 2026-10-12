@@ -298,7 +298,7 @@ public sealed class CollectionsCampaignVerificationTests
         var header = csv.Split("\r\n")[0].Split(',').ToList();
 
         Assert.Equal(documented, header);
-        Assert.Equal(22, header.Count);
+        Assert.Equal(24, header.Count);   // the Genesys file keeps its 22 columns; the internal review file adds TowerNumber, TowerName
     }
 
     [Theory]

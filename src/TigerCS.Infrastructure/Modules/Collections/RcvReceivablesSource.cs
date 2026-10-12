@@ -91,7 +91,7 @@ public sealed class RcvReceivablesSource(
         var timer = System.Diagnostics.Stopwatch.StartNew();
         var companies = new List<SnapshotCompanyRaw>();
         var heads = new List<(int Company, string Tenant, long UnitId, string UnitCode, string Name, string? Tower, string? TowerName, int Count, decimal Total, DateOnly Latest,
-            int? CrmCustomers, int? CrmCustomerId, string? CrmName, string? CrmPhone, string? CrmEmail)>();
+            int? CrmCustomers, int? CrmCustomerId, string? CrmName, string? CrmPhone, string? CrmEmail, bool CrmCompanyAmbiguous)>();
         var byUnit = new Dictionary<(int, string, long, string), List<PactInstalmentRowDto>>();
         var totals = new PactInstalmentTotalsDto(0, 0, 0, 0, 0, 0, 0, 0, 0);
         try
@@ -124,7 +124,8 @@ public sealed class RcvReceivablesSource(
                     reader.GetString(reader.GetOrdinal("UnitCode")), reader.GetString(reader.GetOrdinal("FullName")), Text(reader, "TowerNumber"), Text(reader, "TowerName"),
                     reader.GetInt32(reader.GetOrdinal("InstalmentCount")), reader.GetDecimal(reader.GetOrdinal("Total")),
                     DateOnly.FromDateTime(reader.GetDateTime(reader.GetOrdinal("LatestDueDate"))),
-                    NullableInt(reader, "CrmCustomers"), NullableInt(reader, "CrmCustomerId"), Text(reader, "CrmName"), Text(reader, "CrmPhone"), Text(reader, "CrmEmail")));
+                    NullableInt(reader, "CrmCustomers"), NullableInt(reader, "CrmCustomerId"), Text(reader, "CrmName"), Text(reader, "CrmPhone"), Text(reader, "CrmEmail"),
+                    NullableInt(reader, "CrmCompanyAmbiguous") == 1));
             await reader.NextResultAsync(cancellationToken);
             while (await reader.ReadAsync(cancellationToken))
             {
@@ -149,7 +150,7 @@ public sealed class RcvReceivablesSource(
         var units = heads.Select(h => new PactInstalmentUnitDto(h.Company, ReceivablesSnapshotStatusBuilder.CompanyName(h.Company), h.Tower, h.TowerName, (int)h.UnitId, h.UnitCode,
             h.Tenant, h.Name, h.Count, h.Total, h.Latest,
             byUnit.TryGetValue((h.Company, h.Tenant, h.UnitId, h.UnitCode), out var rows) ? rows.Select(r => r with { TowerNumber = h.Tower, TowerName = h.TowerName, CustomerName = h.Name }).ToList() : [],
-            h.CrmCustomers, h.CrmCustomerId, h.CrmName, h.CrmPhone, h.CrmEmail)).ToList();
+            h.CrmCustomers, h.CrmCustomerId, h.CrmName, h.CrmPhone, h.CrmEmail, h.CrmCompanyAmbiguous)).ToList();
         var sqlMs = timer.Elapsed.TotalMilliseconds;
         logger.LogInformation("Unit page read: page {Page}, {Units} units / {Total} payments in {SqlMs:F0} ms (window {From:yyyy-MM-dd}..{To:yyyy-MM-dd}, status {Status}, min total {Min}).",
             request.Page, totals.UnitCount, totals.Count, sqlMs, request.From, request.To, request.Status ?? "all", request.MinTotal);

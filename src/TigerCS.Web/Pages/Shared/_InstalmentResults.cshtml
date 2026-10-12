@@ -11,6 +11,7 @@ else if (Model.Report is { } report)
 {
     var units = ReceivablesModel.Lines(report);
     <partial name="_LoadProblem" model="report.Snapshot" />
+    <partial name="_CrmContactNotice" model="report.Crm" />
     @* Nothing has ever been loaded for the companies in scope: say so (Loading / could not load, above) and show NO table - an empty table would read as "zero receivables". *@
     if (report.Snapshot.NothingLoaded) { return; }
     <div class="panel">

@@ -5,10 +5,11 @@ using Microsoft.Extensions.Logging;
 using TigerCS.Application.Modules.Collections;
 using TigerCS.Application.Modules.Collections.Abstractions;
 using TigerCS.Application.Modules.Collections.Dto;
+using TigerCS.Domain.Modules.Collections;
 
 namespace TigerCS.Infrastructure.Modules.Collections;
 
-/// <summary>The tower dropdown: the local <c>dbo.CollectionsTowers</c> table through <c>dbo.usp_CollectionsRcv_GetTowers</c> (no PACT access, no invented towers).</summary>
+/// <summary>The tower dropdown: the local <c>dbo.CollectionsTowers</c> table through <c>dbo.usp_CollectionsRcv_GetTowers</c> (no PACT access, no invented towers), newest tower first.</summary>
 public sealed class SqlCollectionsTowerCatalog(IConfiguration configuration, ReceivablesSnapshotOptions options, ILogger<SqlCollectionsTowerCatalog> logger)
     : ICollectionsTowerCatalog
 {
@@ -45,6 +46,9 @@ public sealed class SqlCollectionsTowerCatalog(IConfiguration configuration, Rec
             logger.LogWarning("Tower list read failed (SQL error {SqlNumber}).", ex.Number);
             throw new PactReceivablesSourceException("The tower list could not be read.");
         }
+        // Newest tower first: the tower NUMBER descending (TP140 ... TP119), then the company and the id. The procedure already returns this order; it is applied again here so
+        // the picker never depends on it.
+        towers.Sort((a, b) => CollectionsTowerOrder.CompareTowers(a.TowerNumber, a.CompanyId, a.TowerId, b.TowerNumber, b.CompanyId, b.TowerId));
         return towers;
     }
 }

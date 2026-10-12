@@ -23,7 +23,8 @@ public sealed record PhoneResult(string E164, PhoneRejection Rejection, bool Rep
 /// Converts the free-text mobile values stored in PACT to E.164. Rules, in order:
 /// separators (space - . ( ) / \ ) are removed; "00" becomes "+"; a bare UAE national form is repaired
 /// (0501234567, 501234567 with the leading zero lost to a spreadsheet, 971501234567, 9710501234567 with a
-/// stray trunk zero). Two different numbers in one field are never guessed between. Nothing is invented: a value
+/// stray trunk zero). A number with another country code (+966, 00966 or 966... with eleven or more digits) is kept as written and never turned into a UAE number.
+/// Two different numbers in one field are never guessed between. Nothing is invented: a value
 /// that cannot be confirmed is rejected with a reason the reviewer can read.
 /// </summary>
 public static class PhoneNormalizer
@@ -48,7 +49,7 @@ public static class PhoneNormalizer
 
     private static PhoneResult NormalizeOne(string part)
     {
-        var compact = Separators.Replace(part, "");
+        var compact = AsciiDigits(Separators.Replace(part, ""));
         if (compact.Length == 0) return PhoneResult.Invalid(PhoneRejection.Empty);
         var hadPlus = compact.StartsWith('+');
         var digits = hadPlus ? compact[1..] : compact;
@@ -64,7 +65,11 @@ public static class PhoneNormalizer
             return Finish(digits, repaired);
         }
 
-        // No explicit international prefix: only UAE forms are repaired, because the source is UAE property.
+        // No explicit international prefix. A UAE national form is repaired because the source is UAE property, but a value that is too long to be a UAE national number
+        // (eleven or more digits, no leading zero) already carries its country code written without the "+" (966508650505): it is kept as that international number and never
+        // reinterpreted as UAE.
+        if (digits.Length >= 11 && !digits.StartsWith("971", StringComparison.Ordinal) && digits[0] != '0')
+            return Finish(digits, false);
         if (digits.StartsWith("971", StringComparison.Ordinal))
         {
             if (digits.StartsWith("9710", StringComparison.Ordinal)) digits = "971" + digits[4..];
@@ -74,6 +79,13 @@ public static class PhoneNormalizer
         else { national = digits; repaired = true; }
         if (UaeMobile.IsMatch(national) || UaeLandline.IsMatch(national)) return Finish("971" + national, repaired);
         return PhoneResult.Invalid(national.Length is < 8 or > 9 ? PhoneRejection.InvalidLength : PhoneRejection.InvalidUaeNumber);
+    }
+
+    /// <summary>Eastern Arabic-Indic and Persian digits are written as ASCII digits (a mobile typed on an Arabic keyboard is the same number).</summary>
+    private static string AsciiDigits(string value)
+    {
+        if (value.All(c => c < 0x0660)) return value;
+        return new string(value.Select(c => c is >= '\u0660' and <= '\u0669' ? (char)('0' + (c - '\u0660')) : c is >= '\u06F0' and <= '\u06F9' ? (char)('0' + (c - '\u06F0')) : c).ToArray());
     }
 
     private static PhoneResult Finish(string digits, bool repaired)

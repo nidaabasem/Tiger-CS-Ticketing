@@ -38,6 +38,10 @@ public static class ReviewReasons
     public const string SharedPhoneMultipleUnits = "SharedPhoneMultipleUnits";
     public const string ReminderTypeOverlap = "ReminderTypeOverlap";
     public const string SourceAmountsInconsistent = "SourceAmountsInconsistent";
+    public const string CrmCustomerAmbiguous = "CrmCustomerAmbiguous";
+    public const string CrmCompanyAmbiguous = "CrmCompanyAmbiguous";
+    public const string ContactSourceConflict = "ContactSourceConflict";
+    public const string CrmUnavailable = "CrmUnavailable";
 
     public static readonly IReadOnlyList<ReviewReasonInfo> All =
     [
@@ -58,6 +62,10 @@ public static class ReviewReasons
         new(LegalNoticeReleaseRequired, ReasonKind.Exclusion, "Sending legal notices to customers has not been released (needs an approved legal workflow)."),
         new(LegalCaseNotApproved, ReasonKind.Exclusion, "Legal Case records are internal Legal referrals; calling customers for them needs an explicit business decision."),
         new(SourceAmountsInconsistent, ReasonKind.NeedsReview, "The source's original amount, paid amount and remaining amount do not add up (original must equal paid plus remaining)."),
+        new(CrmCustomerAmbiguous, ReasonKind.NeedsReview, "More than one CRM customer holds an eligible (Sold / Contract, not cancelled) sale of this unit. Nobody was chosen; the contact is not taken from CRM until a person decides."),
+        new(CrmCompanyAmbiguous, ReasonKind.NeedsReview, "The CRM sale of this unit cannot be tied to one company: the same unit code exists in both companies' PACT data. No company was guessed."),
+        new(ContactSourceConflict, ReasonKind.NeedsReview, "CRM and PACT give different phone numbers (or e-mails) for this unit. Two different people are never merged; CRM alone is shown and a person must confirm."),
+        new(CrmUnavailable, ReasonKind.NeedsReview, "CRM contact data is switched on but could not be used (never loaded, too old, or unreadable), so the contact may be incomplete. This is a service problem, not a missing value in CRM; nothing is sent until it is back."),
         new(SharedPhoneMultipleUnits, ReasonKind.Exclusion, "The same phone number is on several units (or several customers). Sending would call it once per record, and the business has not yet decided how to handle that, so these records are held back."),
         new(ReminderTypeOverlap, ReasonKind.Exclusion, "This unit qualifies for more than one reminder type today (for example Current Month and Legal Notice on day 14). Sending both would call twice on the same day, and the business has not yet decided which takes priority, so these records are held back.")
     ];
