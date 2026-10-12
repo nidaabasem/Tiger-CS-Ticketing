@@ -26,6 +26,7 @@ Full design, semantics, schedule, deployment order and verification: [`docs/Coll
 | `tools/diagnose_receivables_refresh.sql` | **Read-only**: linked-server configuration, company state, last attempts, whether a refresh really runs (lock probe), published volume. |
 | `tools/verify_snapshot.sql` | **Read-only** checklist (every row must say `OK`): both companies published, fresh, nothing stuck, exclusions, jobs. |
 | `tools/verify_samples.sql` | **Read-only**: independent recount per company, last run counts, sample apartments with the exact values the page must show, the recurring jobs (cron, time zone, next run in Dubai time). |
+| `tools/verify_unit_payment_summary.sql` | **Read-only**: for a sample of units (or `@UnitKey`), the Payment tab's read (`usp_CollectionsRcv_GetUnit @Only = 3`) returns every unpaid instalment incl. future months; Remaining Balance = Overdue + Due This Month + Not yet due; Due / Overdue equal the Receivables row of the unit. |
 | `tools/verify_details_total.sql` | **Read-only**: through the real read procedure, every checked apartment's Total = Due + Overdue = the sum of its details, order, no payment due from the next month on, Due / Overdue against the current Dubai month, no other company. |
 | `tools/crm_project_map_discovery.sql` | **Read-only** helper for the CRM project -> tower map. |
 | `legacy/` | The previous pipeline's scripts, kept for the rollback and for reference (not deployed any more). |

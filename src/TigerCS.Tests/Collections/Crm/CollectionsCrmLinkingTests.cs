@@ -281,7 +281,7 @@ public sealed class CollectionsCrmLinkingTests
     [Fact]
     public void PaymentFigures_UseTheDubaiMonth_DueIsTheWholeMonth_OverdueIsBeforeIt_RemainingIncludesFuture_TotalAndPaidAreUnavailable()
     {
-        // Today is 2026-10-14 (Dubai). September is overdue, every day of October is Due (also the 5th, already past, and the 28th, still ahead), November and later are not yet due.
+        // Today is 2026-10-14 (Dubai). September is overdue, every day of October is Due (also the 5th, already past, and the 31st, still ahead), November and later are not yet due.
         var s = Compose(new(Snapshot(4), [Id(all: 6, open: 6)], [
             Dated(new(2026, 9, 30), 700m, "V1", 800m, 100m), Dated(new(2026, 10, 5), 400m, "V2"), Dated(new(2026, 10, 14), 100m, "V3"), Dated(new(2026, 10, 31), 250m, "V4"),
             Dated(new(2026, 11, 1), 900m, "V5"), Dated(new(2026, 12, 20), 50m, "V6")], new Dictionary<int, CrmUnitLink>(), true, Now));
@@ -292,36 +292,33 @@ public sealed class CollectionsCrmLinkingTests
         Assert.Equal(750m, p.DueThisMonth);                           // 400 + 100 + 250: all of October, whatever the day
         Assert.Equal(2400m, p.RemainingBalance);                      // every unpaid instalment, future ones included - not Due + Overdue (1450)
         Assert.NotEqual(p.Overdue + p.DueThisMonth, p.RemainingBalance);
-        Assert.Null(p.TotalAmount);                                   // the snapshot holds neither: never inferred, never 0
+        Assert.Null(p.TotalAmount);                                   // the source holds neither: never inferred, never 0
         Assert.Null(p.PaidAmount);
-        Assert.False(string.IsNullOrWhiteSpace(p.TotalAndPaidUnavailableReason));
         Assert.Equal(["Overdue", "Due", "Due", "Due", "NotYetDue", "NotYetDue"], p.Schedule.Select(l => l.Status));
         Assert.Equal(["Voucher V1", "Voucher V2", "Voucher V3", "Voucher V4", "Voucher V5", "Voucher V6"], p.Schedule.Select(l => l.Description));
         Assert.Equal((800m, 100m), (p.Schedule[0].ScheduledAmount, p.Schedule[0].PaidAmount));     // what the source returned is passed through
         Assert.Null(p.Schedule[1].ScheduledAmount); Assert.Null(p.Schedule[1].PaidAmount);          // what it did not return stays null
         Assert.Equal(14, p.Schedule[0].DaysLate);
         Assert.Null(p.Schedule[3].DaysLate);                                                         // 31 Oct is ahead of today
-        // Due and Overdue are THE SAME numbers as the cards (one month rule for Receivables, Campaigns and the Payment tab); Total there is Due + Overdue only, Remaining Balance includes the future.
-        Assert.Equal((700m, 750m, 1450m), (s.Overdue, s.Due, s.Total));
-        Assert.Equal((p.Overdue, p.DueThisMonth), (s.Overdue, s.Due));
-        Assert.Equal(["Voucher V1", "Voucher V2", "Voucher V3", "Voucher V4"], s.Instalments.Select(i => i.Description));   // next month's V5 / V6 are not part of Due + Overdue
+        // The same rule as Receivables / Campaigns (the unit's own Due / Overdue / Total fields): one definition, one answer.
+        Assert.Equal((p.Overdue, p.DueThisMonth, p.Overdue + p.DueThisMonth), (s.Overdue, s.Due, s.Total));
     }
 
     [Fact]
-    public void PaymentCards_EqualTheSumsOfTheScheduleRows_DueIs4000_RemainingIs16500()
+    public void PaymentFigures_CardsAndTableAreTheSameNumbers_ForOneUnitAndScope()
     {
-        // Today 2026-10-14. Due this month = 1,500 (5 Oct) + 2,500 (28 Oct) = 4,000; Overdue 1,000; the rest is future: Remaining = 4,000 + 1,000 + 11,500 = 16,500.
-        var s = Compose(new(Snapshot(4), [Id(all: 6, open: 6)], [
-            Dated(new(2026, 9, 1), 1000m, "S"), Dated(new(2026, 10, 5), 1500m, "O5"), Dated(new(2026, 10, 28), 2500m, "O28"),
-            Dated(new(2026, 11, 28), 4000m, "N"), Dated(new(2026, 12, 28), 3500m, "D"), Dated(new(2027, 1, 28), 4000m, "J")], new Dictionary<int, CrmUnitLink>(), true, Now));
+        // The reported case: October holds 2,500 + 1,500, September 1,200 + 800 and three later months 3,500 each.
+        var s = Compose(new(Snapshot(4), [Id(all: 7, open: 7)], [
+            Dated(new(2026, 9, 11), 1200m, "A"), Dated(new(2026, 9, 28), 800m, "B"), Dated(new(2026, 10, 2), 2500m, "C"), Dated(new(2026, 10, 25), 1500m, "D"),
+            Dated(new(2026, 11, 5), 3500m, "E"), Dated(new(2026, 12, 5), 3500m, "F"), Dated(new(2027, 1, 5), 3500m, "G")], new Dictionary<int, CrmUnitLink>(), true, Now));
         var p = Assert.IsType<CollectionsUnitPaymentFiguresDto>(s.Payments);
         Assert.Equal(4000m, p.DueThisMonth);
+        Assert.Equal(2000m, p.Overdue);
         Assert.Equal(16500m, p.RemainingBalance);
-        Assert.Equal(p.DueThisMonth, p.Schedule.Where(l => l.Status == "Due").Sum(l => l.RemainingAmount));          // card = table
-        Assert.Equal(p.Overdue, p.Schedule.Where(l => l.Status == "Overdue").Sum(l => l.RemainingAmount));
         Assert.Equal(p.RemainingBalance, p.Schedule.Sum(l => l.RemainingAmount));
-        Assert.Equal((p.Overdue, p.DueThisMonth, p.Overdue + p.DueThisMonth), (s.Overdue, s.Due, s.Total));            // and the Receivables / Campaigns figures of the same unit
-        Assert.NotEqual(s.Total, p.RemainingBalance);                                                                  // Remaining Balance is NOT Due + Overdue
+        Assert.Equal(p.DueThisMonth, p.Schedule.Where(l => l.Status == "Due").Sum(l => l.RemainingAmount));
+        Assert.Equal(p.Overdue, p.Schedule.Where(l => l.Status == "Overdue").Sum(l => l.RemainingAmount));
+        Assert.Equal(p.Overdue + p.DueThisMonth + p.Schedule.Where(l => l.Status == "NotYetDue").Sum(l => l.RemainingAmount), p.RemainingBalance);
     }
 
     [Fact]

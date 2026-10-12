@@ -351,16 +351,17 @@ public sealed class CustomerUnitLinkServiceTests
     }
 
     [Fact]
-    public async Task InstalmentsFromNextMonthOn_AreNeverCounted_ButTheRestOfThisMonthIsDue()
+    public async Task NextMonthsInstalments_AreNotDueOrOverdue_ButAreInTheRemainingBalance_AndTheRestOfTheMonthIsDue()
     {
         var r = new Rig();
         r.Map.Rows.Add(new(79, "TP140", null, "Manual"));
         CrmReturns(r, Buyer(1, "Owner", PhoneE164, null, CrmUnit(11, "101")));
         r.Pact4("140", 101, "T1", overdue: 100m);
-        r.Units.Instalments.Add(new(4, "T1", 1400101, "NEXT", new(2026, 11, 1), 5000m, 5000m, 0m, "Installment"));   // first day of next month: neither Due nor Overdue
-        r.Units.Instalments.Add(new(4, "T1", 1400101, "TOMORROW", new(2026, 10, 15), 40m, 40m, 0m, "Installment"));  // tomorrow (Dubai), inside the current month: Due
+        r.Units.Instalments.Add(new(4, "T1", 1400101, "TOMORROW", new(2026, 10, 15), 40m, 40m, 0m, "Installment"));   // later this month: Due (the whole current Dubai month is Due)
+        r.Units.Instalments.Add(new(4, "T1", 1400101, "NEXTMONTH", new(2026, 11, 1), 5000m, 5000m, 0m, "Installment")); // next month: neither Due nor Overdue
         var unit = Assert.Single((await r.ForCrm(1)).Candidates);
         Assert.Equal((100m, 40m, 140m), (unit.Overdue, unit.Due, unit.Total));
+        Assert.Equal((100m, 40m, 5140m), (unit.Payments!.Overdue, unit.Payments.DueThisMonth, unit.Payments.RemainingBalance));
     }
 
     // ---- phone lookup ----

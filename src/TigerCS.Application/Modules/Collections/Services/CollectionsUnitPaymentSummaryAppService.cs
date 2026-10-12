@@ -96,25 +96,19 @@ public sealed class CollectionsUnitPaymentSummaryAppService(
             financial, detail, due, overdue, total, instalments, today, companyStatus?.LastSuccessUtc, companyStatus?.Freshness ?? "Missing", reason, payments);
     }
 
-    private const string TotalAndPaidUnavailable =
-        "The receivables snapshot holds only the unpaid part of each instalment, and EDSM's totals are per customer and company, not per unit. Total and paid amounts are therefore not available for this unit.";
-
     /// <summary>
-    /// The Payment tab's figures. The month is the current Dubai calendar month of <paramref name="today"/>: Overdue = due before its first day, Due = due in it (any day, so also later
-    /// than today), Not yet due = after it. Remaining balance is every unpaid instalment of the unit, future ones included; it is not Due + Overdue.
+    /// The Payment tab's figures: every unpaid instalment of the unit, classified by the one Dubai month rule (<see cref="CollectionsDueMonth"/>) - Overdue before the month, Due inside it
+    /// (any day), Not yet due after it. All sums are taken from this one list, so the cards and the table agree.
     /// </summary>
     private static CollectionsUnitPaymentFiguresDto Figures(PactUnitIdentity account, PactUnitReceivables data, DateOnly today, DateTime? lastUpdatedUtc)
     {
-        var monthStart = CollectionsDueMonth.MonthStart(today);
-        var monthEnd = CollectionsDueMonth.MonthEnd(today);
         var rows = data.Instalments.Where(i => i.CompanyId == account.CompanyId && i.TenantId == account.TenantId && i.UnitId == account.UnitId && i.RemainingAmount > 0)
             .OrderBy(i => i.DueDate).ThenBy(i => i.VoucherNumber, StringComparer.Ordinal).ToList();
         var schedule = rows.Select((i, index) => new CollectionsUnitScheduleLineDto(
             i.VoucherNumber.Length > 0 ? $"Voucher {i.VoucherNumber}" : $"Instalment {index + 1}", i.DueDate, i.OriginalAmount, i.PaidAmount, i.RemainingAmount,
             CollectionsDueMonth.Classify(i.DueDate, today) switch { CollectionsDueClass.Overdue => "Overdue", CollectionsDueClass.Due => "Due", _ => "NotYetDue" },
             i.DueDate < today ? today.DayNumber - i.DueDate.DayNumber : null)).ToList();
-        return new(null, null, schedule.Sum(l => l.RemainingAmount), schedule.Where(l => l.Status == "Due").Sum(l => l.RemainingAmount),
-            schedule.Where(l => l.Status == "Overdue").Sum(l => l.RemainingAmount), monthStart, monthEnd, schedule, lastUpdatedUtc, TotalAndPaidUnavailable);
+        return new(CollectionsDueMonth.MonthStart(today), CollectionsDueMonth.MonthEnd(today), schedule, lastUpdatedUtc);
     }
 
     private static (string Status, string? Detail, decimal? Due, decimal? Overdue, decimal? Total, IReadOnlyList<CollectionsUnitInstalmentDto> Instalments, string? Reason) Financials(

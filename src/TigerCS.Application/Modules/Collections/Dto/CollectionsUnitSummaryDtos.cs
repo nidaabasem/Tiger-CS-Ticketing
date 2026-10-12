@@ -10,14 +10,21 @@ public sealed record CollectionsUnitInstalmentDto(string Description, DateOnly D
 public sealed record CollectionsUnitScheduleLineDto(string Description, DateOnly DueDate, decimal? ScheduledAmount, decimal? PaidAmount, decimal RemainingAmount, string Status, int? DaysLate);
 
 /// <summary>
-/// The Payment tab's figures of ONE unit, each from the source that really holds it. Remaining balance, due this month and overdue come from the PACT receivables snapshot, which holds every
-/// UNPAID instalment of the unit (future ones included): Overdue = due before the first day of the current Dubai month, Due this month = due anywhere in that month, and
-/// Remaining balance = every unpaid instalment, future ones too (it is NOT Due + Overdue). Total and paid amounts are null ("Unavailable") because the snapshot holds neither: a fully paid
-/// instalment is not stored, and EDSM's payment summary is per customer and company, not per unit, so nothing here is inferred from the snapshot's unpaid rows.
+/// The Payment tab's figures of ONE unit. Everything is derived from <see cref="Schedule"/> (every unpaid instalment of the unit, future ones included), so the cards and the table
+/// can never disagree: <see cref="Overdue"/> = lines due before the first day of the current Dubai month, <see cref="DueThisMonth"/> = lines due inside that month (any day),
+/// <see cref="RemainingBalance"/> = every line (future ones too; it is NOT Due + Overdue). The month rule is <c>CollectionsDueMonth</c>, the one Receivables and Campaigns use.
+/// <see cref="TotalAmount"/> and <see cref="PaidAmount"/> stay null ("Unavailable"): the PACT receivables source returns the remaining amount of unpaid instalments only (see
+/// docs/Collections/Unit-Payment-Summary.md), and nothing is inferred from it.
 /// </summary>
 public sealed record CollectionsUnitPaymentFiguresDto(
-    decimal? TotalAmount, decimal? PaidAmount, decimal RemainingBalance, decimal DueThisMonth, decimal Overdue,
-    DateOnly MonthStart, DateOnly MonthEnd, IReadOnlyList<CollectionsUnitScheduleLineDto> Schedule, DateTime? LastUpdatedUtc, string? TotalAndPaidUnavailableReason);
+    DateOnly MonthStart, DateOnly MonthEnd, IReadOnlyList<CollectionsUnitScheduleLineDto> Schedule, DateTime? LastUpdatedUtc, decimal? TotalAmount = null, decimal? PaidAmount = null)
+{
+    public decimal RemainingBalance => Schedule.Sum(l => l.RemainingAmount);
+
+    public decimal DueThisMonth => Schedule.Where(l => l.Status == "Due").Sum(l => l.RemainingAmount);
+
+    public decimal Overdue => Schedule.Where(l => l.Status == "Overdue").Sum(l => l.RemainingAmount);
+}
 
 /// <summary>
 /// Payment Summary of ONE unit, found by its tower + unit code (never by a phone number). <c>LinkStatus</c>: <c>Linked</c> (one customer, one PACT account),

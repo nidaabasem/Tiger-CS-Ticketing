@@ -56,11 +56,11 @@ SELECT l.CompanyId,
  WHERE l.Amount > 0 AND l.UnitId > 0 AND LTRIM(RTRIM(l.UnitCode)) NOT IN (N'', N'0') AND l.UnitCode NOT LIKE N'%*%'
  GROUP BY l.CompanyId ORDER BY l.CompanyId;
 
--- 3. one unit: the Payment Summary read (result set 3 = ALL its unpaid instalments, future ones too; the application classifies them) next to the recount; its Due / Overdue must equal the Receivables row of the same unit
+-- 3. one unit: the Payment Summary read (result set 3 = ALL its unpaid instalments, future months included) next to the recount; its Due / Overdue must equal the Receivables row of the same unit (tools/verify_unit_payment_summary.sql automates this)
 IF @UnitKey IS NOT NULL
 BEGIN
     SELECT l.CompanyId, l.UnitCode, l.VoucherNumber, l.DueDate, l.Amount AS RemainingAmount,
-           CASE WHEN l.DueDate < DATEFROMPARTS(YEAR(@Now), MONTH(@Now), 1) THEN 'Overdue' WHEN l.DueDate < DATEADD(MONTH, 1, DATEFROMPARTS(YEAR(@Now), MONTH(@Now), 1)) THEN 'Due' ELSE 'Excluded' END AS ExpectedClass
+           CASE WHEN l.DueDate < DATEFROMPARTS(YEAR(@Now), MONTH(@Now), 1) THEN 'Overdue' WHEN l.DueDate < DATEADD(MONTH, 1, DATEFROMPARTS(YEAR(@Now), MONTH(@Now), 1)) THEN 'Due' ELSE 'NotYetDue (Payment tab only; not in Receivables / Campaigns)' END AS ExpectedClass
       FROM dbo.CollectionsRcvLine l JOIN dbo.CollectionsRcvCompany co ON co.CompanyId = l.CompanyId AND co.CurrentRunId = l.RunId
      WHERE UPPER(LTRIM(RTRIM(l.UnitCode))) COLLATE Latin1_General_BIN2 IN (@UnitKey COLLATE Latin1_General_BIN2, SUBSTRING(@UnitKey, 3, 220) COLLATE Latin1_General_BIN2) AND l.Amount > 0
      ORDER BY l.CompanyId, l.DueDate DESC, l.VoucherNumber;

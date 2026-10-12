@@ -16,6 +16,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Http;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using TigerCS.Application.Modules.Collections.Abstractions;
 using TigerCS.Application.Modules.Collections.Dto;
 using TigerCS.Application.Modules.IdentityAndAccess.Dto;
 using TigerCS.Application.Modules.Ticketing.Dto;
@@ -493,7 +494,7 @@ public sealed class CustomerPaymentTabRenderTests : IDisposable
             instalments ?? (status == "Available" ? [new("Voucher V1", DateOnly.FromDateTime(Now).AddDays(-40), 700m, 0m, 700m, "Overdue", 40)] : []), DateOnly.FromDateTime(Now), "Fresh",
             payments ?? (status == "Available" ? Figures(overdue ?? 0m, due ?? 0m, 500m) : status == "NoDues" ? Figures(0m, 0m, 0m) : null));
 
-    /// <summary>The tab's figures: an overdue line (before this month), a line due this month and, when there is one, a not-yet-due line (next month). Total and paid are never provided by the snapshot.</summary>
+    /// <summary>The tab's figures (all sums derive from the lines): an overdue line (before this month), a line due this month and, when there is one, a not-yet-due line (next month). Total and paid are never provided by the snapshot.</summary>
     private static CollectionsUnitPaymentFiguresDto Figures(decimal overdue, decimal due, decimal future)
     {
         var monthStart = new DateOnly(Now.Year, Now.Month, 1);
@@ -501,7 +502,7 @@ public sealed class CustomerPaymentTabRenderTests : IDisposable
         if (overdue > 0) lines.Add(new("Voucher V1", monthStart.AddDays(-5), null, null, overdue, "Overdue", 5));
         if (due > 0) lines.Add(new("Voucher V2", monthStart.AddDays(2), null, null, due, "Due", null));
         if (future > 0) lines.Add(new("Voucher V3", monthStart.AddMonths(1).AddDays(9), null, null, future, "NotYetDue", null));
-        return new(null, null, overdue + due + future, due, overdue, monthStart, monthStart.AddMonths(1).AddDays(-1), lines, Now, "Only unpaid instalments are held.");
+        return new(monthStart, monthStart.AddMonths(1).AddDays(-1), lines, Now);
     }
 
     /// <summary>The text of one summary card's value (the rendered HTML, decoded).</summary>
@@ -644,6 +645,38 @@ public sealed class CustomerPaymentTabRenderTests : IDisposable
         Assert.Equal("AED 1,500.00", Kpi(html, "remaining"));
         Assert.Contains("phone=971501234567", _api.Requests.First(r => r.Contains("/units")), StringComparison.Ordinal);
         Assert.DoesNotContain(_api.Requests, r => r.Contains("customer-lookup/payment-summary", StringComparison.Ordinal));   // figures found: no phone-based EDSM search needed
+    }
+
+    [Fact]
+    public async Task TheCardsAndTheScheduleTable_ShowTheSameNumbers_ForTheSameUnit_ThroughTheRealComposition()
+    {
+        _api.Mode = "nosource";
+        // The real composition (not hand-typed figures): October 2,500 + 1,500, September 1,200 + 800, three later months 3,500 each.
+        var today = new DateOnly(2026, 10, 14);
+        PactUnitInstalment Row(int y, int m, int d, decimal amount, string v) => new(4, "T-909", 1400909, v, new(y, m, d), amount, null, null, "Installment");
+        var identity = new PactUnitIdentity(4, "T-909", 1400909, "TP140-909", "Pact Name", "", "", "140", "Al Ghaf Tower", 7, 7);
+        var snapshot = new SnapshotStatusDto([new SnapshotCompanyStatusDto(4, "Co4", true, Now, Now, "Succeeded", null, 0, 10, null, null, 0, 0, 0, 0, 0, 0, "Fresh", 1)], [], 120);
+        var data = new PactUnitReceivables(snapshot, [identity], [
+            Row(2026, 9, 11, 1200m, "A"), Row(2026, 9, 28, 800m, "B"), Row(2026, 10, 2, 2500m, "C"), Row(2026, 10, 25, 1500m, "D"),
+            Row(2026, 11, 5, 3500m, "E"), Row(2026, 12, 5, 3500m, "F"), Row(2027, 1, 5, 3500m, "G")],
+            new Dictionary<int, CrmUnitLink>(), true, Now);
+        var summary = TigerCS.Application.Modules.Collections.Services.CollectionsUnitPaymentSummaryAppService.Compose("TP140-909", today, data, 120);
+        var candidate = UnitCandidate("crm:9090", unit: "909") with { Payments = summary.Payments, Due = summary.Due, Overdue = summary.Overdue, Total = summary.Total };
+        _api.UnitLink = Link(candidate);
+
+        var html = await Ok(await Client().GetAsync("/Customers/crm:9001?tab=payment"));
+
+        var rows = Regex.Matches(html, "<tr data-schedule-status=\"(\\w+)\">(.*?)</tr>", RegexOptions.Singleline)
+            .Select(m => (Status: m.Groups[1].Value, Remaining: decimal.Parse(Regex.Match(m.Groups[2].Value, "cell-primary\">AED ([\\d,\\.]+)<").Groups[1].Value.Replace(",", ""), System.Globalization.CultureInfo.InvariantCulture))).ToList();
+        decimal Money(string key) => decimal.Parse(Kpi(html, key).Replace("AED ", "").Replace(",", ""), System.Globalization.CultureInfo.InvariantCulture);
+        Assert.Equal(7, rows.Count);
+        Assert.Equal(4000m, Money("due"));
+        Assert.Equal(2000m, Money("overdue"));
+        Assert.Equal(16500m, Money("remaining"));
+        Assert.Equal(Money("remaining"), rows.Sum(r => r.Remaining));                                       // the table adds up to the Remaining card
+        Assert.Equal(Money("due"), rows.Where(r => r.Status == "Due").Sum(r => r.Remaining));               // ... Due card = the Due rows
+        Assert.Equal(Money("overdue"), rows.Where(r => r.Status == "Overdue").Sum(r => r.Remaining));       // ... Overdue card = the Overdue rows
+        Assert.Equal(Money("remaining"), Money("due") + Money("overdue") + rows.Where(r => r.Status == "NotYetDue").Sum(r => r.Remaining));
     }
 
     private sealed class TestAuthHandler(IOptionsMonitor<AuthenticationSchemeOptions> options, ILoggerFactory logger, UrlEncoder encoder)

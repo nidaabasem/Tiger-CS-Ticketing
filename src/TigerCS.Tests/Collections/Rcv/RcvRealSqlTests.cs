@@ -336,7 +336,9 @@ public sealed partial class RcvRealSqlTests
         var unit = await Source().ReadUnitAsync("TP101-101", null, Today, default);
         Assert.Equal([4, 32], unit.Identities.Select(i => i.CompanyId).Order());
         Assert.Equal(["A2", "A1"], unit.Instalments.Where(i => i.CompanyId == 4).Select(i => i.VoucherNumber));
-        // Future instalments are returned too (Remaining Balance / Not yet due); the application classifies by date.
+        // Every unpaid instalment is returned, future months included (Remaining Balance / Not yet due); the application classifies them with the one month rule.
+        var later = await Source().ReadUnitAsync("TP101-102", 4, Today, default);
+        Assert.Contains(later.Instalments, i => i.VoucherNumber == "B2" && i.DueDate == new DateOnly(2026, 11, 15));
         var dubaiOnly = await Source().ReadUnitAsync("TP101-101", 4, Today, default);
         Assert.Equal([4], dubaiOnly.Identities.Select(i => i.CompanyId));
         Assert.Empty((await Source().ReadUnitAsync("TP103-513*", null, Today, default)).Identities);       // a cancelled apartment has no summary

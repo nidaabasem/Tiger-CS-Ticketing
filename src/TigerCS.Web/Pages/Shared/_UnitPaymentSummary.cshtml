@@ -173,7 +173,7 @@
 
         @if (figures is { TotalAmount: null } or { PaidAmount: null })
         {
-            <p class="field-hint" data-total-paid-unavailable>Total Amount and Paid Amount are unavailable: @figures!.TotalAndPaidUnavailableReason</p>
+            <p class="field-hint" data-total-paid-unavailable>Total and paid amounts are currently unavailable</p>
         }
 
         @if (figures is { DueThisMonth: 0, Overdue: 0 })
