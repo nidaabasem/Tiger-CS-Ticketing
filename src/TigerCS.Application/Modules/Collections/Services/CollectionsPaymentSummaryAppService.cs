@@ -191,6 +191,19 @@ public sealed class CollectionsPaymentSummaryAppService(
     }
 
     /// <summary>
+    /// EDSM's figures and payment rows for ONE already-confirmed (company, tenant) account - no customer lookup, no mapping discovery. The caller (the unit statement) is responsible
+    /// for proving that the account belongs to the unit it shows; this method only reads.
+    /// </summary>
+    public async Task<CollectionsCompanyPaymentSummaryDto> ReadAccountAsync(
+        int companyId, string tenantId, string mobile, IReadOnlyList<CollectionsPactContractRefDto> contracts, CancellationToken cancellationToken = default)
+    {
+        if (!long.TryParse(tenantId, NumberStyles.None, CultureInfo.InvariantCulture, out var tenant) || tenant <= 0)
+            throw new ArgumentException("The tenant id must be a PACT tenant number.", nameof(tenantId));
+        using var budget = new ReadBudget(edsmOptions.ReadDeadline(CollectionsReadSurface.Web), cancellationToken);
+        return await CompanyAsync(companyId, tenantId, tenant, mobile, contracts, includeTransactions: true, budget);
+    }
+
+    /// <summary>
     /// What keeps a Mapped summary from being the whole picture. Anything listed here means the
     /// response must not be described as the customer's complete balance.
     /// </summary>

@@ -28,4 +28,4 @@ public sealed record LinkedUnitCandidateDto(
 /// </summary>
 public sealed record CustomerUnitLinkResultDto(
     string PhoneNormalized, string CrmStatus, string PactStatus, IReadOnlyList<LinkedUnitCandidateDto> Candidates, bool SelectionRequired,
-    string? SelectedId, IReadOnlyList<string> Notes);
+    string? SelectedId, IReadOnlyList<string> Notes, UnitPaymentStatementDto? Statement = null);

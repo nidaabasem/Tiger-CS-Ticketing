@@ -210,6 +210,21 @@ public sealed class DispatchService(
         if (run is null || run.AsOfDate.Year != asOf.Year || run.AsOfDate.Month != asOf.Month)
             return await StopAsync(dispatch, DispatchStatus.ReviewRequired, "The business month changed since approval. Nothing was sent; review the current list and approve again.", ct);
 
+        // A unit PACT has cancelled (asterisk anywhere in its code) never gets a reminder, whatever was prepared or approved earlier. Checked before any balance is read.
+        var cancelledItems = items.Where(i => ReviewRecordBuilder.IsCancelledUnit(i.UnitCode)).ToList();
+        foreach (var c in cancelledItems) { c.Status = DispatchItemStatus.Excluded; c.StatusReason = "Cancelled unit (code contains *): no reminder is sent"; }
+        if (cancelledItems.Count > 0) items = items.Except(cancelledItems).ToList();
+        if (items.Count == 0)
+        {
+            await store.UpdateItemsAsync(cancelledItems, ct);
+            dispatch.ExcludedAtDispatchCount = cancelledItems.Count;
+            dispatch.Status = DispatchStatus.Completed; dispatch.CompletedAtUtc = clock.UtcNow; dispatch.StartedAtUtc ??= clock.UtcNow;
+            dispatch.StatusReason = "Every approved record belongs to a cancelled unit (code contains *); nothing was uploaded.";
+            dispatch.Phase = "Finished"; dispatch.LeaseOwner = null; dispatch.LeaseExpiresAtUtc = null;
+            await store.UpdateDispatchAsync(dispatch, ct);
+            return false;
+        }
+
         var companies = items.Select(i => i.CompanyId).Distinct().Order().ToList();
         await store.SetDispatchPhaseAsync(dispatch.CollectionsDispatchId, $"Checking current balances (company {string.Join(" and ", companies)}); this can take several minutes", ct);
         CurrentBalanceReader.Result read;
@@ -226,7 +241,7 @@ public sealed class DispatchService(
         await store.SetRevalidationMsAsync(dispatch.CollectionsDispatchId, read.ElapsedMs, ct);
         var current = read.ByAsOfDate[asOf];
 
-        var settled = new List<CollectionsDispatchItem>();
+        var settled = new List<CollectionsDispatchItem>(cancelledItems);
         var changed = 0;
         foreach (var item in items)
         {
@@ -249,7 +264,7 @@ public sealed class DispatchService(
         }
         if (settled.Count > 0) await store.UpdateItemsAsync(settled, ct);
         dispatch.ExcludedAtDispatchCount = settled.Count;
-        if (settled.Count == items.Count)
+        if (settled.Count == items.Count + cancelledItems.Count)
         {
             dispatch.Status = DispatchStatus.Completed; dispatch.CompletedAtUtc = clock.UtcNow; dispatch.StartedAtUtc ??= clock.UtcNow;
             dispatch.StatusReason = "Every approved record was paid or settled before sending; nothing was uploaded.";
@@ -275,8 +290,12 @@ public sealed class DispatchService(
     {
         var all = (await store.GetItemsAsync(dispatch.CollectionsDispatchId, ct)).Where(i => i.Status == DispatchItemStatus.Approved).ToList();
         // callable is set only for approved voice-eligible contacts; anything else is never uploaded.
-        var ineligible = all.Where(i => !i.VoiceEligible || !IsVoiceEligible(i.Phone)).ToList();
-        foreach (var item in ineligible) { item.Status = DispatchItemStatus.Excluded; item.StatusReason = "Not voice eligible: no valid international phone number"; }
+        var ineligible = all.Where(i => ReviewRecordBuilder.IsCancelledUnit(i.UnitCode) || !i.VoiceEligible || !IsVoiceEligible(i.Phone)).ToList();
+        foreach (var item in ineligible)
+        {
+            item.Status = DispatchItemStatus.Excluded;
+            item.StatusReason = ReviewRecordBuilder.IsCancelledUnit(item.UnitCode) ? "Cancelled unit (code contains *): no reminder is sent" : "Not voice eligible: no valid international phone number";
+        }
         if (ineligible.Count > 0) await store.UpdateItemsAsync(ineligible, ct);
         var items = all.Except(ineligible).ToList();
         if (items.Count == 0)

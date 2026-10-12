@@ -293,6 +293,40 @@ BEGIN
 END;
 GO
 
+/*
+  usp_CollectionsRcv_GetUnitAccounts - the unit/account DIRECTORY entry of a unit key, fully paid units included (CollectionsRcvAccountUnit of the CURRENT run of each company):
+    1 the matching (company, tenant, unit id, unit code) rows of the unit key (cancelled '*' codes never match, the mark is never removed)
+    2 EVERY unit of the same (company, tenant) accounts (settled and cancelled ones included, flagged), so an account that also covers a fully paid sibling is visible
+    3 the as-of time of the directory per company
+  The directory holds what PACT's receivables procedure returned; it is not proven to be every unit of the tenant (see the table's comment).
+*/
+CREATE OR ALTER PROCEDURE dbo.usp_CollectionsRcv_GetUnitAccounts
+    @UnitKey   nvarchar(220),
+    @CompanyId int = NULL
+AS
+BEGIN
+    SET NOCOUNT ON;
+    IF @CompanyId IS NOT NULL AND @CompanyId NOT IN (4, 32) THROW 50031, N'Company must be 4, 32 or NULL.', 1;
+    DECLARE @Bare nvarchar(220) = SUBSTRING(@UnitKey, 3, 220);
+    SELECT a.RunId, a.CompanyId, a.TenantId, a.UnitId, a.UnitCode, a.OpenRows, a.SettledRows
+      INTO #m
+      FROM dbo.CollectionsRcvCompany c
+      JOIN dbo.CollectionsRcvAccountUnit a ON a.CompanyId = c.CompanyId AND a.RunId = c.CurrentRunId
+     WHERE c.CurrentRunId IS NOT NULL AND (@CompanyId IS NULL OR c.CompanyId = @CompanyId)
+       AND UPPER(LTRIM(RTRIM(a.UnitCode))) COLLATE Latin1_General_BIN2 IN (@UnitKey COLLATE Latin1_General_BIN2, @Bare COLLATE Latin1_General_BIN2)
+       AND a.IsCancelled = 0 AND a.UnitCode NOT LIKE N'%*%' AND a.UnitId > 0;
+
+    SELECT m.CompanyId, m.TenantId COLLATE DATABASE_DEFAULT AS TenantId, m.UnitId, m.UnitCode COLLATE DATABASE_DEFAULT AS UnitCode, m.OpenRows, m.SettledRows, CAST(0 AS bit) AS IsCancelled FROM #m m ORDER BY m.CompanyId, m.TenantId, m.UnitId;
+
+    SELECT a.CompanyId, a.TenantId COLLATE DATABASE_DEFAULT AS TenantId, a.UnitId, a.UnitCode COLLATE DATABASE_DEFAULT AS UnitCode, a.OpenRows, a.SettledRows, a.IsCancelled
+      FROM (SELECT DISTINCT CompanyId, RunId, TenantId FROM #m) k
+      JOIN dbo.CollectionsRcvAccountUnit a ON a.CompanyId = k.CompanyId AND a.RunId = k.RunId AND a.TenantId = k.TenantId
+     ORDER BY a.CompanyId, a.TenantId, a.UnitId;
+
+    SELECT c.CompanyId, c.LastSuccessUtc FROM dbo.CollectionsRcvCompany c WHERE c.CurrentRunId IS NOT NULL AND (@CompanyId IS NULL OR c.CompanyId = @CompanyId);
+END;
+GO
+
 CREATE OR ALTER PROCEDURE dbo.usp_CollectionsRcv_GetTowers
 AS
 BEGIN

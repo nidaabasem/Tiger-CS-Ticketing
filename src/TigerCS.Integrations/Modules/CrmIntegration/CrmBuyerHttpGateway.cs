@@ -164,7 +164,8 @@ public sealed class CrmBuyerHttpGateway(
             unit.ProjectName,
             unit.ProjectArabicName,
             unit.CustomerType,
-            unit.CustomerTypeName)).ToList());
+            unit.CustomerTypeName,
+            unit.ProjectCode)).ToList());
 
     /// <summary>Security-Architecture.md §11's masking discipline, applied to a phone number for log lines — enough to correlate, never enough to identify.</summary>
     private static string Mask(string phoneNumber) =>

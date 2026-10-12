@@ -2101,3 +2101,7 @@ a.badge:hover { text-decoration: underline; }
 .payment-nodue { margin: 0; padding: var(--space-2) var(--space-3); border-radius: var(--radius-md); background: var(--color-bg); border: 1px dashed var(--color-border-strong); color: var(--color-text-secondary); font-size: var(--text-sm); font-weight: 600; }
 @media (max-width: 1180px) { .payment-kpis--five { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 @media (max-width: 640px) { .payment-kpis--five { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+/* Unit payment statement: paid is green, due / outstanding is red. */
+.statement-green-text { color: var(--color-success-text, var(--color-success)); }
+.statement-red-text { color: var(--color-critical); }

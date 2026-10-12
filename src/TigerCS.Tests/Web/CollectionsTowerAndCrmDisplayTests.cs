@@ -97,4 +97,57 @@ public sealed class CollectionsTowerAndCrmDisplayTests
         var plain = row with { Reason = "NoValidContact" };
         Assert.Contains(CampaignsModel.ReviewNotes(plain), n => n.Contains("No mobile or email in CRM or PACT"));
     }
+
+    // ---- the four different reasons nobody can be reached (switched off / owner not linked / CRM linked but empty / CRM service down) ----
+
+    [Fact]
+    public void WhenCrmLinkingIsSwitchedOff_TheNoContactNoteSaysCrmWasNotChecked_NotThatCrmHoldsNothing()
+    {
+        var off = new CrmContactStatusDto("Disabled", false, null, null);
+        var line = ReceivablesModel.Lines(Report(Unit("Blue Wave", "140"), off)).Single();
+        var note = Assert.Single(line.Notes, n => n.StartsWith("No mobile or email"));
+        Assert.Contains("switched off", note);
+        Assert.DoesNotContain("CRM or PACT", note);
+    }
+
+    [Fact]
+    public void WhenCrmIsLoaded_ButNoOwnerIsLinkedToTheUnit_TheNoteSaysSo()
+    {
+        var ready = new CrmContactStatusDto("Ready", false, null, DateTime.UtcNow);
+        var line = ReceivablesModel.Lines(Report(Unit("Blue Wave", "140"), ready)).Single();
+        var note = Assert.Single(line.Notes, n => n.StartsWith("No mobile or email"));
+        Assert.Contains("no CRM owner is linked", note);
+    }
+
+    [Fact]
+    public void OnlyWhenTheCrmOwnerIsLinkedAndEmpty_DoesTheNoteSayCrmOrPactHoldNothing()
+    {
+        var ready = new CrmContactStatusDto("Ready", false, null, DateTime.UtcNow);
+        var line = ReceivablesModel.Lines(Report(Unit("Blue Wave", "140", crmCustomers: 1, crmPhone: "", crmName: "Owner", crmEmail: ""), ready)).Single();
+        Assert.Contains(line.Notes, n => n.Contains("No mobile or email in CRM or PACT"));
+        var ambiguous = ReceivablesModel.Lines(Report(Unit("Blue Wave", "140", crmCustomers: 2), ready)).Single();
+        Assert.Contains(ambiguous.Notes, n => n.Contains("Several CRM customers"));
+        Assert.DoesNotContain(ambiguous.Notes, n => n.Contains("no CRM owner is linked"));
+    }
+
+    [Fact]
+    public void ACrmOwnerWithAMobileAndEmail_IsShown_ForTheReportedUnit_AndPactIsNotNeeded()
+    {
+        // TP140-407 / lead 307092: CRM holds +971529586320 and the e-mail; PACT holds neither.
+        var line = ReceivablesModel.Lines(Report(Unit("Tower 140", "140", crmCustomers: 1, crmPhone: "+971529586320", crmName: "AFTAB ALAM KHAN MOHAMMAD MAZAHARUDDIN KHAN", crmEmail: "kaftab.alam@yahoo.co.in"),
+            new CrmContactStatusDto("Ready", false, null, DateTime.UtcNow))).Single();
+        Assert.Equal(("+971529586320", "kaftab.alam@yahoo.co.in"), (line.Phone, line.Email));
+        Assert.DoesNotContain(line.Notes, n => n.StartsWith("No mobile"));
+    }
+
+    [Fact]
+    public void TheCampaignNoContactNote_FollowsTheSameFourStates()
+    {
+        var row = new CollectionsCampaignContactDto("r", "k", 4, "T1", "N", "", "", 1, "TP140-407", "TP140", 1m, "AED", null, "S", "C", "NeedsReview", "NoValidContact");
+        Assert.Contains("switched off", CampaignsModel.ReviewNotes(row, "Disabled").Single());
+        Assert.Contains("no CRM owner is linked", CampaignsModel.ReviewNotes(row, "Ready").Single());
+        Assert.Contains("CRM or PACT", CampaignsModel.ReviewNotes(row with { CrmCustomerId = 9 }, "Ready").Single());
+        Assert.Contains("CRM unavailable", CampaignsModel.ReviewNotes(row with { Reason = "CrmUnavailable;NoValidContact" }, "ReadFailed").Single());
+        Assert.Contains("CRM or PACT", CampaignsModel.ReviewNotes(row).Single());            // state unknown: the old wording, no new claim
+    }
 }

@@ -20,9 +20,10 @@ public sealed record CrmAvailability(CrmFeedState State, DateTime? LastSuccessUt
     public static readonly CrmAvailability Disabled = new(CrmFeedState.Disabled);
     public bool IsEnabled => State != CrmFeedState.Disabled;
     public bool Blocks => State is CrmFeedState.NotLoaded or CrmFeedState.Stale or CrmFeedState.ReadFailed;
-    /// <summary>Short text for the pages; null when everything is fine or CRM linking is deliberately off.</summary>
+    /// <summary>Short text for the pages; null when everything is fine. A switched-off feed is reported too: CRM was not consulted, which is not the same as CRM holding nothing.</summary>
     public string? Message => State switch
     {
+        CrmFeedState.Disabled => "CRM contact linking is switched off: contacts shown come from PACT only and CRM was not checked, so a mobile or email may exist in CRM.",
         CrmFeedState.NotLoaded => "CRM contact data has not been loaded yet. Contacts shown come from PACT only and are unconfirmed; nothing can be exported to Genesys.",
         CrmFeedState.Stale => $"CRM contact data is out of date (last loaded {LastSuccessUtc:yyyy-MM-dd HH:mm} UTC). Contacts are unconfirmed; nothing can be exported to Genesys.",
         CrmFeedState.ReadFailed => "CRM contact data could not be read. Contacts shown come from PACT only and are unconfirmed; nothing can be exported to Genesys.",

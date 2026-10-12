@@ -24,7 +24,8 @@ namespace TigerCS.Application.Modules.Collections.Services;
 public sealed class CustomerUnitLinkService(
     CollectionsOptions options, PactReceivablesOptions sourceOptions, ReceivablesSnapshotOptions snapshotOptions, CollectionsCrmOwnersOptions crmOptions,
     CollectionsAuthorizationService authorization, CollectionsClock clock, ICrmBuyerLookupGateway crm, IPactCustomerLookupGateway pact,
-    ICollectionsCrmProjectMap projectMap, ICollectionsTowerCatalog towers, IPactReceivablesSource source, ILogger<CustomerUnitLinkService> logger)
+    ICollectionsCrmProjectMap projectMap, ICollectionsTowerCatalog towers, IPactReceivablesSource source, ILogger<CustomerUnitLinkService> logger,
+    PactContractDiscovery? discovery = null, CollectionsUnitStatementService? statements = null, ICollectionsCrmProjectEvidenceStore? evidenceStore = null)
 {
     public const int LeasingCompanyId = 7;
     private const int MaxCandidates = 25;
@@ -84,6 +85,7 @@ public sealed class CustomerUnitLinkService(
         var notes = new List<string>();
         var candidates = new List<LinkedUnitCandidateDto>();
         var crmStatus = "NotFound";
+        var crmPhones = new Dictionary<int, string>();
 
         var crmResult = await crm.GetBuyerByPhoneAsync(typed, cancellationToken);
         if (onlyCustomer is { } only && !(crmResult.Buyers ?? []).Any(b => b.Customer.CustomerId == only.CustomerId))
@@ -113,11 +115,15 @@ public sealed class CustomerUnitLinkService(
             foreach (var group in byCustomer)
             {
                 var customer = group.First().Customer;
-                var units = group.SelectMany(b => b.Units).GroupBy(u => u.UnitId).Select(g => g.First()).ToList();
+                if (NormalizePhone(customer.MobileNumber) is { Length: > 0 } customerPhone) crmPhones[customer.CustomerId] = customerPhone;
+                // A unit whose number carries an asterisk (anywhere, one or several) is a cancelled unit: it is never offered, and the asterisk is never stripped to match an active unit.
+                var units = group.SelectMany(b => b.Units).GroupBy(u => u.UnitId).Select(g => g.First()).Where(u => !HasCancelledMark(u.UnitNumber)).ToList();
                 var eligible = units.Where(u => IsEligibleSale(u, crmOptions)).ToList();
                 ineligible += units.Count - eligible.Count;
                 if (eligible.Count > 0) anyEligible = true;
-                candidates.AddRange(await CrmCandidatesAsync(customer, eligible, today, cancellationToken));
+                var phonesOfCustomer = new[] { normalized }.Concat(onlyCustomer?.MorePhones.Select(NormalizePhone) ?? []).Concat(crmPhones.TryGetValue(customer.CustomerId, out var own) ? [own] : [])
+                    .Where(p => p.Length > 0).Distinct(StringComparer.Ordinal).ToList();
+                candidates.AddRange(await CrmCandidatesAsync(customer, eligible, today, phonesOfCustomer, cancellationToken));
             }
             crmStatus = anyEligible ? "Found" : "NoEligibleUnits";
             if (ineligible > 0) notes.Add($"{ineligible} CRM unit(s) were ignored: only Sold / Contract sales that are not cancelled and belong to a buyer count.");
@@ -152,7 +158,73 @@ public sealed class CustomerUnitLinkService(
         var selected = selectionId is null ? null : candidates.FirstOrDefault(c => c.SelectionId == selectionId)?.SelectionId;
         if (selectionId is not null && selected is null) notes.Add("The selected unit is not among the customer's current units.");
         selected ??= candidates.Count == 1 ? candidates[0].SelectionId : null;
-        return new CustomerUnitLinkResultDto(normalized, crmStatus, pactStatus, candidates, candidates.Count > 1 && selected is null, selected, notes);
+        UnitPaymentStatementDto? statement = null;
+        if (selected is not null && statements is not null && candidates.FirstOrDefault(c => c.SelectionId == selected) is { } chosen)
+        {
+            var phonesOfUnit = new[] { normalized }.Concat(onlyCustomer?.MorePhones.Select(NormalizePhone) ?? [])
+                .Concat(chosen.CrmCustomerId is { } crmId && crmPhones.TryGetValue(crmId, out var crmPhone) ? [crmPhone] : [])
+                .Where(p => p.Length > 0).Distinct(StringComparer.Ordinal).ToList();
+            statement = await StatementAsync(chosen, phonesOfUnit, cancellationToken);
+        }
+        return new CustomerUnitLinkResultDto(normalized, crmStatus, pactStatus, candidates, candidates.Count > 1 && selected is null, selected, notes, statement);
+    }
+
+    /// <summary>The unit's complete payment statement (EDSM, proven to belong to this unit alone). Withheld - with the reason - whenever the unit is not one PACT unit, is cancelled, or CRM names another owner.</summary>
+    private async Task<UnitPaymentStatementDto> StatementAsync(LinkedUnitCandidateDto unit, IReadOnlyList<string> phones, CancellationToken cancellationToken)
+    {
+        var key = unit.UnitKey ?? "";
+        if (unit.UnitKey is null || HasCancelledMark(unit.UnitKey) || !CollectionsUnitKey.IsListable(unit.UnitKey))
+            return UnitPaymentStatementDto.Withheld("UnitNotResolved", "The unit is not tied to one active PACT unit code yet, so no payment statement can be read for it.", key);
+        if (unit.ReviewReasons.Contains("CrmOwnershipConflict") || unit.ReviewReasons.Contains("CrmCustomerAmbiguous") || unit.ReviewReasons.Contains("CrmCompanyAmbiguous"))
+            return UnitPaymentStatementDto.Withheld("IdentityMismatch", "CRM does not name this customer as the single owner of the unit, so no payment statement is shown until a person confirms the owner.", key, unit.CompanyId);
+        try { return await statements!.GetAsync(new UnitStatementRequest(unit.CompanyId, unit.UnitKey, unit.PactTenantId, phones) { FallbackMobile = unit.Customer.Mobile }, cancellationToken); }
+        catch (Exception ex) when (ex is DbException or HttpRequestException or InvalidOperationException)
+        {
+            logger.LogWarning("The unit statement could not be read ({ExceptionType}).", ex.GetType().Name);
+            return UnitPaymentStatementDto.Withheld("SourceUnavailable", "The payment statement could not be read. Please retry.", key, unit.CompanyId);
+        }
+    }
+
+    private sealed record EvidenceResult(CrmProjectTowerMapping? Mapping, string Reason, string Detail);
+
+    /// <summary>
+    /// The tower of a CRM unit whose project has no verified mapping row, from PACT's OWN contract rows of the same customer (found by the customer's phone): the contract whose apartment number
+    /// equals the CRM unit number gives the PACT unit code and company. Exactly one such active contract identifies the unit; several are ambiguous; none leaves the mapping missing.
+    /// Names are never compared. What was seen is recorded (<see cref="ICollectionsCrmProjectEvidenceStore"/>) for tools/review_crm_project_map.sql; it is never promoted automatically.
+    /// </summary>
+    private async Task<EvidenceResult> EvidenceAsync(CrmCustomerDto customer, CrmBuyerUnitDto unit, IReadOnlyList<string> phones, DateOnly today, CancellationToken cancellationToken)
+    {
+        var missing = $"CRM project {unit.ProjectId} ({unit.ProjectName}) has no verified mapping to a PACT tower, so its PACT unit cannot be identified. No amounts were looked up and none are implied.";
+        if (discovery is null || phones.Count == 0 || string.IsNullOrWhiteSpace(unit.UnitNumber)) return new(null, "ProjectMappingMissing", missing);
+        PactContractDiscoveryResult found;
+        try { found = await discovery.DiscoverAsync(phones, cancellationToken); }
+        catch (Exception ex) when (ex is HttpRequestException or InvalidOperationException)
+        {
+            logger.LogWarning("PACT contracts could not be read to identify a CRM unit ({ExceptionType}).", ex.GetType().Name);
+            return new(null, "ProjectMappingMissing", missing + " PACT could not be read to look for the unit among the customer's contracts.");
+        }
+        var apartment = unit.UnitNumber.Trim();
+        var matches = found.Customers.SelectMany(c => c.Customer.Contracts.Select(contract => (c.Customer, Contract: contract)))
+            .Where(x => x.Contract.CompanyId is not null && !HasCancelledMark(x.Contract.UnitCode) && (x.Contract.ContractEndDate is null || x.Contract.ContractEndDate >= today))
+            .Select(x => (x.Customer, x.Contract, Key: CollectionsUnitKey.Normalize(x.Contract.UnitCode)))
+            .Where(x => x.Key is not null && CollectionsUnitKey.IsListable(x.Key)
+                && string.Equals(CollectionsTowerOrder.UnitRest(x.Key), apartment, StringComparison.OrdinalIgnoreCase))
+            .DistinctBy(x => (x.Contract.CompanyId, x.Key)).ToList();
+        if (matches.Count > 1)
+            return new(null, "ProjectMappingAmbiguous", $"CRM project {unit.ProjectId} ({unit.ProjectName}) has no verified mapping, and this customer holds apartment {apartment} in several PACT towers ({string.Join(", ", matches.Select(m => $"{m.Key} / company {m.Contract.CompanyId}"))}); none is chosen.");
+        if (matches.Count == 0)
+            return new(null, "ProjectMappingMissing", missing + (found.Complete ? $" None of the customer's PACT contracts has apartment {apartment}." : " PACT did not answer for every phone number of the customer."));
+        var m1 = matches[0];
+        var tower = CollectionsTowerNumber.Parse(m1.Key);
+        var code = tower is null ? null : "TP" + tower;
+        if (code is null || CollectionsUnitKey.FromCrm(code, apartment) != m1.Key)
+            return new(null, "ProjectMappingMissing", missing);
+        if (evidenceStore is not null)
+        {
+            try { await evidenceStore.RecordAsync([new CrmProjectEvidence(unit.ProjectId, code, m1.Contract.CompanyId!.Value, customer.CustomerId, unit.UnitId, apartment, m1.Customer.PactCustomerId, m1.Key!)], cancellationToken); }
+            catch (Exception ex) when (ex is DbException or InvalidOperationException) { logger.LogWarning("CRM project evidence could not be recorded ({ExceptionType}).", ex.GetType().Name); }
+        }
+        return new(new CrmProjectTowerMapping(unit.ProjectId, code, m1.Contract.CompanyId, "PactContractEvidence"), "", "");
     }
 
     /// <summary>A buyer's Sold or Contract lead that is not cancelled (<see cref="CrmSaleEligibility"/>: the status name decides, the configured numbers only when no name was sent).</summary>
@@ -161,7 +233,10 @@ public sealed class CustomerUnitLinkService(
 
     // ---- CRM units ---------------------------------------------------------------------------------------------------------------------------------------------------------------
 
-    private async Task<List<LinkedUnitCandidateDto>> CrmCandidatesAsync(CrmCustomerDto customer, List<CrmBuyerUnitDto> units, DateOnly today, CancellationToken cancellationToken)
+    /// <summary>A PACT unit code with an asterisk anywhere (<c>513*</c>, <c>TP103-5*13</c>, <c>**</c>) marks a cancelled unit. It is excluded as it is, never "cleaned" into an active unit.</summary>
+    public static bool HasCancelledMark(string? unitCode) => unitCode?.Contains('*') == true;
+
+    private async Task<List<LinkedUnitCandidateDto>> CrmCandidatesAsync(CrmCustomerDto customer, List<CrmBuyerUnitDto> units, DateOnly today, IReadOnlyList<string> phones, CancellationToken cancellationToken)
     {
         var result = new List<LinkedUnitCandidateDto>();
         if (units.Count == 0) return result;
@@ -186,9 +261,18 @@ public sealed class CustomerUnitLinkService(
             var distinct = (rows ?? []).DistinctBy(r => (CollectionsUnitKey.Normalize(r.ProjectCode), r.CompanyId)).ToList();
             if (distinct.Count == 0)
             {
-                result.Add(Failed(customer, crmContact, unit, "MatchFailed", "ProjectMappingMissing",
-                    $"CRM project {unit.ProjectId} ({unit.ProjectName}) has no verified mapping to a PACT tower, so its PACT unit cannot be identified. No amounts were looked up and none are implied."));
-                continue;
+                // No verified mapping row. The customer's OWN PACT contracts (found by phone, then matched by apartment number) can still identify the unit - the evidence is PACT's contract row,
+                // never a project name. One match = that unit; several = ambiguous; none = the mapping really is missing. The pair seen is recorded for the review script (never auto-promoted).
+                // First choice: the project code CRM itself publishes with the unit (GetBuyerByPhone `projectCode`), when it does.
+                var evidence = !string.IsNullOrWhiteSpace(unit.ProjectCode) && CollectionsUnitKey.Normalize(unit.ProjectCode) is not null
+                    ? new EvidenceResult(new CrmProjectTowerMapping(unit.ProjectId, unit.ProjectCode.Trim(), null, "CrmUnit"), "", "")
+                    : await EvidenceAsync(customer, unit, phones, today, cancellationToken);
+                if (evidence.Mapping is { } derived) distinct = [derived];
+                else
+                {
+                    result.Add(Failed(customer, crmContact, unit, "MatchFailed", evidence.Reason, evidence.Detail));
+                    continue;
+                }
             }
             if (distinct.Select(r => CollectionsUnitKey.Normalize(r.ProjectCode)).Distinct().Count() > 1)
             {

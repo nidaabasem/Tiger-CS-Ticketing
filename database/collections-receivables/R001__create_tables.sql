@@ -40,6 +40,30 @@ CREATE TABLE dbo.CollectionsRcvRun
     ErrorMessage         nvarchar(1000)   NULL
 );
 
+/*
+  dbo.CollectionsRcvAccountUnit - the unit/account DIRECTORY of a published run: one row per (company, tenant, unit) that PACT's receivables procedure returned, INCLUDING fully paid
+  (settled) units and cancelled ('*') codes. It exists so a unit can be tied to its (CompanyId, TenantId, UnitId) and so the other units of a tenant account are known even when nothing is
+  open on them. It is bound to the run exactly like CollectionsRcvLine. Completeness is NOT assumed: it holds only what the procedure returned (units without a payment plan / ledger row are
+  absent), so the application treats it as complete scope evidence only when ReceivablesSnapshot:AccountDirectoryComplete is switched on after live verification.
+*/
+IF OBJECT_ID(N'dbo.CollectionsRcvAccountUnit', N'U') IS NULL
+CREATE TABLE dbo.CollectionsRcvAccountUnit
+(
+    RunId        uniqueidentifier NOT NULL,
+    CompanyId    int              NOT NULL,
+    TenantId     nvarchar(100)    NOT NULL,
+    UnitId       bigint           NOT NULL,
+    UnitCode     nvarchar(200)    NOT NULL,
+    OpenRows     int              NOT NULL,
+    SettledRows  int              NOT NULL,
+    IsCancelled  bit              NOT NULL,
+    CONSTRAINT PK_CollectionsRcvAccountUnit PRIMARY KEY (RunId, CompanyId, TenantId, UnitId, UnitCode)
+);
+GO
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id = OBJECT_ID(N'dbo.CollectionsRcvAccountUnit') AND name = N'IX_CollectionsRcvAccountUnit_Code')
+    CREATE INDEX IX_CollectionsRcvAccountUnit_Code ON dbo.CollectionsRcvAccountUnit (CompanyId, UnitCode) INCLUDE (TenantId, UnitId, OpenRows, SettledRows, IsCancelled);
+GO
+
 IF OBJECT_ID(N'dbo.CollectionsRcvCompany', N'U') IS NULL
 CREATE TABLE dbo.CollectionsRcvCompany
 (

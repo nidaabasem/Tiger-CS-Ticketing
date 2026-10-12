@@ -17,7 +17,7 @@ namespace TigerCS.Tests.Collections.Crm;
 /// The customer / unit linking behind the Payment tab and New Ticket: CRM first, PACT by company + tower + apartment, Leasing, review and failure states.
 /// These tests use in-memory CRM / PACT / mapping fakes: they prove the linking RULES, not that the real CRM / PACT sources return what the fakes return.
 /// </summary>
-public sealed class CustomerUnitLinkServiceTests
+public sealed partial class CustomerUnitLinkServiceTests
 {
     private static readonly DateTime Now = new(2026, 10, 14, 8, 0, 0, DateTimeKind.Utc);   // 12:00 in Dubai
     private const string Phone = "0501234567";
@@ -59,9 +59,20 @@ public sealed class CustomerUnitLinkServiceTests
         public Dictionary<(string Key, int Company), CrmUnitLink> CrmLinks { get; } = [];
         public List<(string Key, int? Company)> Reads { get; } = [];
         public bool Throw { get; set; }
+        /// <summary>Directory-only units: PACT knows them (fully paid, nothing open) but they have no open instalments.</summary>
+        public List<PactDirectoryUnit> PaidUnits { get; } = [];
+        public bool DirectoryComplete { get; set; }
         public int[] LoadedCompanies { get; set; } = [4, 32];
 
         public Task<PactReceivablesSnapshot> ReadAsync(DateOnly throughDate, CancellationToken cancellationToken) => Task.FromResult(new PactReceivablesSnapshot([], Now, false));
+
+        public Task<PactAccountDirectory> ReadAccountDirectoryAsync(string unitKey, int? companyId, CancellationToken cancellationToken)
+        {
+            var all = Identities.Select(i => new PactDirectoryUnit(i.CompanyId, i.TenantId, i.UnitId, i.UnitCode, Math.Max(i.OpenRows, 1), 0, CollectionsUnitKey.Normalize(i.UnitCode) is { } k && !CollectionsUnitKey.IsListable(k))).Concat(PaidUnits).ToList();
+            var matches = all.Where(u => !u.IsCancelled && CollectionsUnitKey.Normalize(u.UnitCode) == unitKey && (companyId is null || u.CompanyId == companyId)).ToList();
+            var account = all.Where(u => matches.Any(m => m.CompanyId == u.CompanyId && m.TenantId == u.TenantId)).ToList();
+            return Task.FromResult(new PactAccountDirectory(matches, account, DirectoryComplete, "Test directory", Now));
+        }
 
         public Task<PactUnitReceivables> ReadUnitAsync(string unitKey, int? companyId, DateOnly today, CancellationToken cancellationToken)
         {
