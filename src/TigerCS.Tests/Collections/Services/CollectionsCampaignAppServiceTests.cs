@@ -216,14 +216,14 @@ public sealed class CollectionsCampaignAppServiceTests
     {
         var h = new Harness(); h.Source.Items.Add(Row(tenant: "3009") with { DueDate = new(2026, 11, 5) });   // next month: never read, never listed
         var current = (await h.Service.PreviewAsync(h.Manager, "CurrentMonthReminder", new(2026, 10, 8))).Value!;
-        Assert.Empty(current.Items);
+        Assert.Empty(current.Items);                        // next month only: not listed at all
         h.Source.Items.Add(Row(tenant: "3002", day: 25));   // ONLY a coming day of the current month (today is 14 Oct): shown as Due once a unit is a candidate, but alone it is NOT one
-        Assert.Empty((await h.Service.PreviewAsync(h.Manager, "CurrentMonthReminder", new(2026, 10, 8))).Value!.Items);
+        Assert.All((await h.Service.PreviewAsync(h.Manager, "CurrentMonthReminder", new(2026, 10, 8))).Value!.Items, i => Assert.Equal("NotEligible", i.Status));   // listed (it is Due), but not a send candidate
         h.Source.Items.Add(Row(tenant: "3002", day: 10));   // an instalment up to today makes the unit a candidate; the coming day then counts in Due
         var item = Assert.Single((await h.Service.PreviewAsync(h.Manager, "CurrentMonthReminder", new(2026, 10, 8))).Value!.Items);
         Assert.Equal(("3002", 1000m, 0m, 500m), (item.TenantId, item.DueAmount, item.OverdueAmount, item.Amount));
         var overdue = (await h.Service.PreviewAsync(h.Manager, "OverdueReminder", new(2026, 10, 8))).Value!;
-        Assert.Empty(overdue.Items);
+        Assert.All(overdue.Items, i => Assert.Equal("NotEligible", i.Status));   // listed (it is Due), never an Overdue candidate
     }
 
     [Fact]
@@ -264,7 +264,8 @@ public sealed class CollectionsCampaignAppServiceTests
         h.Source.Items.AddRange([Row(tenant: "A") with { DueDate = new(2026, 2, 5) },   // overdue > 1 month: qualifies
                                  Row(tenant: "B") with { DueDate = new(2026, 9, 20) }]); // overdue < 1 month: does not
         var report = (await h.Service.PreviewAsync(h.Manager, "OverdueReminder", new(2026, 10, 8))).Value!;
-        Assert.Equal("A", Assert.Single(report.Items).TenantId);
+        Assert.Equal("A", Assert.Single(report.Items, i => i.Status != "NotEligible").TenantId);
+        Assert.Equal("NotEligible", report.Items.Single(i => i.TenantId == "B").Status);   // B stays listed with its balance
         Assert.Contains(report.RangeNotes!, n => n.Contains("08 Sep 2026"));
     }
 

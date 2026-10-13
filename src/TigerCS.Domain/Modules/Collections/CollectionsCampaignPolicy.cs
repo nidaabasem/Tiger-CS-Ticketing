@@ -29,7 +29,11 @@ public enum CollectionsCampaignFlags
     /// <summary>The CRM sale of the unit cannot be tied to one company (both companies hold the same unit key): nobody is chosen and the unit needs review.</summary>
     CrmCompanyAmbiguous = 512,
     /// <summary>CRM contact data is enabled but could not be used (never loaded, stale, or unreadable): the contact may be incomplete, so the unit is not treated as ready. This is NOT "CRM holds no value".</summary>
-    CrmUnavailable = 1024
+    CrmUnavailable = 1024,
+    /// <summary>The stage rule finds no qualifying balance for the unit (nothing inside its eligibility scope). The unit stays listed with its real balances; it is simply not ready to send.</summary>
+    NoQualifyingBalance = 2048,
+    /// <summary>The stage amount does not exceed the stage threshold. Same as above: listed, not ready.</summary>
+    BelowThreshold = 4096
 }
 
 public sealed record CampaignInstalment(DateOnly DueDate, decimal RemainingAmount);

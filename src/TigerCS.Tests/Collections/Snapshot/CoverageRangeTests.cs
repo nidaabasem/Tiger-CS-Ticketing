@@ -145,7 +145,7 @@ public sealed class CoverageRangeTests
         h.Source.Companies[32] = Covered(32, "2026-01-01", "2099-12-31");
         h.Source.Rows.Add(Row("c", new DateTime(2026, 3, 20)));
         var preview = (await h.Campaigns.PreviewAsync(h.Manager, "CurrentMonthReminder", dateFrom: From, dateTo: new DateOnly(2026, 3, 31))).Value!;
-        Assert.All(preview.Items, c => { Assert.Equal("NeedsReview", c.Status); Assert.Contains("CoverageIncomplete", c.Reason); });
+        Assert.All(preview.Items.Where(c => c.Status != "NotEligible"), c => { Assert.Equal("NeedsReview", c.Status); Assert.Contains("CoverageIncomplete", c.Reason); });
         foreach (var mode in new[] { "review", "genesys" })
         {
             var blocked = await h.Campaigns.ExportAsync(h.Manager, "CurrentMonthReminder", mode, dateFrom: From, dateTo: new DateOnly(2026, 3, 31));

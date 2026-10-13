@@ -535,6 +535,9 @@ public sealed class CustomerPaymentTabRenderTests : IDisposable
         Assert.Matches(@"data-statement=""total"">\s*<strong[^>]*>AED 1,483,861\.00<", html);
         Assert.True(html.IndexOf("data-statement=\"due\"", StringComparison.Ordinal) < html.IndexOf("data-statement=\"outstanding\"", StringComparison.Ordinal));
         Assert.True(html.IndexOf("data-statement=\"outstanding\"", StringComparison.Ordinal) < html.IndexOf("data-statement=\"paid\"", StringComparison.Ordinal));
+        Assert.Contains("<th>Payment Status</th>", html, StringComparison.Ordinal);
+        Assert.DoesNotContain("data-kpi=\"remaining\"", html, StringComparison.Ordinal);       // the Due / Overdue snapshot cards do not stand in for (or sit beside) the complete statement
+        Assert.DoesNotContain("data-payment-schedule", html, StringComparison.Ordinal);
         Assert.Contains("<th>Cheque Number</th>", html, StringComparison.Ordinal);
         Assert.Equal(2, Regex.Matches(html, "data-statement-row=\"Paid\"").Count);          // a split of one date stays two rows
         Assert.Single(Regex.Matches(html, "data-statement-row=\"Outstanding\""));         // a future row is listed

@@ -362,28 +362,37 @@ public sealed partial class RcvRealSqlTests
         var manager = new CollectionsCaller(Guid.NewGuid(), [Roles.CsManager], []);
         var from = new DateOnly(2000, 1, 1);
         // Current-month stage (1-31 Oct, the whole month): D1's apartment A (60 on 1 Oct, 60 overdue from September), Sharjah's contactless TP127-301 (250, 5 Oct).
+        static IEnumerable<CollectionsCampaignContactDto> Eligible(CollectionsCampaignPreviewDto r) => r.Items.Where(i => i.Status != "NotEligible");
         var current = (await service.PreviewAsync(manager, "CurrentMonthReminder", dateFrom: from, minTotal: 100m)).Value!;
-        Assert.Equal(["TP127-301", "TP101-101"], current.Items.Select(i => i.UnitCode));                    // newest tower first (127, then 101)
+        // Every unit above the minimum is LISTED (as Receivables lists it); only these two are eligible for the current-month stage.
+        Assert.Equal(["TP127-301", "TP105-501", "TP103-514", "TP102-201", "TP101-101"], current.Items.Select(i => i.UnitCode));            // newest tower first (127, 105, 103, 102, 101)
+        Assert.Equal(["TP127-301", "TP101-101"], Eligible(current).Select(i => i.UnitCode));
+        Assert.All(current.Items.Where(i => i.Status == "NotEligible"), i => Assert.Equal("NoQualifyingBalance", i.Reason));
         var contactless = current.Items[0];
         Assert.Equal((32, "", ""), (contactless.CompanyId, contactless.Phone, contactless.Email));          // no mobile and no e-mail: the receivable is still listed ...
         Assert.Contains("NoValidContact", contactless.Reason);                                               // ... and the reason says why it cannot be sent
         Assert.Equal((250m, 0m, 250m), (contactless.DueAmount, contactless.OverdueAmount, contactless.TotalAmount));      // 5 Oct: inside the current month
-        var a = current.Items[1];
+        var a = current.Items.Single(i => i.UnitCode == "TP101-101");
         Assert.Equal((4, "Dina One", 60m, 60m, 120m), (a.CompanyId, a.CustomerName, a.DueAmount, a.OverdueAmount, a.TotalAmount));
+        var overdueOnly = current.Items.Single(i => i.UnitCode == "TP105-501");
+        Assert.Equal(("NotEligible", 0m, 150m, 150m), (overdueOnly.Status, overdueOnly.DueAmount, overdueOnly.OverdueAmount, overdueOnly.TotalAmount));   // its balance is shown unchanged
         // The Receivables page shows the same apartment with the same figures.
         var page = (await Page(minTotal: 100m)).Units.Single(u => u.CompanyId == 4 && u.UnitCode == "TP101-101");
         Assert.Equal(a.TotalAmount, page.RemainingTotal);
-        // Minimum Total: strictly greater, cleared = everything due or overdue (in the stage).
-        Assert.Equal(["TP127-301", "TP101-101"], (await service.PreviewAsync(manager, "CurrentMonthReminder", dateFrom: from, minTotal: 119.99m)).Value!.Items.Select(i => i.UnitCode));
-        Assert.Equal(["32:TP140-302", "32:TP127-301", "4:TP101-101", "4:TP101-102"],                          // minimum 40: Sharjah's own 40 (TP101-101) is not GREATER than 40; newest tower first, then the units of tower 101 by number
+        // Minimum Total: strictly greater, cleared = everything due or overdue.
+        Assert.Equal(["TP127-301", "TP101-101"], Eligible((await service.PreviewAsync(manager, "CurrentMonthReminder", dateFrom: from, minTotal: 119.99m)).Value!).Select(i => i.UnitCode));
+        Assert.Equal(["32:TP140-302", "32:TP127-301", "4:TP105-501", "4:TP103-514", "4:TP102-201", "4:TP101-101", "4:TP101-102"],      // minimum 40: Sharjah's own 40 (TP101-101) is not GREATER than 40; newest tower first
             (await service.PreviewAsync(manager, "CurrentMonthReminder", dateFrom: from, minTotal: 40m)).Value!.Items.Select(i => $"{i.CompanyId}:{i.UnitCode}"));
-        Assert.Equal(["TP127-301"], (await service.PreviewAsync(manager, "CurrentMonthReminder", dateFrom: from, minTotal: 120m)).Value!.Items.Select(i => i.UnitCode));   // 120 is not greater than 120
+        Assert.Equal(["TP127-301", "TP105-501", "TP103-514", "TP102-201"], (await service.PreviewAsync(manager, "CurrentMonthReminder", dateFrom: from, minTotal: 120m)).Value!.Items.Select(i => i.UnitCode));   // 120 is not greater than 120
         var cleared = (await service.PreviewAsync(manager, "CurrentMonthReminder", dateFrom: from, minTotal: null)).Value!;
-        Assert.Equal(5, cleared.TotalCount);                                                                  // A, B, TP101-101 of Sharjah, TP127-301, TP140-302
-        // The overdue stage reaches the previous YEAR (the window starts in 2000) and still counts D2's 50 from September in its Total.
+        Assert.Equal(8, cleared.TotalCount);                                                                  // every unit with something Due or Overdue, whatever the stage says
+        Assert.Equal(new[] { "TP101-101", "TP101-101", "TP101-102", "TP127-301", "TP140-302" }, Eligible(cleared).Select(i => i.UnitCode).Order().ToArray());
+        // The overdue stage reaches the previous YEAR (the window starts in 2000) and still counts D2's 50 from September in its Total. Same listed units, other readiness.
         var overdue = (await service.PreviewAsync(manager, "OverdueReminder", dateFrom: from, minTotal: null)).Value!;
-        Assert.Equal(["TP103-514", "TP102-201"], overdue.Items.Select(i => i.UnitCode));                    // newest tower first (103, then 102)
-        Assert.Equal((350m, 350m), (overdue.Items[1].OverdueAmount, overdue.Items[1].TotalAmount));
+        Assert.Equal(cleared.Items.Select(i => $"{i.CompanyId}:{i.UnitCode}"), overdue.Items.Select(i => $"{i.CompanyId}:{i.UnitCode}"));
+        Assert.Equal(["TP103-514", "TP102-201"], Eligible(overdue).Select(i => i.UnitCode));                  // newest tower first (103, then 102)
+        var d2 = overdue.Items.Single(i => i.UnitCode == "TP102-201");
+        Assert.Equal((350m, 350m), (d2.OverdueAmount, d2.TotalAmount));
         Assert.DoesNotContain(overdue.Items, i => i.UnitCode.Contains('*') || i.TenantId == "D4");           // cancelled / invalid units never reach a campaign
         // The review export is exactly the previewed rows.
         var export = (await service.ExportAsync(manager, "CurrentMonthReminder", "review", dateFrom: from, minTotal: 100m)).Value!;

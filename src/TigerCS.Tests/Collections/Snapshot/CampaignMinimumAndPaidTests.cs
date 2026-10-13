@@ -88,7 +88,10 @@ public sealed class CampaignMinimumAndPaidTests
             Row("G", 3, new(2026, 11, 1), 700m)]);                                                // only next month: not listed at all
         var service = Service(source, 0m);
         var preview = (await service.PreviewAsync(Manager, "CurrentMonthReminder", minTotal: null)).Value!;
-        var a = Assert.Single(preview.Items);                                                     // F (only a coming day) and G (only next month) are not candidates
+        var a = Assert.Single(preview.Items, i => i.Status != "NotEligible");                                    // F (only a coming day) is listed but NotEligible; G (only next month) is not listed at all
+        var f = preview.Items.Single(i => i.TenantId == "F");
+        Assert.Equal(("NotEligible", 900m, 0m), (f.Status, f.DueAmount, f.OverdueAmount));       // its balances are shown unchanged; only readiness says no
+        Assert.DoesNotContain(preview.Items, i => i.TenantId == "G");
         Assert.Equal("A", a.TenantId);
         Assert.Equal((1400m, 100m, 1500m), (a.DueAmount, a.OverdueAmount, a.TotalAmount));        // the shown figures: 300 + 200 + 900 are Due (the coming 20th included), the September 100 is Overdue, 1 Nov is in neither
         Assert.Equal(500m, a.Amount);                                                             // the STAGE amount is unchanged: only the October instalments up to today (300 + 200), never the coming 900
@@ -111,7 +114,7 @@ public sealed class CampaignMinimumAndPaidTests
         Assert.Equal(250m, item.Amount);                                                          // the stage amount stays 100 + 150 (up to today); the coming 400 is shown, never sent
         Assert.Equal(new DateOnly(2026, 10, 31), october.DateTo);                                 // the whole month, the preview shows the window it really used
         var september = (await service.PreviewAsync(Manager, "CurrentMonthReminder", dateFrom: new(2026, 9, 1), dateTo: new(2026, 9, 30), minTotal: null)).Value!;
-        Assert.Empty(september.Items);                                                            // the stage's own eligibility (this month's instalments) is unchanged
+        Assert.All(september.Items, i => Assert.Equal("NotEligible", i.Status));                      // the stage's own eligibility (this month's instalments) is unchanged: nothing is sendable
         var next = await service.PreviewAsync(Manager, "CurrentMonthReminder", dateFrom: new(2026, 11, 1), dateTo: new(2026, 11, 30), minTotal: null);
         Assert.Equal(CollectionsOutcome.InvalidRequest, next.Outcome);                            // next month is neither Due nor Overdue: nothing is listed
     }

@@ -19,7 +19,7 @@ else if (Model.Report is { } report)
         {
             <div class="campaign-actions">
                 <a class="btn" href="@Model.PageUrl(export: "review")">Export review CSV</a>
-                @if (report.TotalCount > 0 && report.ReadyCount == report.TotalCount)
+                @if (report.ReadyCount > 0 && report.ReadyCount + report.NotEligibleCount == report.TotalCount)
                 { <a class="btn btn-primary" href="@Model.PageUrl(export: "genesys")">Export Genesys CSV</a> }
             </div>
         }
@@ -29,8 +29,8 @@ else if (Model.Report is { } report)
                 <tbody>
                 @foreach (var row in report.Items)
                 {
-                    <tr>
-                        <td><strong>@row.CustomerName</strong>@foreach (var note in CampaignsModel.ReviewNotes(row, report.Crm?.State)) { <span class="receivables-meta receivables-meta--review" data-unit-note>@note</span> }</td>
+                    <tr data-campaign-status="@row.Status">
+                        <td><strong>@row.CustomerName</strong>@foreach (var note in CampaignsModel.ReviewNotes(row, report.Crm?.State)) { <span class="receivables-meta receivables-meta--review" data-unit-note>@note</span> }@if (row.Status == "NotEligible") { <span class="receivables-meta" data-campaign-readiness>@CampaignsModel.Readiness(row)</span> }</td>
                         <td>@(row.Phone.Length > 0 ? row.Phone : "—")@if (row.Phone.Length == 0) { <span class="receivables-meta receivables-meta--missing" data-unit-note>@CampaignsModel.NoMobileNote(row)</span> }</td>
                         <td>@(row.Email.Length > 0 ? row.Email : "—")@if (row.Email.Length == 0) { <span class="receivables-meta receivables-meta--missing" data-unit-note>No email: email not possible</span> }</td>
                         <td>@CollectionsDisplay.TowerCell(row.TowerName, row.TowerNumber, row.ProjectCode)</td>
