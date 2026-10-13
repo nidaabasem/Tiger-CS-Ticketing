@@ -235,12 +235,17 @@ tickets (`+971 50 123 4567` is the same caller).
     "matchedCustomerCount": 1,
     "units": ["Tiger Tower A - 1204"],
     "unitsText": "Tiger Tower A - 1204",
+    "selectableUnits": [
+      { "label": "Tiger Tower A - 1204", "unitCode": "TP125-1204", "paymentLookupReady": true, "sources": ["Crm"] }
+    ],
     "recentTicketNumbers": ["TG-CS-20260901-0044"],
     "openTicketNumbers": ["TG-CS-20260901-0044"],
     "recentTicketsText": "TG-CS-20260901-0044 (InProgress)"
   }
 }
 ```
+
+**Units.** Expired PACT contracts (end date before today in Dubai; ending today or no end date stay) are omitted from `externalSources[].customers[].units`, `screenPop.units`, `unitsText` and `selectableUnits`; CRM units are never dropped for a PACT expiry. CRM units (`crmBuyers[].units[]`) gain an additive `unitCode` (`projectCode` + `-` + `unitNumber`, e.g. `TP130-902-B`); it is null when `projectCode` is missing or not a tower code, and is never derived from `projectId`. `selectableUnits` is the de-duplicated list: a unit is merged across CRM and PACT only when both resolve to the same unit code (CRM label kept), never by unit number or similar tower names. `paymentLookupReady` is false (and `unitCode` empty) when no code is resolved. `matchedCustomerCount` and the customer records are unaffected, and a shared phone number is not verified identity.
 
 `tickets` are the tickets that already arrived from this number, **open ones
 first**, so the agent knows the caller has a live case before they speak.

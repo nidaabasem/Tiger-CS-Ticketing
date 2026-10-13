@@ -48,8 +48,8 @@ Not covered by any action (routes exist in code): `agent-context`, `screen-pop`,
 
 ### 01 Customer Lookup
 * Request: GET, `phoneNumber` URL-escaped, `Accept` - matches. `requestTemplate: ${input.rawRequest}` on a GET is meaningless but harmless.
-* Response mapping vs `GenesysCustomerLookupResultDto`: `$.found, $.phoneNumber, $.crmStatus, $.openTicketCount, $.screenPop.{customerName,customerEmail,verificationSource,externalCustomerId,matchedCustomerCount,units,unitsText,recentTicketNumbers,openTicketNumbers,recentTicketsText}` all exist (camelCase). Success 200 only.
-* Gaps: output omits the CRM `customerId`/PACT tenant distinction (use `verificationSource`), omits `crmBuyers[]`, `externalSources[]`, `tickets[]`; there is no `customerKey`, so the flow must assemble `ext:Pact:{externalCustomerId}`. `units`/`unitsText` include expired PACT contracts unflagged (F-11).
+* Response mapping vs `GenesysCustomerLookupResultDto`: `$.found, $.phoneNumber, $.crmStatus, $.openTicketCount, $.screenPop.{customerName,customerEmail,verificationSource,externalCustomerId,matchedCustomerCount,units,unitsText,selectableUnits,recentTicketNumbers,openTicketNumbers,recentTicketsText}` all exist (camelCase). Success 200 only.
+* Gaps: output omits the CRM `customerId`/PACT tenant distinction (use `verificationSource`), omits `crmBuyers[]`, `externalSources[]`, `tickets[]`; there is no `customerKey`, so the flow must assemble `ext:Pact:{externalCustomerId}`. `units`/`unitsText`/`selectableUnits` exclude expired PACT contracts (F-11 fixed; Dubai-date rule, ending today stays, missing end date stays). `selectableUnits[].unitCode` is empty and `paymentLookupReady` false when the code cannot be resolved; a shared phone number is not verified identity.
 * Sample: `curl -H "Authorization: Bearer $T" "{TCS}/api/genesys/customers/lookup?phoneNumber=tel%3A%2B971501234567"` -> `200 {"phoneNumber":"+971501234567","found":true,"crmStatus":"Found",...,"screenPop":{...}}`.
 
 ### 02 Create or Reuse Ticket

@@ -26,6 +26,7 @@
         "matchedCustomerCount": "$.screenPop.matchedCustomerCount",
         "units": "$.screenPop.units",
         "unitsText": "$.screenPop.unitsText",
+        "selectableUnits": "$.screenPop.selectableUnits",
         "recentTicketNumbers": "$.screenPop.recentTicketNumbers",
         "openTicketNumbers": "$.screenPop.openTicketNumbers",
         "recentTicketsText": "$.screenPop.recentTicketsText"
@@ -42,11 +43,12 @@
         "matchedCustomerCount": "0",
         "units": "[]",
         "unitsText": "\"\"",
+        "selectableUnits": "[]",
         "recentTicketNumbers": "[]",
         "openTicketNumbers": "[]",
         "recentTicketsText": "\"\""
       },
-      "successTemplate": "{\"found\": ${found}, \"phoneNumber\": ${phoneNumber}, \"crmStatus\": ${crmStatus}, \"customerName\": ${customerName}, \"customerEmail\": ${customerEmail}, \"verificationSource\": ${verificationSource}, \"externalCustomerId\": ${externalCustomerId}, \"matchedCustomerCount\": ${matchedCustomerCount}, \"units\": ${units}, \"unitsText\": ${unitsText}, \"recentTicketNumbers\": ${recentTicketNumbers}, \"openTicketNumbers\": ${openTicketNumbers}, \"recentTicketsText\": ${recentTicketsText}, \"openTicketCount\": ${openTicketCount}}"
+      "successTemplate": "{\"found\": ${found}, \"phoneNumber\": ${phoneNumber}, \"crmStatus\": ${crmStatus}, \"customerName\": ${customerName}, \"customerEmail\": ${customerEmail}, \"verificationSource\": ${verificationSource}, \"externalCustomerId\": ${externalCustomerId}, \"matchedCustomerCount\": ${matchedCustomerCount}, \"units\": ${units}, \"unitsText\": ${unitsText}, \"selectableUnits\": ${selectableUnits}, \"recentTicketNumbers\": ${recentTicketNumbers}, \"openTicketNumbers\": ${openTicketNumbers}, \"recentTicketsText\": ${recentTicketsText}, \"openTicketCount\": ${openTicketCount}}"
     }
   },
   "contract": {
@@ -109,7 +111,20 @@
             "items": {
               "type": "string"
             },
-            "description": "\"Project - Unit\" labels."
+            "description": "\"Project - Unit\" labels, de-duplicated. Expired PACT contracts are never listed."
+          },
+          "selectableUnits": {
+            "type": "array",
+            "description": "Same units as `units`, structured. Offer these to the agent; use unitCode for a payment lookup only when paymentLookupReady is true.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "label": { "type": "string", "description": "Display label; the CRM label when CRM and PACT both confirm the unit." },
+                "unitCode": { "type": "string", "description": "Resolved PACT unit code (e.g. TP130-902-B), or empty when it could not be resolved. Never guessed." },
+                "paymentLookupReady": { "type": "boolean", "description": "True only when unitCode is resolved. Selecting a unit does not verify the caller." },
+                "sources": { "type": "array", "items": { "type": "string" }, "description": "Crm and/or Pact." }
+              }
+            }
           },
           "unitsText": {
             "type": "string",

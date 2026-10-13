@@ -75,8 +75,13 @@ public sealed class GenesysCustomerLookupAppService(
 
         var search = await customerSearchAppService.SearchByPhoneAsync(searched, cancellationToken);
 
+        // Genesys-only projection: expired PACT contracts are dropped from the
+        // unit lists. The shared search keeps them (Collections mapping and
+        // history read them); customers are kept even with no unit left.
+        var externalSources = search.ExternalSources.Select(WithoutExpiredPactUnits).ToList();
+
         var found = search.CrmBuyers.Count > 0
-            || search.ExternalSources.Any(s => s.Customers.Count > 0);
+            || externalSources.Any(s => s.Customers.Count > 0);
 
         // Tickets that arrived from this number. Deliberately NOT scoped to
         // one caller's visible departments: Genesys calls as a service
@@ -106,11 +111,27 @@ public sealed class GenesysCustomerLookupAppService(
             found,
             search.CrmStatus,
             search.CrmBuyers,
-            search.ExternalSources,
+            externalSources,
             ticketDtos,
             tickets.Count(IsOpen),
-            ToScreenPop(search.CrmBuyers, search.ExternalSources, ticketDtos));
+            ToScreenPop(search.CrmBuyers, externalSources, ticketDtos));
     }
+
+    /// <summary>
+    /// Drops PACT units whose contract expired (the Dubai-date rule already
+    /// applied by the lookup, which flags rather than hides them). Contracts
+    /// ending today or with no readable end date are not flagged and stay.
+    /// Customers are never removed, so matched-customer counts are unchanged.
+    /// </summary>
+    private static CustomerLookupSourceResultDto WithoutExpiredPactUnits(CustomerLookupSourceResultDto source) =>
+        source.Source != nameof(CustomerLookupSource.Pact)
+            ? source
+            : source with
+            {
+                Customers = source.Customers
+                    .Select(c => c with { Units = c.Units.Where(u => !u.IsContractExpired).ToList() })
+                    .ToList()
+            };
 
     private static readonly GenesysScreenPopDto EmptyScreenPop =
         new(string.Empty, string.Empty, string.Empty, string.Empty, 0, [], string.Empty, [], [], string.Empty);
@@ -132,7 +153,8 @@ public sealed class GenesysCustomerLookupAppService(
                 b.Customer.CustomerId.ToString(CultureInfo.InvariantCulture),
                 b.Customer.FullNameEnglish ?? b.Customer.FullNameArabic,
                 b.Customer.Email,
-                b.Units.Select(u => UnitLabel(u.ProjectName, u.UnitNumber))))
+                b.Units.Select(u => new ScreenPopUnit(
+                    nameof(CustomerLookupSource.Crm), UnitLabel(u.ProjectName, u.UnitNumber), u.UnitCode))))
             .Concat(externalSources
                 .OrderBy(s => s.Source == nameof(CustomerLookupSource.Pact) ? 0 : 1)
                 .SelectMany(s => s.Customers.Select(c => new ScreenPopCustomer(
@@ -140,16 +162,14 @@ public sealed class GenesysCustomerLookupAppService(
                     c.ExternalCustomerId,
                     c.DisplayName,
                     c.Email,
-                    c.Units.Select(u => UnitLabel(u.PropertyName ?? u.TowerName, u.UnitNumber))))))
+                    c.Units.Select(u => new ScreenPopUnit(
+                        s.Source, UnitLabel(u.PropertyName ?? u.TowerName, u.UnitNumber), u.UnitCode))))))
             .ToList();
 
         var primary = customers.FirstOrDefault();
 
-        var units = customers
-            .SelectMany(c => c.Units)
-            .Where(label => label.Length > 0)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToList();
+        var selectable = DeduplicateUnits(customers.SelectMany(c => c.Units));
+        var units = selectable.Select(u => u.Label).ToList();
 
         return new GenesysScreenPopDto(
             CustomerName: primary?.Name?.Trim() ?? string.Empty,
@@ -161,7 +181,52 @@ public sealed class GenesysCustomerLookupAppService(
             UnitsText: string.Join("; ", units),
             RecentTicketNumbers: tickets.Select(t => t.TicketNumber).ToList(),
             OpenTicketNumbers: tickets.Where(t => t.IsOpen).Select(t => t.TicketNumber).ToList(),
-            RecentTicketsText: string.Join("; ", tickets.Select(t => $"{t.TicketNumber} ({t.TicketStatus})")));
+            RecentTicketsText: string.Join("; ", tickets.Select(t => $"{t.TicketNumber} ({t.TicketStatus})")),
+            SelectableUnits: selectable);
+    }
+
+    /// <summary>
+    /// One entry per physical unit. Identity is the resolved unit code (CRM
+    /// project code + number, or PACT's own code) — two sources agree on a unit
+    /// only when their codes are equal. Never the unit number alone and never
+    /// similar tower names. A unit with no resolved code is only merged with an
+    /// identical label that also has no code (the pre-existing text de-dup), and
+    /// is reported as not ready for payment lookup. CRM's label wins.
+    /// </summary>
+    private static List<GenesysSelectableUnitDto> DeduplicateUnits(IEnumerable<ScreenPopUnit> units)
+    {
+        var entries = new List<(string Key, string Label, string Code, List<string> Sources, bool FromCrm)>();
+        var index = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var unit in units.Where(u => u.Label.Length > 0))
+        {
+            var code = string.IsNullOrWhiteSpace(unit.UnitCode) ? string.Empty : unit.UnitCode.Trim();
+            var key = code.Length > 0 ? "code:" + code : "label:" + unit.Label;
+            var isCrm = unit.Source == nameof(CustomerLookupSource.Crm);
+
+            if (!index.TryGetValue(key, out var i))
+            {
+                index[key] = entries.Count;
+                entries.Add((key, unit.Label, code, [unit.Source], isCrm));
+                continue;
+            }
+
+            var existing = entries[i];
+            if (!existing.Sources.Contains(unit.Source))
+            {
+                existing.Sources.Add(unit.Source);
+            }
+
+            entries[i] = isCrm && !existing.FromCrm
+                ? existing with { Label = unit.Label, FromCrm = true }
+                : existing;
+        }
+
+        return entries
+            .Select(e => new GenesysSelectableUnitDto(
+                e.Label, e.Code, PaymentLookupReady: e.Code.Length > 0,
+                [.. e.Sources.OrderBy(x => x == nameof(CustomerLookupSource.Crm) ? 0 : 1)]))
+            .ToList();
     }
 
     private static string UnitLabel(string? project, string? unitNumber)
@@ -186,5 +251,7 @@ public sealed class GenesysCustomerLookupAppService(
         ticket.CreatedAtUtc);
 
     private sealed record ScreenPopCustomer(
-        string Source, string ExternalId, string? Name, string? Email, IEnumerable<string> Units);
+        string Source, string ExternalId, string? Name, string? Email, IEnumerable<ScreenPopUnit> Units);
+
+    private sealed record ScreenPopUnit(string Source, string Label, string? UnitCode);
 }

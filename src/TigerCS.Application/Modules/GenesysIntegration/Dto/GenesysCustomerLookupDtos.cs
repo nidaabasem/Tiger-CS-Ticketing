@@ -91,6 +91,7 @@ public sealed record GenesysCustomerLookupResultDto(
 /// <param name="RecentTicketNumbers">The caller's recent ticket numbers, in <see cref="GenesysCustomerLookupResultDto.Tickets"/> order.</param>
 /// <param name="OpenTicketNumbers">The subset still being worked.</param>
 /// <param name="RecentTicketsText">The recent tickets as one display string ("TG-… (InProgress); TG-… (Closed)").</param>
+/// <param name="SelectableUnits">Additive. The same de-duplicated units as <paramref name="Units"/>, structured: display label plus the resolved PACT unit code. Expired PACT contracts are never listed. Same order and count as <paramref name="Units"/>.</param>
 public sealed record GenesysScreenPopDto(
     string CustomerName,
     string CustomerEmail,
@@ -101,4 +102,24 @@ public sealed record GenesysScreenPopDto(
     string UnitsText,
     IReadOnlyList<string> RecentTicketNumbers,
     IReadOnlyList<string> OpenTicketNumbers,
-    string RecentTicketsText);
+    string RecentTicketsText,
+    IReadOnlyList<GenesysSelectableUnitDto>? SelectableUnits = null)
+{
+    /// <summary>Never null on the wire: an absent list is an empty one.</summary>
+    public IReadOnlyList<GenesysSelectableUnitDto> SelectableUnits { get; init; } = SelectableUnits ?? [];
+}
+
+/// <summary>
+/// One unit the agent can pick on the screen pop. Selection alone proves
+/// nothing about who is calling: a shared phone number is not verified
+/// identity, so payment details still need the verification flow.
+/// </summary>
+/// <param name="Label">The display label ("Project - Unit"); the CRM label when CRM and PACT both confirm the unit.</param>
+/// <param name="UnitCode">The resolved PACT unit code (<c>TP130-902-B</c>), or empty when it could not be resolved — never guessed.</param>
+/// <param name="PaymentLookupReady">True only when <paramref name="UnitCode"/> is resolved. False means the unit is shown for the agent but must not be sent to a payment lookup.</param>
+/// <param name="Sources">Which sources confirm the unit: "Crm" and/or "Pact".</param>
+public sealed record GenesysSelectableUnitDto(
+    string Label,
+    string UnitCode,
+    bool PaymentLookupReady,
+    IReadOnlyList<string> Sources);
