@@ -1,5 +1,7 @@
 # CRM bulk owner feed – `GET /TicketingSystem/GetUnitOwners`
 
+> **Status: implemented in CRM and tested** (`success=true`, `total=10086`). Confirmed schema: `tblCustomers` (`FullNameEnglish`, `FullNameArabic`, `MobileNumber`, `Email`); `tblLeadCustomers` links `CustomerID`, `LeadID`, `UnitID`; `tblUnits` (`Number`, `ProjectID`); `tblProjects` (`Code` = projectCode, `Name` = projectName); LeadStatus Sold = 8, Contract = 9, Approved = 4, Cancelled = 6; buyer `customerType` = 1. Ingestion in Ticketing is verified after deployment with `database/collections-receivables/tools/verify_crm_owner_ingestion.sql` and `GET /api/collections/crm-owners/status`.
+
 Collections (Receivables, Campaigns) and the unit Payment Summary link a unit to its customer **by tower + unit**, CRM first, PACT completing.
 The repository holds no bulk by-unit CRM source (only `GetBuyerByPhone`, `GetUnitDetails`, `GetCustomerDocuments`), and the CRM entity column names are not in this repository, so
 linking is **not complete end-to-end until CRM publishes this endpoint** and `CollectionsSource:CrmOwners:Enabled` is switched on. Until then Collections runs on PACT contact data only
@@ -20,9 +22,9 @@ A page shorter than `pageSize` ends the load.
 ## What CRM must guarantee
 | Field | Requirement |
 |---|---|
-| `projectCode` + `unitNumber` | Joined as `projectCode-unitNumber` they equal PACT's unit code (`TP140-101`). **Confirm the CRM project column that holds `TP###`.** A row sent without a `projectCode` is completed from the verified `dbo.CollectionsCrmProjectMap` only when it has exactly ONE code for that project; otherwise it is counted as `NoProjectCode` (state `LastNote`). |
+| `projectCode` + `unitNumber` | Joined as `projectCode-unitNumber` they equal PACT's unit code (`TP140-101`). `projectCode` is `tblProjects.Code` (confirmed); `projectName` is `tblProjects.Name`. A row sent without a `projectCode` is completed from the verified `dbo.CollectionsCrmProjectMap` only when it has exactly ONE code for that project; otherwise it is counted as `NoProjectCode` (state `LastNote`). |
 | `projectName` | The tower's name as CRM calls it (e.g. *Blue Wave*). It is the SOURCE of the tower name shown by Receivables / Campaigns / the picker when `CollectionsTowers` has no real name (V012 `fn_Collections_TowerNames`). Two different names for one company's tower = no name. |
-| `leadStatus` | Only Sold / Contract leads. Observed: 4 = Contract, 8 = Sold (**confirm against CRM's enum**; configurable in `EligibleLeadStatuses`). |
+| `leadStatus` | Only Sold / Contract leads. CRM's confirmed enum: **Sold = 8, Contract = 9**, Approved = 4 (not a sale), Cancelled = 6. Configurable fallback `EligibleLeadStatuses` = `[8, 9]`. |
 | `leadStatusName` | Sent so a cancelled lead is refused by name too (`cancel`). Cancelled leads should not be sent at all. |
 | `customerType` | 1 = buyer. Tenants/representatives are ignored by Ticketing. |
 | One row per (lead, customer) | A unit with several qualifying customers is flagged *needs review*; Ticketing never picks the first. A former owner whose lead was cancelled must not appear. |

@@ -230,7 +230,7 @@ public sealed class CollectionsUnitStatementService(
             .OrderBy(r => r.Date is null).ThenBy(r => r.Date).ThenBy(r => Array.IndexOf(order, r.Status)).ToList();
         var notes = read.Notes.ToList();
         if (account.Proof == "UnitDirectory")
-            notes.Add("This is PACT's account statement (company " + account.CompanyId + ", tenant " + account.TenantId + "). The account holds no other unit in PACT's unit/account directory (open and fully paid units); the directory source was accepted as complete by configuration (ReceivablesSnapshot:AccountDirectoryComplete) and has not been compared with EDSM live by this release.");
+            notes.Add("This is PACT's account statement (company " + account.CompanyId + ", tenant " + account.TenantId + "). The account holds no other unit in PACT's unit/account directory (open and fully paid units); the directory source was accepted as complete by configuration (Collections:ReceivablesSnapshot:AccountDirectoryComplete) and has not been compared with EDSM live by this release.");
         var missing = read.Transactions.Where(l => l.Status != "Available").Select(l => l.TransactionType).ToList();
         if (read.Transactions.Count == 0) notes.Add("Payment rows were not requested from the source.");
         foreach (var m in missing) notes.Add($"{m} payments could not be read from the source, so the payment list is incomplete.");

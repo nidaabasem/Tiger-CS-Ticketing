@@ -20,6 +20,8 @@ namespace TigerCS.Tests.Web;
 /// <summary>Shared fake of TigerCS.Api for the Collections page tests (no PACT, no SQL: only the API contract the pages consume).</summary>
 internal sealed class FakeCollectionsApi : HttpMessageHandler
 {
+    /// <summary>The campaign preview also lists a unit the stage rule does not make eligible (status NotEligible) next to a ready one.</summary>
+    public bool IncludeNotEligible { get; set; }
     public HttpStatusCode Status { get; set; } = HttpStatusCode.OK;
     public bool Covered { get; set; } = true;
     public bool Loading { get; set; }
@@ -100,6 +102,12 @@ internal sealed class FakeCollectionsApi : HttpMessageHandler
                 if (Status != HttpStatusCode.OK) return Task.FromResult(new HttpResponseMessage(Status));
                 var from = DateOnly.Parse(q["dateFrom"] ?? "2026-01-01"); var to = DateOnly.Parse(q["dateTo"] ?? "2026-10-31");
                 var date = new DateOnly(2026, 10, 14);
+                if (IncludeNotEligible && !NothingLoaded)
+                    return Json(new CollectionsCampaignPreviewDto(date, date, DateTime.UtcNow, "PACT", "CurrentMonthReminder", "2026-10:CurrentMonthReminder", [date], true, true, false, true,
+                        2, 1, 0, 1, 25,
+                        [new("ID", "ext:Pact:3001", 4, "3001", "Campaign Customer", "+971500003001", "c@example.test", 101, "TP140-101", "TP140", 500m, "AED", date, "CurrentMonthReminder", "2026-10:CurrentMonthReminder", "Ready", "Qualifies", "140", "Al Ghaf", 0m, 650m),
+                         new("ID2", "ext:Pact:3002", 4, "3002", "Not Eligible Customer", "+971500003002", "n@example.test", 102, "TP140-102", "TP140", 0m, "AED", null, "CurrentMonthReminder", "2026-10:CurrentMonthReminder", "NotEligible", "NoQualifyingBalance", "140", "Al Ghaf", 300m, 0m)],
+                        from, to, [], null, Snapshot(from, to), 100m, new ServerTimingsDto(9, 2, 15), null, 1));
                 return Json(new CollectionsCampaignPreviewDto(date, date, DateTime.UtcNow, "PACT", "CurrentMonthReminder", "2026-10:CurrentMonthReminder", [date], true, true, false, true,
                     NothingLoaded ? 0 : 1, 0, NothingLoaded ? 0 : 1, 1, 25,
                     NothingLoaded ? [] : [new("ID", "ext:Pact:3001", 4, "3001", "Campaign Customer", "+971500003001", "", 101, "TP140-101", "TP140", 500m, "AED", date, "CurrentMonthReminder", "2026-10:CurrentMonthReminder", "NeedsReview", "SourceReconciliationRequired", "140", "Al Ghaf", 0m, 650m)],

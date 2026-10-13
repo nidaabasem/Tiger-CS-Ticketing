@@ -164,8 +164,9 @@ public sealed class CampaignSnapshotTests
         var h = new Harness();
         h.Source.Rows.AddRange([Row("old", "TP124-1", 1, day: 20) with { DueDate = new DateTime(2026, 8, 1) }, Row("future", "TP124-2", 2, day: 20)]);
         var overdue = (await h.Service.PreviewAsync(h.Manager, "OverdueReminder", dateTo: new DateOnly(2026, 12, 31))).Value!;
-        Assert.Equal("old", Assert.Single(overdue.Items).TenantId);          // due 20 Oct is not overdue on 14 Oct
+        Assert.Equal("old", Assert.Single(overdue.Items, i => i.Status != "NotEligible").TenantId);          // due 20 Oct is not overdue on 14 Oct
         var narrowed = (await h.Service.PreviewAsync(h.Manager, "OverdueReminder", dateFrom: new DateOnly(2026, 9, 1))).Value!;
-        Assert.Equal(0, narrowed.TotalCount);                                // From only removes instalments, it never adds eligibility
+        Assert.Equal(0, narrowed.ReadyCount + narrowed.ReviewCount);       // From only removes instalments, it never adds eligibility
+        Assert.All(narrowed.Items, i => Assert.Equal("NotEligible", i.Status));
     }
 }

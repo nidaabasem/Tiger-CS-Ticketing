@@ -51,6 +51,22 @@ public sealed class CollectionsCampaignRenderTests
         Assert.Contains("handler=Export", html); Assert.Contains("minTotal=250.5", html); Assert.Contains("towerId=7", html); Assert.Contains("dateFrom=2026-10-01", html);
     }
 
+    [Fact]
+    public async Task ANotEligibleUnit_StaysListedWithItsBalances_AndOnlyItsReadinessSaysNo_WithNoViewDetails()
+    {
+        var api = new FakeCollectionsApi { IncludeNotEligible = true };
+        using var factory = CollectionsWebHost.Factory(api); using var client = factory.CreateClient();
+        var html = await (await client.GetAsync("/Collections/Campaigns?handler=Results&stage=CurrentMonthReminder&businessDate=2026-10-14")).Content.ReadAsStringAsync();
+        Assert.Contains("Not Eligible Customer", html);
+        Assert.Contains("TP140-102", html);
+        Assert.Matches("data-campaign-status=\"NotEligible\"", html);
+        Assert.Contains("Not eligible: no balance qualifies for this stage", html);
+        Assert.Matches(@"data-unit-due>\s*300\.00\s*<", html);                       // the unit's real Due is shown, not hidden or zeroed
+        Assert.Contains("Export Genesys CSV", html);                                    // every ELIGIBLE row is ready: the Genesys file (ready rows only) is offered
+        foreach (var gone in new[] { "View Details", "data-unit-toggle", "data-unit-detail", "Original amount", "Days late", "receivables-table--instalments" })
+            Assert.DoesNotContain(gone, html);                                          // Campaigns omit the expandable instalment details of Receivables
+    }
+
     [Theory]
     [InlineData(HttpStatusCode.Forbidden, "does not have permission")]
     [InlineData(HttpStatusCode.ServiceUnavailable, "campaign source is unavailable")]

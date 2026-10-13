@@ -24,7 +24,8 @@ public sealed class CollectionsCampaignVerificationTests
     {
         var result = await h.Service.PreviewAsync(h.Manager, stage, date);
         Assert.True(result.IsSuccess, result.Detail);
-        return result.Value!.Items.Select(c => c.TenantId).Order().ToList();
+        // Only units the stage makes eligible: units without a qualifying balance stay LISTED (status NotEligible, balances unchanged) but are not candidates.
+        return result.Value!.Items.Where(c => c.Status != "NotEligible").Select(c => c.TenantId).Order().ToList();
     }
 
     // =====================================================================
@@ -40,13 +41,13 @@ public sealed class CollectionsCampaignVerificationTests
         h.Source.Items.AddRange([R(D(2026, 2, 5), 900m, "BEFORE"), R(D(2026, 3, 5), 900m, "AFTER"), R(D(2026, 10, 10), 500m, "CURRENT", unit: 202)]);
 
         var overdue = (await h.Service.PreviewAsync(h.Manager, "OverdueReminder", new(2026, 10, 8))).Value!;
-        Assert.Equal("AFTER", Assert.Single(overdue.Items).TenantId);                                  // the configured start date is still the ELIGIBILITY lower bound ...
+        Assert.Equal("AFTER", Assert.Single(overdue.Items, i => i.Status != "NotEligible").TenantId);                                  // the configured start date is still the ELIGIBILITY lower bound ...
         Assert.Equal(new DateOnly(2000, 1, 1), overdue.DateFrom);                                      // ... while the READ (All months) reaches the whole history
         Assert.Equal(new DateOnly(2000, 1, 1), h.Source.LastRequest!.FromDate);
 
         var review = (await h.Service.ExportAsync(h.Manager, "OverdueReminder", "review", new(2026, 10, 8))).Value!;
-        Assert.DoesNotContain("BEFORE", review.Csv);
         Assert.Contains("AFTER", review.Csv);
+        Assert.Matches("\"BEFORE\"(.|\n)*?\"NotEligible\"", review.Csv);                             // listed with its balance, flagged not eligible
         Assert.Equal(new DateOnly(2000, 1, 1), h.Source.LastRequest!.FromDate);
 
         // Today in the test clock is 14 Oct 2026 = the CurrentMonthReminder day.
@@ -188,11 +189,11 @@ public sealed class CollectionsCampaignVerificationTests
         var h = new CollectionsCampaignAppServiceTests.Harness();
         // Customer 3001: two units, AED 1,000 each in September - AED 2,000 in total, but 1,000 per unit is not above 1,500.
         h.Source.Items.AddRange([R(D(2026, 9, 5), 1000m, "3001", 101), R(D(2026, 9, 6), 1000m, "3001", 102)]);
-        Assert.Empty((await h.Service.PreviewAsync(h.Manager, "LegalNotice", new(2026, 10, 8))).Value!.Items);
+        Assert.All((await h.Service.PreviewAsync(h.Manager, "LegalNotice", new(2026, 10, 8))).Value!.Items, i => Assert.Equal("NotEligible", i.Status));
 
         h.Source.Items.Clear();
         h.Source.Items.AddRange([R(D(2026, 9, 5), 1600m, "3001", 101), R(D(2026, 9, 6), 1000m, "3001", 102)]);
-        var one = Assert.Single((await h.Service.PreviewAsync(h.Manager, "LegalNotice", new(2026, 10, 8))).Value!.Items);
+        var one = Assert.Single((await h.Service.PreviewAsync(h.Manager, "LegalNotice", new(2026, 10, 8))).Value!.Items, c => c.Status != "NotEligible");
         Assert.Equal("TP140-101", one.UnitCode);
 
         h.Source.Items.Clear();
@@ -348,5 +349,27 @@ public sealed class CollectionsCampaignVerificationTests
         using var parser = new TextFieldParser(new StringReader(csv)) { Delimiters = [","], HasFieldsEnclosedInQuotes = true };
         parser.ReadFields();
         return parser.ReadFields()!;
+    }
+
+    [Fact]
+    public async Task TheGenesysFile_CarriesOnlyReadyUnits_NotEligibleUnitsStayInTheReviewFileWithTheirBalances_AndNothingIsSentByThisTest()
+    {
+        var h = new CollectionsCampaignAppServiceTests.Harness();
+        h.Campaign.FinancialSourceValidated = true;
+        // 3001: an instalment up to today -> eligible for the current-month stage. 3002: ONLY a coming day of the month -> listed (it is Due) but not eligible.
+        h.Source.Items.AddRange([R(D(2026, 10, 10), 500m, "3001", 101), R(D(2026, 10, 25), 700m, "3002", 102)]);
+
+        var preview = (await h.Service.PreviewAsync(h.Manager, "CurrentMonthReminder", new(2026, 10, 14), minTotal: null)).Value!;
+        Assert.Equal(["3001", "3002"], preview.Items.Select(c => c.TenantId).Order());
+        var notEligible = preview.Items.Single(c => c.TenantId == "3002");
+        Assert.Equal(("NotEligible", 700m, 0m), (notEligible.Status, notEligible.DueAmount, notEligible.OverdueAmount));
+        Assert.Equal(1, preview.NotEligibleCount);
+
+        var review = (await h.Service.ExportAsync(h.Manager, "CurrentMonthReminder", "review", new(2026, 10, 14), minTotal: null)).Value!;
+        Assert.Contains("\"3002\"", review.Csv); Assert.Contains("NotEligible", review.Csv);
+        var genesys = (await h.Service.ExportAsync(h.Manager, "CurrentMonthReminder", "genesys", new(2026, 10, 14), minTotal: null)).Value!;
+        Assert.Contains("\"3001\"", genesys.Csv);
+        Assert.DoesNotContain("\"3002\"", genesys.Csv);                       // never sent
+        Assert.Equal(1, genesys.RowCount);
     }
 }

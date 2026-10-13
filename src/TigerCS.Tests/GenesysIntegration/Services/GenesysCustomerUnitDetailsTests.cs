@@ -24,7 +24,7 @@ public sealed class GenesysCustomerUnitDetailsTests
     private const string Phone = "tel:+971500000900";
 
     private static CrmBuyerUnitDto Unit(int unitId, string number, int projectId, string project, int lead) =>
-        new(LeadId: lead, LeadStatus: 4, LeadStatusName: "Contract", UnitId: unitId, UnitNumber: number, UnitStatus: 3,
+        new(LeadId: lead, LeadStatus: 9, LeadStatusName: "Contract", UnitId: unitId, UnitNumber: number, UnitStatus: 3,
             UnitType: 2, FloorNumber: 12, ProjectId: projectId, ProjectName: project, ProjectArabicName: null,
             CustomerType: 1, CustomerTypeName: "Buyer");
 

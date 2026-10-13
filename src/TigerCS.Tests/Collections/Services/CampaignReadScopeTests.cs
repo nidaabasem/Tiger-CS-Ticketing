@@ -30,7 +30,8 @@ public sealed class CampaignReadScopeTests
         var h = Build();
         var report = (await h.Service.PreviewAsync(h.Manager, "OverdueReminder", minTotal: null)).Value!;
         Assert.Equal(new DateOnly(2000, 1, 1), h.Source.LastRequest!.FromDate);                         // the READ reaches previous years ...
-        Assert.Equal(["A", "C"], report.Items.Select(i => i.TenantId).Order());                          // ... but B (only pre-start history) is not eligible
+        Assert.Equal(["A", "C"], report.Items.Where(i => i.Status != "NotEligible").Select(i => i.TenantId).Order());      // ... but B (only pre-start history) is not eligible
+        Assert.Equal("NotEligible", report.Items.Single(i => i.TenantId == "B").Status);                 // it is still LISTED with its real balances
         var a = report.Items.Single(i => i.TenantId == "A");
         Assert.Equal(200m, a.Amount);                                                                    // the STAGE amount: only the eligible row (not 500)
         Assert.Equal((0m, 500m, 500m), (a.DueAmount, a.OverdueAmount, a.TotalAmount));                   // the figures shown: all history up to today, like Receivables
@@ -44,8 +45,9 @@ public sealed class CampaignReadScopeTests
         var all = (await Build().Service.PreviewAsync(Build().Manager, "OverdueReminder", minTotal: null)).Value!;
         var scoped = (await Build().Service.PreviewAsync(Build().Manager, "OverdueReminder", dateFrom: new DateOnly(2026, 1, 1), minTotal: null)).Value!;
         static object Policy(TigerCS.Application.Modules.Collections.Dto.CollectionsCampaignContactDto i) => new { i.TenantId, i.Amount, i.Status, i.Reason, i.DueDate, i.RecordId };
-        Assert.Equal(scoped.Items.OrderBy(i => i.TenantId).Select(Policy), all.Items.OrderBy(i => i.TenantId).Select(Policy));
-        Assert.Equal((scoped.TotalCount, scoped.ReadyCount, scoped.ReviewCount), (all.TotalCount, all.ReadyCount, all.ReviewCount));
+        Assert.Equal(scoped.Items.Where(i => i.Status != "NotEligible").OrderBy(i => i.TenantId).Select(Policy), all.Items.Where(i => i.Status != "NotEligible").OrderBy(i => i.TenantId).Select(Policy));
+        Assert.Equal((scoped.ReadyCount, scoped.ReviewCount), (all.ReadyCount, all.ReviewCount));
+        Assert.Equal(scoped.Items.Count(i => i.Status != "NotEligible"), all.Items.Count(i => i.Status != "NotEligible"));
         // Only the Due / Overdue / Total columns differ, and only by the pre-start payments of an eligible unit.
         Assert.Equal(200m, scoped.Items.Single(i => i.TenantId == "A").TotalAmount);
         Assert.Equal(500m, all.Items.Single(i => i.TenantId == "A").TotalAmount);
@@ -66,10 +68,10 @@ public sealed class CampaignReadScopeTests
     {
         var h = Build();
         var report = (await h.Service.PreviewAsync(h.Manager, "OverdueReminder", minTotal: 200m)).Value!;
-        Assert.Equal(["A"], report.Items.Select(i => i.TenantId));                                       // A shows 500 (> 200); C shows 150
+        Assert.Equal(["A"], report.Items.Where(i => i.Status != "NotEligible").Select(i => i.TenantId));    // A shows 500 (> 200); C shows 150
         var all = (await h.Service.PreviewAsync(h.Manager, "OverdueReminder", minTotal: null)).Value!;
-        Assert.Equal(["A", "C"], all.Items.Select(i => i.TenantId));                                     // one tower (TP140): unit 1 before unit 3, whatever the payment dates
+        Assert.Equal(["A", "C"], all.Items.Where(i => i.Status != "NotEligible").Select(i => i.TenantId));    // one tower (TP140): unit 1 before unit 3, whatever the payment dates
         var export = (await h.Service.ExportAsync(h.Manager, "OverdueReminder", "review", minTotal: 200m)).Value!;
-        Assert.Equal(1, export.RowCount);
+        Assert.Equal(2, export.RowCount);                                                                 // A (eligible) and B (listed, NotEligible): the file is exactly the previewed rows
     }
 }
