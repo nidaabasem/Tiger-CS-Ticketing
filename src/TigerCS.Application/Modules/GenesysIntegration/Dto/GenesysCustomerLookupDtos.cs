@@ -114,7 +114,7 @@ public sealed record GenesysScreenPopDto(
 /// nothing about who is calling: a shared phone number is not verified
 /// identity, so payment details still need the verification flow.
 /// </summary>
-/// <param name="Label">The display label ("Project - Unit"); the CRM label when CRM and PACT both confirm the unit.</param>
+/// <param name="Label">The display label ("Project - Unit"); the CRM label when CRM and PACT both confirm the unit by resolved unit code.</param>
 /// <param name="UnitCode">The resolved PACT unit code (<c>TP130-902-B</c>), or empty when it could not be resolved — never guessed.</param>
 /// <param name="PaymentLookupReady">True only when <paramref name="UnitCode"/> is resolved — a statement about the code, nothing more. It does not mean ownership, the tenant or the caller has been verified; that still needs the verification flow. False means the unit is shown for the agent but must not be sent to a payment lookup.</param>
 /// <param name="Sources">Which sources confirm the unit: "Crm" and/or "Pact".</param>
@@ -124,7 +124,14 @@ public sealed record GenesysSelectableUnitDto(
     string UnitCode,
     bool PaymentLookupReady,
     IReadOnlyList<string> Sources,
-    IReadOnlyList<GenesysUnitCustomerRefDto> Customers);
+    IReadOnlyList<GenesysUnitCustomerRefDto> Customers)
+{
+    /// <summary><see cref="Sources"/> as one string (<c>Crm,Pact</c>) — the flat form the Data Action maps, since Architect cannot take nested arrays.</summary>
+    public string SourcesText => string.Join(",", Sources);
+
+    /// <summary><see cref="Customers"/> as one string (<c>Crm:4001;Pact:T1</c>, <c>Source:ExternalCustomerId</c> joined with ';') — the flat form the Data Action maps. Never empty: a unit is always listed under at least one record.</summary>
+    public string CustomersText => string.Join(";", Customers.Select(c => $"{c.Source}:{c.ExternalCustomerId}"));
+}
 
 /// <summary>A reference to one matched customer record (<c>verificationSource</c>/<c>externalCustomerId</c> style) that a unit was found under. A reference only: it says the source listed the unit for this customer, not that the caller is this customer.</summary>
 /// <param name="Source">"Crm", "Pact" or "Tasleeh".</param>

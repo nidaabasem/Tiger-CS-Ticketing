@@ -188,12 +188,13 @@ public sealed class GenesysCustomerLookupAppService(
     /// <summary>
     /// One entry per physical unit. Identity is the resolved unit code (CRM
     /// project code + number, or PACT's own code) — two sources agree on a unit
-    /// only when their codes are equal. Never the unit number alone and never
-    /// similar tower names. A unit with no resolved code is only merged with an
-    /// identical label that also has no code (the pre-existing text de-dup), and
-    /// is reported as not ready for payment lookup. CRM's label wins. The unit
-    /// is listed once, but every customer record it was found under stays
-    /// attached — units are merged, people never are.
+    /// only when their codes are equal. Never the unit number alone, never
+    /// similar tower names and never an identical display label. A unit with no
+    /// resolved code is never merged with anything: each such record stays its
+    /// own entry with its own source and customer reference, and is reported as
+    /// not ready for payment lookup. For a resolved unit, CRM's label wins, and
+    /// every customer record it was found under stays attached — units are
+    /// merged, people never are.
     /// </summary>
     private static List<GenesysSelectableUnitDto> DeduplicateUnits(IEnumerable<(ScreenPopCustomer Customer, ScreenPopUnit Unit)> units)
     {
@@ -204,9 +205,16 @@ public sealed class GenesysCustomerLookupAppService(
         {
             var holder = new GenesysUnitCustomerRefDto(customer.Source, customer.ExternalId);
             var code = string.IsNullOrWhiteSpace(unit.UnitCode) ? string.Empty : unit.UnitCode.Trim();
-            var key = code.Length > 0 ? "code:" + code : "label:" + unit.Label;
             var isCrm = unit.Source == nameof(CustomerLookupSource.Crm);
 
+            // Unresolved: never merged, whatever the label says.
+            if (code.Length == 0)
+            {
+                entries.Add((string.Empty, unit.Label, code, [unit.Source], [holder], isCrm));
+                continue;
+            }
+
+            var key = "code:" + code;
             if (!index.TryGetValue(key, out var i))
             {
                 index[key] = entries.Count;

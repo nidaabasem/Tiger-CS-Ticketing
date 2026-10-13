@@ -714,6 +714,54 @@ public sealed partial class GenesysDataActionContractTests
         }
     }
 
+    private static GenesysSelectableUnitDto Unit(string label, string code, string[] sources, params (string Source, string Id)[] holders) =>
+        new(label, code, code.Length > 0, sources, [.. holders.Select(h => new GenesysUnitCustomerRefDto(h.Source, h.Id))]);
+
+    [Fact]
+    public void CustomerLookup_SelectableUnitOutputs_HaveNoNestedArrays_AndStayIndexAligned()
+    {
+        const string file = "01-customer-lookup.json";
+        var action = Load(file);
+
+        // Architect output contract: every array is an array of primitives, and the nested structured list is not mapped.
+        var schema = action.GetProperty("contract").GetProperty("output").GetProperty("successSchema").GetProperty("properties");
+        foreach (var property in schema.EnumerateObject().Where(p => p.Value.GetProperty("type").GetString() == "array"))
+        {
+            var itemType = property.Value.GetProperty("items").GetProperty("type").GetString();
+            Assert.True(itemType is "string" or "boolean" or "integer" or "number",
+                $"{file}: '{property.Name}' is an array of {itemType}; Architect outputs must be arrays of primitives.");
+        }
+
+        var map = action.GetProperty("config").GetProperty("response").GetProperty("translationMap");
+        Assert.False(map.TryGetProperty("selectableUnits", out _), "the nested selectableUnits must not be mapped");
+        Assert.DoesNotContain(map.EnumerateObject(), m => m.Value.GetString()!.EndsWith(".selectableUnits", StringComparison.Ordinal)
+            || m.Value.GetString()!.EndsWith(".sources", StringComparison.Ordinal) || m.Value.GetString()!.EndsWith(".customers", StringComparison.Ordinal));
+
+        // Real response: a resolved unit shared by three records, plus two unresolved units with the same label.
+        var sample = new GenesysCustomerLookupResultDto("+971501234567", true, "Found", [], [], [], 0,
+            new GenesysScreenPopDto("n", "e", "Crm", "1", 3, ["A - 1", "B - 2", "B - 2"], "x", [], [], "",
+            [
+                Unit("A - 1", "TP130-1", ["Crm", "Pact"], ("Crm", "1"), ("Pact", "T1"), ("Pact", "T2")),
+                Unit("B - 2", string.Empty, ["Crm"], ("Crm", "1")),
+                Unit("B - 2", string.Empty, ["Pact"], ("Pact", "T9"))
+            ]));
+        using var json = JsonDocument.Parse(JsonSerializer.Serialize(sample, Web));
+
+        string[] fields = ["selectableUnitLabels", "selectableUnitCodes", "selectableUnitPaymentReady", "selectableUnitSources", "selectableUnitCustomers"];
+        var values = fields.ToDictionary(f => f, f =>
+            JsonDocument.Parse(MiniJsonPath.Evaluate(json.RootElement, map.GetProperty(f).GetString()!)!).RootElement);
+        Assert.All(values.Values, v => Assert.Equal(3, v.GetArrayLength()));
+        Assert.All(values.Values.SelectMany(v => v.EnumerateArray()), e => Assert.NotEqual(JsonValueKind.Array, e.ValueKind));
+
+        string At(string f, int i) => values[f][i].ValueKind == JsonValueKind.String ? values[f][i].GetString()! : values[f][i].GetRawText();
+        Assert.Equal(["A - 1", "B - 2", "B - 2"], Enumerable.Range(0, 3).Select(i => At("selectableUnitLabels", i)));
+        Assert.Equal(["TP130-1", "", ""], Enumerable.Range(0, 3).Select(i => At("selectableUnitCodes", i)));
+        Assert.Equal(["true", "false", "false"], Enumerable.Range(0, 3).Select(i => At("selectableUnitPaymentReady", i)));
+        Assert.Equal(["Crm,Pact", "Crm", "Pact"], Enumerable.Range(0, 3).Select(i => At("selectableUnitSources", i)));
+        // The customer-to-unit association survives, per index.
+        Assert.Equal(["Crm:1;Pact:T1;Pact:T2", "Crm:1", "Pact:T9"], Enumerable.Range(0, 3).Select(i => At("selectableUnitCustomers", i)));
+    }
+
     [GeneratedRegex(@"(?:\$esc\.url\()?\$\{input\.(\w+)\}\)?")]
     private static partial Regex InputReference();
 

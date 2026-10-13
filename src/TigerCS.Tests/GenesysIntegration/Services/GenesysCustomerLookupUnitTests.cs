@@ -155,6 +155,28 @@ public class GenesysCustomerLookupUnitTests
     }
 
     [Fact]
+    public async Task IdenticalLabelsWithoutResolvedCodes_AreNotMerged_AndKeepTheirSourceAndCustomer()
+    {
+        var f = Seed([Crm(1, "Guzel Towers", null, "101")],
+            Pact("Guzel Towers", "101", Today.AddDays(10), code: null));
+
+        var r = (await f.CustomerLookup.LookUpAsync(Phone))!;
+
+        Assert.Equal(2, r.ScreenPop.SelectableUnits.Count);
+        Assert.All(r.ScreenPop.SelectableUnits, u =>
+        {
+            Assert.Equal("Guzel Towers - 101", u.Label);
+            Assert.False(u.PaymentLookupReady);
+        });
+        Assert.Equal([("Crm", "1")], r.ScreenPop.SelectableUnits[0].Customers.Select(c => (c.Source, c.ExternalCustomerId)));
+        Assert.Equal([("Pact", "T1")], r.ScreenPop.SelectableUnits[1].Customers.Select(c => (c.Source, c.ExternalCustomerId)));
+        Assert.Equal(["Crm"], r.ScreenPop.SelectableUnits[0].Sources);
+        Assert.Equal(["Pact"], r.ScreenPop.SelectableUnits[1].Sources);
+        Assert.Equal("Crm:1", r.ScreenPop.SelectableUnits[0].CustomersText);
+        Assert.Equal("Pact:T1", r.ScreenPop.SelectableUnits[1].CustomersText);
+    }
+
+    [Fact]
     public async Task CrmUnitWithMissingProjectCode_HasNoUnitCode_AndKeepsTheOldLabel()
     {
         var f = Seed([Crm(1, "Guzel Towers", null, "902-B")]);
