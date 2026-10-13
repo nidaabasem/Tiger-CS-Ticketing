@@ -35,7 +35,7 @@ public sealed record CrmCustomerDto(
 /// <param name="ProjectArabicName">The project's name in Arabic.</param>
 /// <param name="CustomerType">1 = Buyer. This phase supports Buyer only.</param>
 /// <param name="CustomerTypeName">CRM's display name for <paramref name="CustomerType"/> (e.g. "Buyer").</param>
-/// <param name="ProjectCode">The PACT unit-code prefix CRM holds for the project (<c>TP125</c>), when CRM publishes it (not yet part of the deployed <c>GetBuyerByPhone</c>). When present it is CRM's own statement of the project's PACT code and replaces any guess; null = not published.</param>
+/// <param name="ProjectCode">The PACT unit-code prefix CRM holds for the project (<c>TP125</c>), as published by CRM's <c>GetBuyerByPhone</c> (present in the UAT response). It is CRM's own statement of the project's PACT code and replaces any guess; null when CRM omitted or left it blank for that project.</param>
 /// <remarks>Also exposes the derived <see cref="UnitCode"/> (read-only).</remarks>
 public sealed record CrmBuyerUnitDto(
     int LeadId,

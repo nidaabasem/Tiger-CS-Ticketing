@@ -168,7 +168,7 @@ public sealed class GenesysCustomerLookupAppService(
 
         var primary = customers.FirstOrDefault();
 
-        var selectable = DeduplicateUnits(customers.SelectMany(c => c.Units));
+        var selectable = DeduplicateUnits(customers.SelectMany(c => c.Units.Select(u => (Customer: c, Unit: u))));
         var units = selectable.Select(u => u.Label).ToList();
 
         return new GenesysScreenPopDto(
@@ -191,15 +191,18 @@ public sealed class GenesysCustomerLookupAppService(
     /// only when their codes are equal. Never the unit number alone and never
     /// similar tower names. A unit with no resolved code is only merged with an
     /// identical label that also has no code (the pre-existing text de-dup), and
-    /// is reported as not ready for payment lookup. CRM's label wins.
+    /// is reported as not ready for payment lookup. CRM's label wins. The unit
+    /// is listed once, but every customer record it was found under stays
+    /// attached — units are merged, people never are.
     /// </summary>
-    private static List<GenesysSelectableUnitDto> DeduplicateUnits(IEnumerable<ScreenPopUnit> units)
+    private static List<GenesysSelectableUnitDto> DeduplicateUnits(IEnumerable<(ScreenPopCustomer Customer, ScreenPopUnit Unit)> units)
     {
-        var entries = new List<(string Key, string Label, string Code, List<string> Sources, bool FromCrm)>();
+        var entries = new List<(string Key, string Label, string Code, List<string> Sources, List<GenesysUnitCustomerRefDto> Customers, bool FromCrm)>();
         var index = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
 
-        foreach (var unit in units.Where(u => u.Label.Length > 0))
+        foreach (var (customer, unit) in units.Where(u => u.Unit.Label.Length > 0))
         {
+            var holder = new GenesysUnitCustomerRefDto(customer.Source, customer.ExternalId);
             var code = string.IsNullOrWhiteSpace(unit.UnitCode) ? string.Empty : unit.UnitCode.Trim();
             var key = code.Length > 0 ? "code:" + code : "label:" + unit.Label;
             var isCrm = unit.Source == nameof(CustomerLookupSource.Crm);
@@ -207,7 +210,7 @@ public sealed class GenesysCustomerLookupAppService(
             if (!index.TryGetValue(key, out var i))
             {
                 index[key] = entries.Count;
-                entries.Add((key, unit.Label, code, [unit.Source], isCrm));
+                entries.Add((key, unit.Label, code, [unit.Source], [holder], isCrm));
                 continue;
             }
 
@@ -215,6 +218,11 @@ public sealed class GenesysCustomerLookupAppService(
             if (!existing.Sources.Contains(unit.Source))
             {
                 existing.Sources.Add(unit.Source);
+            }
+
+            if (!existing.Customers.Contains(holder))
+            {
+                existing.Customers.Add(holder);
             }
 
             entries[i] = isCrm && !existing.FromCrm
@@ -225,7 +233,7 @@ public sealed class GenesysCustomerLookupAppService(
         return entries
             .Select(e => new GenesysSelectableUnitDto(
                 e.Label, e.Code, PaymentLookupReady: e.Code.Length > 0,
-                [.. e.Sources.OrderBy(x => x == nameof(CustomerLookupSource.Crm) ? 0 : 1)]))
+                [.. e.Sources.OrderBy(x => x == nameof(CustomerLookupSource.Crm) ? 0 : 1)], e.Customers))
             .ToList();
     }
 

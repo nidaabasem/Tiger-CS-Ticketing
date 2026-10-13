@@ -123,6 +123,7 @@ public class GenesysCustomerLookupUnitTests
         Assert.Equal("TP130-902-B", unit.UnitCode);
         Assert.Equal(["Crm", "Pact"], unit.Sources);
         Assert.Equal(2, r.ScreenPop.MatchedCustomerCount);   // people are never merged
+        Assert.Equal(2, unit.Customers.Count);
     }
 
     [Fact]
@@ -179,6 +180,12 @@ public class GenesysCustomerLookupUnitTests
         var r = (await f.CustomerLookup.LookUpAsync(Phone))!;
 
         Assert.Equal(3, r.ScreenPop.MatchedCustomerCount);
-        Assert.Single(r.ScreenPop.SelectableUnits);
+        var unit = Assert.Single(r.ScreenPop.SelectableUnits);
+        // One unit, but every record it was found under stays attached; a code being resolved says nothing about who the caller is.
+        Assert.Equal(
+            [("Crm", "1"), ("Pact", "T1"), ("Pact", "T2")],
+            unit.Customers.Select(c => (c.Source, c.ExternalCustomerId)));
+        Assert.True(unit.PaymentLookupReady);
+        Assert.Equal(["Crm", "Pact"], unit.Sources);
     }
 }

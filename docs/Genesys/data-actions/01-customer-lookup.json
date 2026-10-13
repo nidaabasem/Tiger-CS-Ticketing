@@ -121,8 +121,19 @@
               "properties": {
                 "label": { "type": "string", "description": "Display label; the CRM label when CRM and PACT both confirm the unit." },
                 "unitCode": { "type": "string", "description": "Resolved PACT unit code (e.g. TP130-902-B), or empty when it could not be resolved. Never guessed." },
-                "paymentLookupReady": { "type": "boolean", "description": "True only when unitCode is resolved. Selecting a unit does not verify the caller." },
-                "sources": { "type": "array", "items": { "type": "string" }, "description": "Crm and/or Pact." }
+                "paymentLookupReady": { "type": "boolean", "description": "True only when unitCode is resolved. It does not mean ownership or the caller is verified." },
+                "sources": { "type": "array", "items": { "type": "string" }, "description": "Crm and/or Pact." },
+                "customers": {
+                  "type": "array",
+                  "description": "Every matched customer record (source + id) the unit was found under. A unit shared by people on the same phone number lists all of them; this is not proof the caller is any of them.",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "source": { "type": "string" },
+                      "externalCustomerId": { "type": "string" }
+                    }
+                  }
+                }
               }
             }
           },

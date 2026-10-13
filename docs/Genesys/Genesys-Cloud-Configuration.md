@@ -427,7 +427,7 @@ Input: `phoneNumber` (required).
 Output: `found` (bool), `phoneNumber`, `crmStatus`, `customerName`,
 `customerEmail`, `verificationSource`, `externalCustomerId`,
 `matchedCustomerCount` (int), `units` (string collection), `unitsText`,
-`selectableUnits` (collection of `label`, `unitCode`, `paymentLookupReady`, `sources`),
+`selectableUnits` (collection of `label`, `unitCode`, `paymentLookupReady`, `sources`, `customers`),
 `recentTicketNumbers` (collection), `openTicketNumbers` (collection),
 `recentTicketsText`, `openTicketCount` (int).
 

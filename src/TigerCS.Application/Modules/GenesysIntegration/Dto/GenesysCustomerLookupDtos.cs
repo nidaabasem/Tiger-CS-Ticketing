@@ -116,10 +116,17 @@ public sealed record GenesysScreenPopDto(
 /// </summary>
 /// <param name="Label">The display label ("Project - Unit"); the CRM label when CRM and PACT both confirm the unit.</param>
 /// <param name="UnitCode">The resolved PACT unit code (<c>TP130-902-B</c>), or empty when it could not be resolved — never guessed.</param>
-/// <param name="PaymentLookupReady">True only when <paramref name="UnitCode"/> is resolved. False means the unit is shown for the agent but must not be sent to a payment lookup.</param>
+/// <param name="PaymentLookupReady">True only when <paramref name="UnitCode"/> is resolved — a statement about the code, nothing more. It does not mean ownership, the tenant or the caller has been verified; that still needs the verification flow. False means the unit is shown for the agent but must not be sent to a payment lookup.</param>
 /// <param name="Sources">Which sources confirm the unit: "Crm" and/or "Pact".</param>
+/// <param name="Customers">Every matched customer record this unit was found under. The unit is listed once, but the people are never merged: two customers sharing a phone number both appear here, each under their own source and id, matching <c>screenPop</c>'s customer records.</param>
 public sealed record GenesysSelectableUnitDto(
     string Label,
     string UnitCode,
     bool PaymentLookupReady,
-    IReadOnlyList<string> Sources);
+    IReadOnlyList<string> Sources,
+    IReadOnlyList<GenesysUnitCustomerRefDto> Customers);
+
+/// <summary>A reference to one matched customer record (<c>verificationSource</c>/<c>externalCustomerId</c> style) that a unit was found under. A reference only: it says the source listed the unit for this customer, not that the caller is this customer.</summary>
+/// <param name="Source">"Crm", "Pact" or "Tasleeh".</param>
+/// <param name="ExternalCustomerId">The customer's id in that source.</param>
+public sealed record GenesysUnitCustomerRefDto(string Source, string ExternalCustomerId);
