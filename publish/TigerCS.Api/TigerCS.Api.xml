@@ -363,7 +363,7 @@
             <response code="200">The channel directory.</response>
         </member>
         <member name="M:TigerCS.Api.Controllers.CollectionsCampaignsController.Preview(System.String,System.Nullable{System.DateOnly},System.Nullable{System.Int32},System.String,System.Int32,System.Int32,System.Threading.CancellationToken,System.Nullable{System.DateOnly},System.Nullable{System.DateOnly},System.Nullable{System.Int32},System.Nullable{System.Decimal})">
-            <summary>Preview one communication stage, per unit, using current remaining balances from PACT companies 4 and 32.</summary>
+            <summary>Preview one communication stage, per unit, using current remaining balances from PACT companies 4 and 32. Only instalments due before the end of the current Dubai month are listed (Overdue: before the first day of the month, Due: inside it); <c>minTotal</c> keeps units whose Due + Overdue is greater than it (omit for no minimum).</summary>
         </member>
         <member name="M:TigerCS.Api.Controllers.CollectionsCampaignsController.Export(System.String,System.String,System.Nullable{System.DateOnly},System.Nullable{System.Int32},System.String,System.Threading.CancellationToken,System.Nullable{System.DateOnly},System.Nullable{System.DateOnly},System.Nullable{System.Int32},System.Nullable{System.Decimal})">
             <summary>Export the full filtered list. Review mode is for internal review; Genesys mode refuses any unresolved row,
@@ -424,6 +424,56 @@
         </member>
         <member name="M:TigerCS.Api.Controllers.CollectionsReviewController.Reconcile(System.Guid,System.Int64,TigerCS.Application.Modules.Collections.Review.ReconcileBatchRequest,System.Threading.CancellationToken)">
             <summary>Resolves a batch with an unknown outcome after someone checked the Genesys contact list.</summary>
+        </member>
+        <member name="T:TigerCS.Api.Controllers.CollectionsUnitsController">
+            <summary>Collections by UNIT: the unit-keyed Payment Summary and the status of the bulk CRM owner data both Collections pages link with.</summary>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.CollectionsUnitsController.#ctor(TigerCS.Application.Modules.Collections.Services.CollectionsUnitPaymentSummaryAppService,TigerCS.Application.Modules.Collections.Services.CollectionsLeasingSummaryAppService,TigerCS.Application.Modules.Collections.Services.CustomerUnitLinkService,TigerCS.Application.Modules.Collections.Services.ICollectionsCustomerProfiles,TigerCS.Application.Modules.Collections.Abstractions.ICollectionsCrmOwnerStore,TigerCS.Application.Modules.Collections.Services.CollectionsAuthorizationService)">
+            <summary>Collections by UNIT: the unit-keyed Payment Summary and the status of the bulk CRM owner data both Collections pages link with.</summary>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.CollectionsUnitsController.UnitPaymentSummary(System.String,System.Nullable{System.Int32},System.Threading.CancellationToken)">
+            <summary>
+            Payment Summary of one unit, found by its tower + unit code (<c>TP140-101</c>), never by a phone number. The customer comes from CRM first (an eligible, not cancelled
+            Sold / Contract sale of the same unit), PACT completes what CRM lacks; amounts and instalments come from PACT for that unit only (Due / Overdue / Total: the current Dubai month rule; <c>Payments</c>: the Payment tab figures - the Dubai month's Due and Overdue, the whole remaining balance and the full unpaid schedule, with Total / Paid null because the snapshot holds neither).
+            A missing PACT mobile does not matter. "PACT holds nothing" is reported as <c>NoFinancialData</c>, never as zero.
+            </summary>
+            <param name="unitCode">The unit code, with or without the <c>TP</c> prefix; a cancelled code (containing <c>*</c>), <c>0</c> or empty is refused.</param>
+            <param name="companyId">Optional 4 or 32 to pin the company when the same code exists in both.</param>
+            <param name="cancellationToken">Request cancellation.</param>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.CollectionsUnitsController.LeasingPaymentSummary(System.String,System.Threading.CancellationToken)">
+            <summary>
+            Leasing fallback of the Payment Summary: for a customer with no unit tied to an eligible CRM record, PACT is searched by the NORMALISED mobile under company 7
+            (<c>+971…</c> and <c>971…</c> are one number). Every contract/unit is a separate entry (company, tenant, unit, contract); ended contracts and other companies are excluded.
+            Amounts stay <c>NoFinancialData</c> until a company-7 receivables source exists - never zero.
+            </summary>
+            <param name="mobile">The customer's mobile in any common format.</param>
+            <param name="cancellationToken">Request cancellation.</param>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.CollectionsUnitsController.LookupCustomerUnits(System.String,System.String,System.Threading.CancellationToken)">
+            <summary>
+            Customer and unit linking by a typed phone number (customer search, New Ticket). The phone only FINDS the customer: CRM is searched first (eligible Sold / Contract, not cancelled sales),
+            each unit is tied to PACT by its verified project mapping + apartment (company and tower kept), and the amounts are that unit's PACT account - whether or not the phone exists in PACT.
+            Only when CRM holds no eligible customer is PACT searched by phone (companies 4 / 32 and Leasing company 7; ended contracts excluded). Several customers / units / contracts come back
+            as candidates with <c>selectionRequired</c> - the first is never taken.
+            </summary>
+            <param name="phone">The phone number in any common format (normalised server-side).</param>
+            <param name="selection">Optional <c>selectionId</c> of the candidate the user chose.</param>
+            <param name="cancellationToken">Request cancellation.</param>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.CollectionsUnitsController.CrmCustomerUnits(System.Int32,System.String,System.String,System.Threading.CancellationToken)">
+            <summary>
+            The unit-based financial lookup of a CRM customer - what the Customer Details Payment tab shows. The customer's eligible units come from CRM (through any phone TigerCS holds for them, or
+            the optional <c>phone</c>, which must resolve to this same CRM customer), each unit's amounts from PACT by company + tower + apartment. A CRM phone that is absent from PACT changes nothing.
+            <c>financialStatus</c> tells confirmed zero dues (<c>NoDues</c>) from no data (<c>NoFinancialData</c>), a failed / ambiguous match (<c>MatchFailed</c>) and a source error (<c>SourceError</c>).
+            </summary>
+            <param name="crmCustomerId">The CRM customer id.</param>
+            <param name="phone">Optional extra phone of this customer (New Ticket passes the typed number).</param>
+            <param name="selection">Optional <c>selectionId</c> of the unit the user chose.</param>
+            <param name="cancellationToken">Request cancellation.</param>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.CollectionsUnitsController.CrmOwnersStatus(System.Threading.CancellationToken)">
+            <summary>State of the bulk CRM owner data (last load, rows, rows that could not be tied to one company, last error). Same permission as reading Collections financials.</summary>
         </member>
         <member name="T:TigerCS.Api.Controllers.CrmController">
              <summary>
@@ -1011,8 +1061,9 @@
              <param name="TowerName">The tower/project the customer typed into the chat form, where collected.</param>
              <param name="UnitNumber">The unit number the customer typed into the chat form, where collected.</param>
              <param name="Subject">A short subject the channel collected, where available — becomes the ticket's request summary.</param>
+             <param name="RequestType">The request type the bot identified, when it already has one. Validated, then its department routing, automatic assignment and SLA policy are applied. Omit it (or send it blank) when unknown: the ticket then awaits classification in the human follow-up queue, and the bot can send it later on <c>PATCH</c>.</param>
         </member>
-        <member name="M:TigerCS.Api.Controllers.GenesysInquiryRequest.#ctor(System.String,System.String,System.String,System.String,System.String,System.String,System.String,System.String,System.String,System.String,System.String,System.String,System.String,System.String,System.Nullable{System.DateTime},System.Nullable{System.Int32},System.String,System.String,System.String,System.String)">
+        <member name="M:TigerCS.Api.Controllers.GenesysInquiryRequest.#ctor(System.String,System.String,System.String,System.String,System.String,System.String,System.String,System.String,System.String,System.String,System.String,System.String,System.String,System.String,System.Nullable{System.DateTime},System.Nullable{System.Int32},System.String,System.String,System.String,System.String,TigerCS.Api.Controllers.GenesysRequestTypePart)">
              <summary>
              The <b>transport</b> shape of an inbound Genesys inquiry — the outermost
              edge of the integration, and the only place a Genesys-facing wire format
@@ -1052,6 +1103,7 @@
              <param name="TowerName">The tower/project the customer typed into the chat form, where collected.</param>
              <param name="UnitNumber">The unit number the customer typed into the chat form, where collected.</param>
              <param name="Subject">A short subject the channel collected, where available — becomes the ticket's request summary.</param>
+             <param name="RequestType">The request type the bot identified, when it already has one. Validated, then its department routing, automatic assignment and SLA policy are applied. Omit it (or send it blank) when unknown: the ticket then awaits classification in the human follow-up queue, and the bot can send it later on <c>PATCH</c>.</param>
         </member>
         <member name="P:TigerCS.Api.Controllers.GenesysInquiryRequest.ConversationId">
             <summary>Required. Genesys' conversation id — the idempotency key: the same value always resolves to the same ticket.</summary>
@@ -1112,6 +1164,33 @@
         </member>
         <member name="P:TigerCS.Api.Controllers.GenesysInquiryRequest.Subject">
             <summary>A short subject the channel collected, where available — becomes the ticket's request summary.</summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysInquiryRequest.RequestType">
+            <summary>The request type the bot identified, when it already has one. Validated, then its department routing, automatic assignment and SLA policy are applied. Omit it (or send it blank) when unknown: the ticket then awaits classification in the human follow-up queue, and the bot can send it later on <c>PATCH</c>.</summary>
+        </member>
+        <member name="T:TigerCS.Api.Controllers.GenesysRequestTypePart">
+            <summary>
+            The request type the bot identified. Send <c>requestTypeId</c> (preferred) or
+            <c>name</c>; the id wins when both are sent. Omit the whole part, or send blanks, when the bot
+            did not supply one (an explicitly invalid one is refused with 422 and nothing is created): the ticket is then awaiting classification in the human follow-up queue.
+            </summary>
+            <param name="RequestTypeId">The configured request type's id (see <c>GET /api/request-types</c>).</param>
+            <param name="Name">The request type's exact name (case-insensitive). Refused as ambiguous if more than one department has it.</param>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.GenesysRequestTypePart.#ctor(System.Nullable{System.Int32},System.String)">
+            <summary>
+            The request type the bot identified. Send <c>requestTypeId</c> (preferred) or
+            <c>name</c>; the id wins when both are sent. Omit the whole part, or send blanks, when the bot
+            did not supply one (an explicitly invalid one is refused with 422 and nothing is created): the ticket is then awaiting classification in the human follow-up queue.
+            </summary>
+            <param name="RequestTypeId">The configured request type's id (see <c>GET /api/request-types</c>).</param>
+            <param name="Name">The request type's exact name (case-insensitive). Refused as ambiguous if more than one department has it.</param>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysRequestTypePart.RequestTypeId">
+            <summary>The configured request type's id (see <c>GET /api/request-types</c>).</summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysRequestTypePart.Name">
+            <summary>The request type's exact name (case-insensitive). Refused as ambiguous if more than one department has it.</summary>
         </member>
         <member name="T:TigerCS.Api.Controllers.GenesysConversationEndRequest">
             <summary>The transport shape of a conversation-end report, with the transcript available up to that moment. See <see cref="T:TigerCS.Api.Controllers.GenesysInquiryRequest"/> for why this record exists at the edge.</summary>
@@ -1191,13 +1270,23 @@
             <param name="ConversationId">The conversation this refers to, echoed back.</param>
             <param name="TicketId">The one ticket this conversation produced.</param>
             <param name="TicketNumber">That ticket's human-facing number.</param>
+            <param name="ClassificationStatus">"Classified" when a valid request type was applied; "AwaitingClassification" when no request type was supplied (the ticket is then on Normal priority in the human classification queue). A request type that was supplied but is invalid is not accepted at all: the call answers 422 and nothing is created. Absent on a repeated (<c>AlreadyIngested</c>) delivery, which changes nothing.</param>
+            <param name="RequestTypeId">The applied request type, when classified.</param>
+            <param name="DepartmentId">The responsible department after routing.</param>
+            <param name="AssignedEmployeeId">The employee the automatic assignment chose; null means the department queue.</param>
+            <param name="ClassificationDetail">Why the ticket is awaiting classification, when it is.</param>
         </member>
-        <member name="M:TigerCS.Api.Controllers.GenesysInquiryAcceptedResponse.#ctor(System.String,System.String,System.Int64,System.String)">
+        <member name="M:TigerCS.Api.Controllers.GenesysInquiryAcceptedResponse.#ctor(System.String,System.String,System.Int64,System.String,System.String,System.Nullable{System.Int32},System.Nullable{System.Int32},System.Nullable{System.Guid},System.String)">
             <summary>What the ingestion endpoint answers — always naming the ticket, so a retry and the original call are indistinguishable to the caller.</summary>
             <param name="Outcome">"TicketCreated" or "AlreadyIngested".</param>
             <param name="ConversationId">The conversation this refers to, echoed back.</param>
             <param name="TicketId">The one ticket this conversation produced.</param>
             <param name="TicketNumber">That ticket's human-facing number.</param>
+            <param name="ClassificationStatus">"Classified" when a valid request type was applied; "AwaitingClassification" when no request type was supplied (the ticket is then on Normal priority in the human classification queue). A request type that was supplied but is invalid is not accepted at all: the call answers 422 and nothing is created. Absent on a repeated (<c>AlreadyIngested</c>) delivery, which changes nothing.</param>
+            <param name="RequestTypeId">The applied request type, when classified.</param>
+            <param name="DepartmentId">The responsible department after routing.</param>
+            <param name="AssignedEmployeeId">The employee the automatic assignment chose; null means the department queue.</param>
+            <param name="ClassificationDetail">Why the ticket is awaiting classification, when it is.</param>
         </member>
         <member name="P:TigerCS.Api.Controllers.GenesysInquiryAcceptedResponse.Outcome">
             <summary>"TicketCreated" or "AlreadyIngested".</summary>
@@ -1210,6 +1299,21 @@
         </member>
         <member name="P:TigerCS.Api.Controllers.GenesysInquiryAcceptedResponse.TicketNumber">
             <summary>That ticket's human-facing number.</summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysInquiryAcceptedResponse.ClassificationStatus">
+            <summary>"Classified" when a valid request type was applied; "AwaitingClassification" when no request type was supplied (the ticket is then on Normal priority in the human classification queue). A request type that was supplied but is invalid is not accepted at all: the call answers 422 and nothing is created. Absent on a repeated (<c>AlreadyIngested</c>) delivery, which changes nothing.</summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysInquiryAcceptedResponse.RequestTypeId">
+            <summary>The applied request type, when classified.</summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysInquiryAcceptedResponse.DepartmentId">
+            <summary>The responsible department after routing.</summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysInquiryAcceptedResponse.AssignedEmployeeId">
+            <summary>The employee the automatic assignment chose; null means the department queue.</summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysInquiryAcceptedResponse.ClassificationDetail">
+            <summary>Why the ticket is awaiting classification, when it is.</summary>
         </member>
         <member name="T:TigerCS.Api.Controllers.GenesysConversationEndResponse">
             <summary>What the conversation-end endpoint answers. <paramref name="TicketStatus"/> is included deliberately: it shows that ending a conversation did NOT close the ticket.</summary>
@@ -1253,10 +1357,13 @@
              idempotent — send only what changed, and resend freely.
             
              <para>
-             <b>Deliberately narrow.</b> There is no field for category, request type,
-             priority, status, owner, department, resolution or closure: Genesys owns
-             the conversation, TigerCS owns the ticket's business state, and a field
-             absent from this contract is one Genesys cannot reach.
+             <b>Deliberately narrow.</b> There is no field for category, priority,
+             status, owner, department, resolution or closure: Genesys owns the
+             conversation, TigerCS owns the ticket's business state, and a field
+             absent from this contract is one Genesys cannot reach. The one business
+             fact it may report is the <c>requestType</c> the bot identified —
+             validated by TigerCS, which then applies that request type's configured
+             department routing, automatic assignment and SLA policy itself.
              </para>
              </summary>
              <param name="ConversationId">Required. Must resolve to an interaction on the ticket in the route.</param>
@@ -1267,6 +1374,7 @@
              <param name="StartedAtUtc">When the interaction started, UTC — recorded only if the Create call did not carry it. Never moves once known.</param>
              <param name="Routing">Set when the conversation moved to another queue, or an agent connected / it was transferred. Same ticket, always.</param>
              <param name="CustomerConfirmation">Set when the customer explicitly confirmed the issue is resolved. <b>Record-only — never resolves or closes the ticket.</b></param>
+             <param name="RequestType">Set when the bot has identified the request type (initially missing, or later in the conversation). Validated; then the request type's department routing, automatic assignment and SLA policy are applied without restarting the SLA clock. Repeating the same one changes nothing; a different one than the ticket already has is refused with 409.</param>
              <param name="AwaitingCustomerReply">
              Chatbot inactivity timer. <c>true</c> = the chatbot just asked the customer
              something and is waiting for the reply: TigerCS starts a persistent timer
@@ -1279,16 +1387,19 @@
              <b>Omit it</b> to leave the timer as it is.
              </param>
         </member>
-        <member name="M:TigerCS.Api.Controllers.GenesysTicketUpdateRequest.#ctor(System.String,System.String,System.String,TigerCS.Api.Controllers.GenesysConversationEndPart,TigerCS.Api.Controllers.GenesysHandoffPart,System.Nullable{System.DateTime},TigerCS.Api.Controllers.GenesysRoutingPart,TigerCS.Api.Controllers.GenesysCustomerConfirmationPart,System.Nullable{System.Boolean})">
+        <member name="M:TigerCS.Api.Controllers.GenesysTicketUpdateRequest.#ctor(System.String,System.String,System.String,TigerCS.Api.Controllers.GenesysConversationEndPart,TigerCS.Api.Controllers.GenesysHandoffPart,System.Nullable{System.DateTime},TigerCS.Api.Controllers.GenesysRoutingPart,TigerCS.Api.Controllers.GenesysCustomerConfirmationPart,System.Nullable{System.Boolean},TigerCS.Api.Controllers.GenesysRequestTypePart)">
              <summary>
              The one Genesys update body. Every part is optional and independently
              idempotent — send only what changed, and resend freely.
             
              <para>
-             <b>Deliberately narrow.</b> There is no field for category, request type,
-             priority, status, owner, department, resolution or closure: Genesys owns
-             the conversation, TigerCS owns the ticket's business state, and a field
-             absent from this contract is one Genesys cannot reach.
+             <b>Deliberately narrow.</b> There is no field for category, priority,
+             status, owner, department, resolution or closure: Genesys owns the
+             conversation, TigerCS owns the ticket's business state, and a field
+             absent from this contract is one Genesys cannot reach. The one business
+             fact it may report is the <c>requestType</c> the bot identified —
+             validated by TigerCS, which then applies that request type's configured
+             department routing, automatic assignment and SLA policy itself.
              </para>
              </summary>
              <param name="ConversationId">Required. Must resolve to an interaction on the ticket in the route.</param>
@@ -1299,6 +1410,7 @@
              <param name="StartedAtUtc">When the interaction started, UTC — recorded only if the Create call did not carry it. Never moves once known.</param>
              <param name="Routing">Set when the conversation moved to another queue, or an agent connected / it was transferred. Same ticket, always.</param>
              <param name="CustomerConfirmation">Set when the customer explicitly confirmed the issue is resolved. <b>Record-only — never resolves or closes the ticket.</b></param>
+             <param name="RequestType">Set when the bot has identified the request type (initially missing, or later in the conversation). Validated; then the request type's department routing, automatic assignment and SLA policy are applied without restarting the SLA clock. Repeating the same one changes nothing; a different one than the ticket already has is refused with 409.</param>
              <param name="AwaitingCustomerReply">
              Chatbot inactivity timer. <c>true</c> = the chatbot just asked the customer
              something and is waiting for the reply: TigerCS starts a persistent timer
@@ -1347,6 +1459,9 @@
             requested or assigned, or the conversation ended, in which case no timer runs.
             <b>Omit it</b> to leave the timer as it is.
             </summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysTicketUpdateRequest.RequestType">
+            <summary>Set when the bot has identified the request type (initially missing, or later in the conversation). Validated; then the request type's department routing, automatic assignment and SLA policy are applied without restarting the SLA clock. Repeating the same one changes nothing; a different one than the ticket already has is refused with 409.</summary>
         </member>
         <member name="T:TigerCS.Api.Controllers.GenesysCustomerConfirmationPart">
             <summary>
@@ -1525,8 +1640,12 @@
             <param name="AwaitingCustomerReply">Whether the inactivity timer is running for this conversation after this update.</param>
             <param name="InactivityDeadlineUtc">When the ticket becomes eligible for inactivity closure, while the timer runs; otherwise null.</param>
             <param name="AwaitingCustomerReplyNote">Why a requested timer was not started (e.g. human follow-up pending), when it was not.</param>
+            <param name="ClassificationStatus">"Classified" when the update carried a request type that is now applied.</param>
+            <param name="RequestTypeId">The applied request type.</param>
+            <param name="DepartmentId">The responsible department after routing.</param>
+            <param name="AssignedEmployeeId">The employee chosen by the automatic assignment; null means the department queue.</param>
         </member>
-        <member name="M:TigerCS.Api.Controllers.GenesysTicketUpdateResponse.#ctor(System.String,System.String,System.Int64,System.String,System.String,System.Boolean,System.Int32,System.String,System.Nullable{System.Int64},System.Boolean,System.Nullable{System.DateTime},System.String)">
+        <member name="M:TigerCS.Api.Controllers.GenesysTicketUpdateResponse.#ctor(System.String,System.String,System.Int64,System.String,System.String,System.Boolean,System.Int32,System.String,System.Nullable{System.Int64},System.Boolean,System.Nullable{System.DateTime},System.String,System.String,System.Nullable{System.Int32},System.Nullable{System.Int32},System.Nullable{System.Guid})">
             <summary>What the update endpoint answers. <paramref name="TicketStatus"/> is echoed deliberately: it is the proof that ending a conversation did not close the ticket.</summary>
             <param name="Outcome">"Applied".</param>
             <param name="ConversationId">The conversation, echoed back.</param>
@@ -1540,6 +1659,10 @@
             <param name="AwaitingCustomerReply">Whether the inactivity timer is running for this conversation after this update.</param>
             <param name="InactivityDeadlineUtc">When the ticket becomes eligible for inactivity closure, while the timer runs; otherwise null.</param>
             <param name="AwaitingCustomerReplyNote">Why a requested timer was not started (e.g. human follow-up pending), when it was not.</param>
+            <param name="ClassificationStatus">"Classified" when the update carried a request type that is now applied.</param>
+            <param name="RequestTypeId">The applied request type.</param>
+            <param name="DepartmentId">The responsible department after routing.</param>
+            <param name="AssignedEmployeeId">The employee chosen by the automatic assignment; null means the department queue.</param>
         </member>
         <member name="P:TigerCS.Api.Controllers.GenesysTicketUpdateResponse.Outcome">
             <summary>"Applied".</summary>
@@ -1576,6 +1699,18 @@
         </member>
         <member name="P:TigerCS.Api.Controllers.GenesysTicketUpdateResponse.AwaitingCustomerReplyNote">
             <summary>Why a requested timer was not started (e.g. human follow-up pending), when it was not.</summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysTicketUpdateResponse.ClassificationStatus">
+            <summary>"Classified" when the update carried a request type that is now applied.</summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysTicketUpdateResponse.RequestTypeId">
+            <summary>The applied request type.</summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysTicketUpdateResponse.DepartmentId">
+            <summary>The responsible department after routing.</summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysTicketUpdateResponse.AssignedEmployeeId">
+            <summary>The employee chosen by the automatic assignment; null means the department queue.</summary>
         </member>
         <member name="T:TigerCS.Api.Controllers.GenesysAgentContextRequest">
              <summary>
@@ -1903,19 +2038,26 @@
              The department comes from the customer's explicit website-chat choice
              (Leasing / Customer Service / Maintenance) when there is one, and
              otherwise from the configured Genesys queue → department mapping.
-             Category, Request Type and Priority are never inferred from it: the
-             ticket is created <b>Unclassified</b> (no category at all — never a
-             placeholder one) and therefore starts no SLA clock. An agent
-             classifies it afterwards via
-             <c>POST /api/tickets/{ticketId}/classification</c>, on the same
-             ticket, and that is when the SLA clock starts.
+             Category and Request Type are never inferred from it: the ticket is
+             created <b>Unclassified</b> (no category at all — never a placeholder
+             one), on the configured default priority (<c>Genesys:DefaultTicketPriority</c>,
+             "Normal"), and its SLA clock starts at creation like any other ticket.
+             When the bot supplies a valid <c>requestType</c> it is applied
+             immediately — the request type's department becomes responsible (the
+             originating department is never rewritten), the configured automatic
+             assignment runs (no eligible employee leaves it in the department
+             queue) and its SLA policy replaces the Normal-priority targets
+             without restarting the clock. With no request type supplied the ticket
+             stays awaiting classification in the existing human follow-up queue;
+             the bot can send it later on <c>PATCH</c>. A repeated delivery of the
+             same <c>conversationId</c> changes nothing.
              </para>
              </remarks>
              <param name="request">The normalized inquiry.</param>
              <response code="200">The conversation was already ingested — the same ticket is returned, and nothing was created.</response>
              <response code="201">A ticket was created for this conversation.</response>
              <response code="400">The channel was not recognized, or conversationId was blank.</response>
-             <response code="422">The inquiry could not be turned into a ticket — no department could be resolved, or ticket creation itself was refused.</response>
+             <response code="422">The inquiry could not be turned into a ticket — no department could be resolved, a request type was supplied but is invalid (nothing is written), or ticket creation itself was refused.</response>
              <response code="503">The Genesys integration is switched off (<c>Genesys:Enabled</c> is false).</response>
         </member>
         <member name="M:TigerCS.Api.Controllers.GenesysController.UpdateTicket(System.Int64,TigerCS.Api.Controllers.GenesysTicketUpdateRequest,System.Threading.CancellationToken)">
@@ -1926,10 +2068,13 @@
             
              <para>
              <b>Genesys owns the conversation; TigerCS owns the ticket.</b> This
-             accepts conversation facts only. There is deliberately no field for
-             category, request type, priority, status, owner, department,
-             resolution or closure: those move through their own TigerCS
-             operations, with their own authorization and SLA consequences.
+             accepts conversation facts, plus the one business fact the bot may
+             report: the <c>requestType</c> it identified. TigerCS validates it and
+             applies that request type's department routing, automatic assignment
+             and SLA policy itself (the SLA clock is never restarted). There is
+             deliberately no field for category, priority, status, owner,
+             department, resolution or closure: those move through their own
+             TigerCS operations, with their own authorization and SLA consequences.
              </para>
             
              <para>
@@ -1952,8 +2097,8 @@
              <response code="200">Everything supplied was applied, or was already in that state.</response>
              <response code="400">conversationId was blank, a transcript message had an unrecognized sender or empty body, the handoff mode or trigger is not recognized, a handoff stand-down named no reason, or customerConfirmation was sent without confirmedResolved: true.</response>
              <response code="404">No such ticket, or no interaction exists for this conversation.</response>
-             <response code="409">The conversation belongs to a different ticket than the one in the route.</response>
-             <response code="422">A handoff assignment was supplied but no outstanding human work exists to apply it to.</response>
+             <response code="409">The conversation belongs to a different ticket than the one in the route, or the ticket already has a different request type, is closed, or changed while being classified (retry).</response>
+             <response code="422">A handoff assignment was supplied but no outstanding human work exists to apply it to, or the supplied requestType does not exist, is inactive, is ambiguous by name, or cannot route.</response>
              <response code="503">The Genesys integration is switched off.</response>
         </member>
         <member name="M:TigerCS.Api.Controllers.GenesysController.LookUpCustomer(System.String,System.Threading.CancellationToken)">
@@ -2332,7 +2477,7 @@
             <param name="minAmount">Minimum outstanding amount: an instalment counts only when its remaining unpaid amount is &gt;= this value. Default 100.</param>
             <param name="cancellationToken">Request cancellation.</param>
         </member>
-        <member name="M:TigerCS.Api.Controllers.PactReceivablesController.Instalments(System.Nullable{System.Int32},System.Nullable{System.DateOnly},System.Nullable{System.DateOnly},System.String,System.Nullable{System.Decimal},System.String,System.Int32,System.Int32,System.String,System.Threading.CancellationToken)">
+        <member name="M:TigerCS.Api.Controllers.PactReceivablesController.Instalments(System.Nullable{System.Int32},System.Nullable{System.DateOnly},System.Nullable{System.DateOnly},System.String,System.Nullable{System.Decimal},System.String,System.Int32,System.Int32,System.String,System.String,System.String,System.Nullable{System.Decimal},System.Threading.CancellationToken)">
             <summary>
             Instalment-level list from the local snapshot (never PACT): tower, due-date range (any range or a whole month), payment status, minimum outstanding amount.
             Totals and paging are computed over exactly the filtered instalments.
@@ -2346,16 +2491,20 @@
             <param name="page">One-based page.</param>
             <param name="pageSize">1 to 100.</param>
             <param name="view"><c>instalments</c> (default): one row per instalment. <c>units</c>: one row per unit (company + customer + unit) with all its matching instalments, grouped in SQL before paging.</param>
+            <param name="dueMonth">Optional <c>yyyy-MM</c>: narrow the list and its totals to instalments due in that month. The returned <c>months</c> overview ignores it and always covers every month of the other filters.</param>
+            <param name="status">With <c>view=units</c> only: <c>all</c> (default), <c>overdue</c> or <c>due</c> - the units that have an instalment of that class. The unit view lists only instalments due before the end of the current Dubai month (Overdue: before the first day of the month, Due: any day inside it, even a coming one), so <c>dateTo</c> is capped at the month end; a month filter only narrows the window.</param>
+            <param name="minTotal">With <c>view=units</c> only: keep units whose total (Due + Overdue) is GREATER than this value; omit for no minimum. <c>minAmount</c> is not applied per instalment in the unit view.</param>
             <param name="cancellationToken">Request cancellation.</param>
         </member>
         <member name="M:TigerCS.Api.Controllers.PactReceivablesController.Towers(System.Threading.CancellationToken)">
             <summary>Active towers (number and name) for the tower dropdown. Read from the local table; PACT is not contacted.</summary>
         </member>
-        <member name="M:TigerCS.Api.Controllers.PactReceivablesController.LoadCoverage(System.DateOnly,System.DateOnly,System.Threading.CancellationToken)">
+        <member name="M:TigerCS.Api.Controllers.PactReceivablesController.LoadCoverage(System.DateOnly,System.DateOnly,System.Nullable{System.Int32},System.Threading.CancellationToken)">
             <summary>
             Starts a background load of an instalment due-date range the snapshot does not cover. Returns 202 immediately; 200 when
             nothing needs loading or a load is already running. Never blocks on PACT.
             </summary>
+            <param name="companyId">Optional 4 or 32: retry the refresh of that company only (over the standard window); the dates are then not used to decide whether to load.</param>
         </member>
         <member name="T:TigerCS.Api.Controllers.PendingCustomerInteractionsController">
              <summary>

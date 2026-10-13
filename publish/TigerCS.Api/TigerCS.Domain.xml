@@ -335,6 +335,18 @@
             <summary>Unit-level review reasons of a campaign candidate (bit mask). The remaining reasons (stale source, coverage, currency, release gates) do
             not depend on the unit and are added by the application.</summary>
         </member>
+        <member name="F:TigerCS.Domain.Modules.Collections.CollectionsCampaignFlags.CrmCustomerAmbiguous">
+            <summary>More than one distinct CRM customer holds an eligible (Sold / Contract, not cancelled) sale of the unit: the customer cannot be chosen automatically.</summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.Collections.CollectionsCampaignFlags.ContactSourceConflict">
+            <summary>CRM and PACT give different phone numbers (or, without a phone to confirm, different e-mails) for the unit: two people are never merged.</summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.Collections.CollectionsCampaignFlags.CrmCompanyAmbiguous">
+            <summary>The CRM sale of the unit cannot be tied to one company (both companies hold the same unit key): nobody is chosen and the unit needs review.</summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.Collections.CollectionsCampaignFlags.CrmUnavailable">
+            <summary>CRM contact data is enabled but could not be used (never loaded, stale, or unreadable): the contact may be incomplete, so the unit is not treated as ready. This is NOT "CRM holds no value".</summary>
+        </member>
         <member name="T:TigerCS.Domain.Modules.Collections.CollectionsCampaignPolicy">
             <summary>The 7 October 2026 communication table, with thresholds evaluated per unit.
             Values are the source's remaining principal, never the original plan or the customer's total balance.</summary>
@@ -352,13 +364,63 @@
             <summary>The instalments that count for <paramref name="stage"/> on <paramref name="businessDate"/> (calendar-month conventions).</summary>
         </member>
         <member name="M:TigerCS.Domain.Modules.Collections.CollectionsCampaignPolicy.DefaultDateTo(TigerCS.Domain.Modules.Collections.CollectionsCampaignStage,System.DateOnly)">
-            <summary>Default "To" of the due-date window: month end for the whole-month stages, otherwise the preview date.</summary>
+            <summary>
+            Default "To" of the due-date window: the last day of the preview month, for every stage. The window only feeds the Due / Overdue / Total figures (the stage
+            eligibility is <see cref="M:TigerCS.Domain.Modules.Collections.CollectionsCampaignPolicy.StageRange(TigerCS.Domain.Modules.Collections.CollectionsCampaignStage,System.DateOnly)"/>, unchanged), and Due is the whole current month, including the days still to come. The caller clamps it to the end of
+            the current month (<see cref="M:TigerCS.Domain.Modules.Collections.CollectionsDueMonth.ClampTo(System.DateOnly,System.DateOnly)"/>).
+            </summary>
         </member>
         <member name="M:TigerCS.Domain.Modules.Collections.CollectionsCampaignPolicy.RangeNotes(TigerCS.Domain.Modules.Collections.CollectionsCampaignStage,System.DateOnly,System.DateOnly,System.DateOnly)">
             <summary>
             Flags (without changing eligibility) where the due-date window excludes instalments the confirmed stage rule would
             otherwise qualify. The window is an additional reviewer filter; the communication policy above is unchanged.
             </summary>
+        </member>
+        <member name="T:TigerCS.Domain.Modules.Collections.CrmLinkStatus">
+            <summary>How the CRM side of a unit looks: no eligible sale, exactly one customer, several customers, or CRM not loaded at all.</summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.Collections.CrmLinkStatus.Unavailable">
+            <summary>The CRM owner data was never loaded (or is disabled): PACT alone is used, nothing is implied about CRM.</summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.Collections.CrmLinkStatus.None">
+            <summary>CRM is loaded and holds no eligible (Sold / Contract, not cancelled) sale of this unit.</summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.Collections.CrmLinkStatus.Single">
+            <summary>Exactly one distinct CRM customer holds an eligible sale of the unit.</summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.Collections.CrmLinkStatus.Ambiguous">
+            <summary>More than one distinct CRM customer holds an eligible sale: nobody is chosen, the match needs review.</summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.Collections.CrmLinkStatus.CompanyAmbiguous">
+            <summary>The CRM sale exists but cannot be tied to ONE company: the same unit key is held by PACT accounts of both companies (or the tower is in both). Nobody is chosen; the unit is flagged.</summary>
+        </member>
+        <member name="T:TigerCS.Domain.Modules.Collections.SourceContact">
+            <summary>A contact as one source holds it. Phone / Email are already normalised (empty = missing or invalid); Name is trimmed text (empty = missing).</summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.Collections.SourceContact.#ctor(System.String,System.String,System.String)">
+            <summary>A contact as one source holds it. Phone / Email are already normalised (empty = missing or invalid); Name is trimmed text (empty = missing).</summary>
+        </member>
+        <member name="T:TigerCS.Domain.Modules.Collections.LinkedContact">
+            <summary>The contact to use and where each value came from (<c>Crm</c>, <c>Pact</c> or empty), plus the review reasons the linking raised.</summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.Collections.LinkedContact.#ctor(System.String,System.String,System.String,System.String,System.String,System.String,TigerCS.Domain.Modules.Collections.CrmLinkStatus,System.Boolean)">
+            <summary>The contact to use and where each value came from (<c>Crm</c>, <c>Pact</c> or empty), plus the review reasons the linking raised.</summary>
+        </member>
+        <member name="T:TigerCS.Domain.Modules.Collections.CollectionsContactLinker">
+            <summary>
+            The single definition of how CRM and PACT contact data are combined (Collections lists, Campaigns and Payment Summary all use it; SQL mirrors it in
+            <c>usp_Collections_GetCampaignUnits</c>). The rules:
+            <list type="number">
+            <item>CRM first: when exactly one eligible CRM customer holds the unit, its name / phone / e-mail win.</item>
+            <item>PACT completes what CRM lacks (a missing name, phone or e-mail); an existing value is never replaced by an empty one.</item>
+            <item>Several CRM customers: nobody is chosen - CRM is not used at all and the unit is flagged; PACT's own contact stays.</item>
+            <item>Conflict - both sources have a phone and they differ, or (when the phones cannot confirm the same person) both have an e-mail and they differ:
+            two people are never merged. CRM's values alone are used, PACT is not mixed in, and the unit is flagged for review.</item>
+            </list>
+            </summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.Collections.CollectionsContactLinker.Flags(TigerCS.Domain.Modules.Collections.LinkedContact,System.Boolean)">
+            <summary>The review flags a linking raises (CrmCustomerAmbiguous, ContactSourceConflict) and NoValidContact when the linked contact has neither phone nor e-mail.</summary>
         </member>
         <member name="T:TigerCS.Domain.Modules.Collections.CollectionsContactNormalizer">
             <summary>
@@ -387,6 +449,35 @@
         </member>
         <member name="M:TigerCS.Domain.Modules.Collections.CollectionsDateRanges.TryAsCalendarMonth(System.DateOnly,System.DateOnly,System.Int32@,System.Int32@)">
             <summary>True when the range is exactly one whole calendar month (the Month / Year selectors then show it).</summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.Collections.CollectionsDueClass.NotInScope">
+            <summary>Due on or after the first day of the NEXT month: part of neither Due nor Overdue (never listed, totalled or exported).</summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.Collections.CollectionsDueClass.Overdue">
+            <summary>Due before the first day of the current month.</summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.Collections.CollectionsDueClass.Due">
+            <summary>Due inside the current month, whichever day (past, today or a coming day of the month).</summary>
+        </member>
+        <member name="T:TigerCS.Domain.Modules.Collections.CollectionsDueMonth">
+            <summary>
+            THE Due / Overdue rule of Receivables and Campaigns, against the CURRENT calendar month in Asia/Dubai (the caller passes today's Dubai date):
+            <code>Overdue: DueDate &lt; monthStart
+            Due:     DueDate &gt;= monthStart AND DueDate &lt; nextMonthStart
+            (DueDate &gt;= nextMonthStart is excluded)</code>
+            It is calendar based (December rolls into January through <see cref="M:System.DateOnly.AddMonths(System.Int32)"/>), never day based, and it is the single definition: the SQL read
+            procedures (<c>usp_CollectionsRcv_GetUnits</c>) apply the same two boundaries and the application never re-derives them. Amounts are always the REMAINING
+            amount of an unpaid or partly paid instalment.
+            </summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.Collections.CollectionsDueMonth.MonthEnd(System.DateOnly)">
+            <summary>Last day of the current month: the widest due date Receivables / Campaigns ever read.</summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.Collections.CollectionsDueMonth.IsInScope(System.DateOnly,System.DateOnly)">
+            <summary>Due or Overdue: due before the first day of the next month.</summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.Collections.CollectionsDueMonth.ClampTo(System.DateOnly,System.DateOnly)">
+            <summary>The upper end (inclusive) a due-date window is clamped to: nothing from the next month onwards is read.</summary>
         </member>
         <member name="T:TigerCS.Domain.Modules.Collections.CollectionsPaymentFilter">
             <summary>
@@ -502,6 +593,69 @@
         </member>
         <member name="M:TigerCS.Domain.Modules.Collections.CollectionsTowerNumber.Matches(System.String,System.String)">
             <summary>Tower numbers compare as trimmed, case-insensitive text (the seed table may store them as numbers or text).</summary>
+        </member>
+        <member name="T:TigerCS.Domain.Modules.Collections.CollectionsTowerOrder">
+            <summary>
+            The one ordering of towers and of the units inside a tower (Receivables, Campaigns, the tower picker): the newest tower first, i.e. the tower NUMBER descending
+            (<c>TP140</c>, <c>TP132</c>, <c>TP131</c> ... <c>TP119</c>). The number is the actual integer of the tower, never the text (as text <c>99</c> sorts after <c>140</c>) and never
+            its name. A tower number that is not a plain integer sorts after all numeric towers, in a fixed text order, so the order is total and stable. Mirrors the SQL ordering of
+            <c>usp_CollectionsRcv_GetUnits</c> / <c>usp_CollectionsRcv_GetTowers</c> (the equivalence is covered by tests).
+            </summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.Collections.CollectionsTowerOrder.Number(System.String)">
+            <summary>The integer value of a tower number (<c>"140"</c>, <c>"TP140"</c>, <c>" 07 "</c>); null when it is not a plain non-negative integer.</summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.Collections.CollectionsTowerOrder.UnitNumber(System.String)">
+            <summary>The leading integer of the part of a unit code that follows the tower (<c>TP115-1921</c> -> 1921, <c>TP136-C-402</c> -> null); the text itself breaks ties.</summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.Collections.CollectionsTowerOrder.UnitRest(System.String)">
+            <summary>The unit code after the tower prefix: <c>TP115-1921</c> and <c>115-1921</c> -> <c>1921</c>; a code with no hyphen is returned trimmed.</summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.Collections.CollectionsTowerOrder.Compare(System.String,System.String,System.Int32,System.String,System.Int64,System.String,System.String,System.Int32,System.String,System.Int64)">
+            <summary>
+            Tower number DESC (numeric towers first; non-numeric ones after them, by text), then the unit inside the tower (unit number ASC when numeric, numeric units before lettered ones,
+            then the unit code), then the company, customer, unit id: a total order, so a page never repeats or skips a row.
+            </summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.Collections.CollectionsTowerOrder.CompareTowers(System.String,System.Int32,System.Int64,System.String,System.Int32,System.Int64)">
+            <summary>Tower picker order: number DESC, then the company, then the tower id.</summary>
+        </member>
+        <member name="T:TigerCS.Domain.Modules.Collections.CollectionsTowerName">
+            <summary>
+            Whether a stored tower name is a real name. A blank value, or one that only repeats the number (<c>119</c>, <c>TP119</c>), is a placeholder: it carries no information
+            and must never hide the real name that CRM holds. Mirrors the SQL predicate in <c>dbo.fn_Collections_TowerNames</c>.
+            </summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.Collections.CollectionsTowerName.Display(System.String,System.String,System.String)">
+            <summary>What a screen shows for a tower: the real name, else the number alone - never a made-up name.</summary>
+        </member>
+        <member name="T:TigerCS.Domain.Modules.Collections.CollectionsUnitKey">
+            <summary>
+            The key that links a unit across PACT and CRM: <c>TP{tower}-{unit}</c>, upper case, trimmed (<c>TP140-101</c>, <c>TP136-C-402</c>). PACT already issues it as the
+            unit code; CRM's project code plus unit number form the same text (the legacy EDSM exclusion builds it as <c>ProjectCode + '-' + UnitNumber</c>).
+            Mirrors SQL <c>dbo.fn_CollectionsUnitKey</c>. Names, phones and customer names are never part of it: nothing is matched by text similarity.
+            </summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.Collections.CollectionsUnitKey.Normalize(System.String)">
+            <summary>Normalises a PACT unit code (or any <c>TP140-101</c> / <c>140-101</c> text). Blank gives null.</summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.Collections.CollectionsUnitKey.FromCrm(System.String,System.String)">
+            <summary>The key of a CRM unit: its project code (<c>TP140</c> or <c>140</c>) and its unit number. Either part blank gives null (the sale cannot be linked).</summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.Collections.CollectionsUnitKey.IsListable(System.String)">
+            <summary>A cancelled apartment (a '*' in its code, e.g. <c>513*</c>), a blank code or <c>0</c> is never a unit to link or list.</summary>
+        </member>
+        <member name="T:TigerCS.Domain.Modules.Collections.CrmSaleEligibility">
+            <summary>
+            The single rule for a CRM sale that counts as a unit's owner (Collections lists, the CRM owner feed, phone lookup and ticket creation): a buyer's lead whose status is
+            <b>Sold</b> or <b>Contract</b> and is not cancelled.
+            <para>
+            The status NAME that CRM sends decides. The numeric lead-status values are NOT verified anywhere in this repository (the only definition is the test stub
+            <c>docs/Genesys/crm-insertion/harness/Stubs.cs</c>: Contract = 4, Sold = 8, Cancelled = 9, written for the CRM insertion harness; CRM's own enum and whether
+            <c>LeadStatus.Contract</c> exists are open question A7 in <c>docs/Genesys/CRM-GetUnitDetails-Field-Mapping.md</c>), so a number is consulted only when CRM sent no name at all, and
+            then only the configured fallback list. A cancelled lead is refused by name and its number is deliberately not hard-coded.
+            </para>
+            </summary>
         </member>
         <member name="T:TigerCS.Domain.Modules.Collections.FinancialAccountSnapshot">
              <summary>
@@ -984,9 +1138,13 @@
             Converts the free-text mobile values stored in PACT to E.164. Rules, in order:
             separators (space - . ( ) / \ ) are removed; "00" becomes "+"; a bare UAE national form is repaired
             (0501234567, 501234567 with the leading zero lost to a spreadsheet, 971501234567, 9710501234567 with a
-            stray trunk zero). Two different numbers in one field are never guessed between. Nothing is invented: a value
+            stray trunk zero). A number with another country code (+966, 00966 or 966... with eleven or more digits) is kept as written and never turned into a UAE number.
+            Two different numbers in one field are never guessed between. Nothing is invented: a value
             that cannot be confirmed is rejected with a reason the reviewer can read.
             </summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.Collections.Review.PhoneNormalizer.AsciiDigits(System.String)">
+            <summary>Eastern Arabic-Indic and Persian digits are written as ASCII digits (a mobile typed on an Arabic keyboard is the same number).</summary>
         </member>
         <member name="T:TigerCS.Domain.Modules.Collections.Review.CollectionsReviewRun">
             <summary>
@@ -1909,6 +2067,19 @@
             select and route on, not the SLA math that later attaches to it.
             </summary>
         </member>
+        <member name="T:TigerCS.Domain.Modules.SlaAndEscalation.PriorityAliases">
+            <summary>
+            The business vocabulary for priorities. The SLA document says "Normal";
+            the system's fixed priority set is Critical/High/Medium/Low, and the
+            documented mapping (<c>WorkflowReferenceData.NormalUrgencyPriority</c>) is
+            that Normal <i>is</i> the Medium tier. Resolving "Normal" through this
+            table — by <see cref="T:TigerCS.Domain.Modules.SlaAndEscalation.PriorityLevel"/>, never a numeric id — keeps the
+            mapping in one place and lets the Priorities table decide the id.
+            </summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.SlaAndEscalation.PriorityAliases.TryResolve(System.String,TigerCS.Domain.Modules.SlaAndEscalation.PriorityLevel@)">
+            <summary>The priority level a business name stands for, when it is an alias rather than a priority's own name.</summary>
+        </member>
         <member name="T:TigerCS.Domain.Modules.SlaAndEscalation.PriorityDowngradeRequestStatus">
             <summary>MVP-ERD.md section 2.27 lifecycle of a <see cref="T:TigerCS.Domain.Modules.SlaAndEscalation.PriorityDowngradeRequest"/>.</summary>
         </member>
@@ -2552,6 +2723,18 @@
             never happened. First Response is never moved.
             </summary>
         </member>
+        <member name="M:TigerCS.Domain.Modules.SlaAndEscalation.TicketSlaInstance.ReapplyPolicy(System.Nullable{System.DateTime},System.Nullable{System.DateTime},TigerCS.Domain.Modules.SlaAndEscalation.AppliedSlaPolicy)">
+            <summary>
+            Re-applies the governing SLA policy to the <b>running</b> period after
+            a request type has been classified, <b>without restarting the clock</b>:
+            <see cref="P:TigerCS.Domain.Modules.SlaAndEscalation.TicketSlaInstance.PeriodStartAtUtc"/> is untouched and the new due timestamps
+            were computed by the caller from that original start, so elapsed time
+            is kept. Breach flags are never touched, and a deadline that has
+            already breached is never moved (the caller passes null for it). A
+            null deadline argument means "leave that deadline, and its applied
+            target, exactly as it is".
+            </summary>
+        </member>
         <member name="M:TigerCS.Domain.Modules.SlaAndEscalation.TicketSlaInstance.OpenDowngradePeriod(System.Int64,System.Byte,System.DateTime,System.DateTime,System.Boolean,System.DateTime,System.Guid)">
              <summary>
              Opens the successor period of an <b>approved priority downgrade</b>
@@ -2567,6 +2750,19 @@
              on the predecessor row, untouched.
              </para>
              </summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.SlaAndEscalation.TicketSlaInstance.OpenUpgradePeriod(System.Int64,System.Byte,System.DateTime,System.DateTime,System.Boolean,System.DateTime,TigerCS.Domain.Modules.SlaAndEscalation.AppliedSlaPolicy)">
+            <summary>
+            Opens the successor period of a priority <b>upgrade</b> (ADR-0012;
+            SLA-Architecture.md section 7): no approval is needed because an
+            upgrade can only tighten. First Response is carried verbatim (due
+            timestamp and breach flag), and the Resolution deadline is the one the
+            caller computed as the earlier of the existing and the freshly
+            computed higher-tier deadline — which may already be in the past for a
+            ticket that was overdue, so (unlike the other successor factories) it
+            is deliberately not required to follow <paramref name="changedAtUtc"/>:
+            an upgrade must never launder an overdue deadline into a fresh one.
+            </summary>
         </member>
         <member name="M:TigerCS.Domain.Modules.SlaAndEscalation.TicketSlaInstance.EndPeriod(System.DateTime)">
             <summary>
@@ -3320,7 +3516,7 @@
              </para>
              </summary>
         </member>
-        <member name="M:TigerCS.Domain.Modules.Ticketing.Ticket.CreateUnclassified(System.String,System.Int32,System.String,System.DateTime,System.String,System.String)">
+        <member name="M:TigerCS.Domain.Modules.Ticketing.Ticket.CreateUnclassified(System.String,System.Int32,System.String,System.DateTime,System.String,System.String,System.Nullable{System.Byte})">
              <summary>
              The <b>Unclassified</b> path: an inquiry reached an agent and must
              become a ticket immediately, but nobody has read the request yet, so
@@ -3354,6 +3550,12 @@
              <param name="createdAtUtc">Creation time, in UTC.</param>
              <param name="manualProjectName">Optional project/tower snapshot the channel collected, same as <see cref="M:TigerCS.Domain.Modules.Ticketing.Ticket.CreateUnverified(System.String,System.Int32,System.Int32,System.Byte,System.String,System.DateTime,System.String,System.String)"/>.</param>
              <param name="manualUnitNumber">Optional unit-number snapshot the channel collected.</param>
+             <param name="defaultPriorityId">
+             The configured default priority (Genesys tickets: the Normal tier). It
+             is a default, not a judgement — category and request type stay null —
+             but it selects the SLA policy, so the SLA clock starts at creation.
+             Null keeps the original behavior: no priority and no SLA period.
+             </param>
         </member>
         <member name="M:TigerCS.Domain.Modules.Ticketing.Ticket.ReconcileVerification(System.Int32,System.Int32)">
              <summary>
@@ -3439,6 +3641,15 @@
             
              <para>This method does not touch the SLA period; the caller owns that.</para>
              </summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.Ticketing.Ticket.ApplyDefaultPriority(System.Byte)">
+            <summary>
+            Gives a ticket that carries no priority the configured default. Only
+            for an unclassified ticket created before default priorities existed
+            (new Genesys tickets get theirs at creation); a ticket that already
+            has a priority is never touched — a default must not overwrite a
+            priority anyone set, and re-ingesting a conversation must not reset it.
+            </summary>
         </member>
         <member name="M:TigerCS.Domain.Modules.Ticketing.Ticket.PinWorkflowVersion(System.Int32)">
             <summary>
