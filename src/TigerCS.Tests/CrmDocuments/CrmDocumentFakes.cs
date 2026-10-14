@@ -69,6 +69,11 @@ public sealed class FakeCrmDocumentGateway : ICrmDocumentGateway
 public sealed class FakeDocumentChannelSender(DocumentDeliveryChannel channel = DocumentDeliveryChannel.Email) : IDocumentDeliveryChannelSender
 {
     public DocumentDeliveryChannel Channel => channel;
+
+    /// <summary>False models the in-memory recording mail provider.</summary>
+    public bool RealMail { get; set; } = true;
+
+    public bool SendsRealMail => RealMail;
     public List<DocumentDeliveryMessage> Sent { get; } = [];
     public DocumentDeliveryOutcome NextOutcome { get; set; } = DocumentDeliveryOutcome.Sent;
 
@@ -104,7 +109,15 @@ public sealed class FakeCrmDocumentDeliveryRepository : ICrmDocumentDeliveryRepo
         Guid verificationSessionId, CrmDocumentType type, string crmRecordId, DocumentDeliveryChannel channel, DateTime sinceUtc,
         CancellationToken cancellationToken = default) =>
         Task.FromResult(All.FirstOrDefault(r => r.CrmDocumentDeliveryRequestId != 0
+            && r.Origin == DocumentDeliveryOrigin.GenesysVerifiedSession
             && r.VerificationSessionId == verificationSessionId && r.DocumentType == type && r.CrmRecordId == crmRecordId
+            && r.Channel == channel && r.Status == DocumentDeliveryStatus.Sent && r.SentAtUtc >= sinceUtc));
+
+    public Task<CrmDocumentDeliveryRequest?> FindRecentSentForAgentAsync(
+        int crmCustomerId, int crmLeadId, CrmDocumentType type, string crmRecordId, DocumentDeliveryChannel channel, DateTime sinceUtc,
+        CancellationToken cancellationToken = default) =>
+        Task.FromResult(All.FirstOrDefault(r => r.CrmDocumentDeliveryRequestId != 0
+            && r.IsAgentScope(crmCustomerId, crmLeadId) && r.DocumentType == type && r.CrmRecordId == crmRecordId
             && r.Channel == channel && r.Status == DocumentDeliveryStatus.Sent && r.SentAtUtc >= sinceUtc));
 
     public Task AddAsync(CrmDocumentDeliveryRequest request, CancellationToken cancellationToken = default)

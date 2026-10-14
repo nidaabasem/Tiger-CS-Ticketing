@@ -80,6 +80,10 @@ builder.Services.AddHttpClient<CustomersApiClient>(client => client.BaseAddress 
 builder.Services.AddHttpClient<CollectionsApiClient>(client => { client.BaseAddress = new Uri(apiBaseUrl); client.Timeout = TimeSpan.FromSeconds(180); })
     .AddHttpMessageHandler<BearerTokenHandler>();
 builder.Services.AddScoped<CustomerPaymentPanelLoader>();
+// Customer Details · Documents tab. Downloads buffer a CRM file (up to Crm:MaxDocumentBytes), so the timeout is the Api's CRM budget.
+builder.Services.AddHttpClient<CustomerDocumentsApiClient>(client => { client.BaseAddress = new Uri(apiBaseUrl); client.Timeout = TimeSpan.FromSeconds(90); })
+    .AddHttpMessageHandler<BearerTokenHandler>();
+builder.Services.AddScoped<CustomerDocumentsPanelLoader>();
 builder.Services.AddHttpClient<DashboardApiClient>(client => client.BaseAddress = new Uri(apiBaseUrl))
     .AddHttpMessageHandler<BearerTokenHandler>();
 builder.Services.AddHttpClient<AdminApiClient>(client => client.BaseAddress = new Uri(apiBaseUrl))

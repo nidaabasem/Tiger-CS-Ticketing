@@ -16,7 +16,23 @@ public sealed class CrmDocumentDeliveryRepository(TigerCsDbContext dbContext) : 
         Guid verificationSessionId, CrmDocumentType type, string crmRecordId, DocumentDeliveryChannel channel,
         DateTime sinceUtc, CancellationToken cancellationToken = default) =>
         dbContext.CrmDocumentDeliveryRequests
-            .Where(r => r.VerificationSessionId == verificationSessionId
+            .Where(r => r.Origin == DocumentDeliveryOrigin.GenesysVerifiedSession
+                && r.VerificationSessionId == verificationSessionId
+                && r.DocumentType == type
+                && r.CrmRecordId == crmRecordId
+                && r.Channel == channel
+                && r.Status == DocumentDeliveryStatus.Sent
+                && r.SentAtUtc != null && r.SentAtUtc >= sinceUtc)
+            .OrderByDescending(r => r.SentAtUtc)
+            .FirstOrDefaultAsync(cancellationToken);
+
+    public Task<CrmDocumentDeliveryRequest?> FindRecentSentForAgentAsync(
+        int crmCustomerId, int crmLeadId, CrmDocumentType type, string crmRecordId, DocumentDeliveryChannel channel,
+        DateTime sinceUtc, CancellationToken cancellationToken = default) =>
+        dbContext.CrmDocumentDeliveryRequests
+            .Where(r => r.Origin == DocumentDeliveryOrigin.AgentDesk
+                && r.CrmCustomerId == crmCustomerId
+                && r.CrmLeadId == crmLeadId
                 && r.DocumentType == type
                 && r.CrmRecordId == crmRecordId
                 && r.Channel == channel

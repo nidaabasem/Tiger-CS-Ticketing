@@ -1140,6 +1140,12 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                     b.Property<DateTime>("CreatedAtUtc")
                         .HasColumnType("datetime2");
 
+                    b.Property<int?>("CrmCustomerId")
+                        .HasColumnType("int");
+
+                    b.Property<int?>("CrmLeadId")
+                        .HasColumnType("int");
+
                     b.Property<string>("CrmRecordId")
                         .IsRequired()
                         .HasMaxLength(100)
@@ -1166,6 +1172,11 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                         .HasMaxLength(120)
                         .HasColumnType("nvarchar(120)");
 
+                    b.Property<byte>("Origin")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("tinyint")
+                        .HasDefaultValue((byte)1);
+
                     b.Property<DateTime?>("SentAtUtc")
                         .HasColumnType("datetime2");
 
@@ -1175,17 +1186,22 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                     b.Property<DateTime>("UpdatedAtUtc")
                         .HasColumnType("datetime2");
 
-                    b.Property<Guid>("VerificationSessionId")
+                    b.Property<Guid?>("VerificationSessionId")
                         .HasColumnType("uniqueidentifier");
 
                     b.HasKey("CrmDocumentDeliveryRequestId");
+
+                    b.HasIndex(new[] { "CrmCustomerId", "CrmLeadId", "DocumentType", "CrmRecordId", "Channel", "Status" }, "IX_CrmDocumentDeliveryRequests_AgentDocument");
 
                     b.HasIndex(new[] { "VerificationSessionId", "DocumentType", "CrmRecordId", "Channel", "Status" }, "IX_CrmDocumentDeliveryRequests_SessionDocument");
 
                     b.HasIndex(new[] { "CallerEmployeeId", "IdempotencyKey" }, "UX_CrmDocumentDeliveryRequests_CallerKey")
                         .IsUnique();
 
-                    b.ToTable("CrmDocumentDeliveryRequests", (string)null);
+                    b.ToTable("CrmDocumentDeliveryRequests", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_CrmDocumentDeliveryRequests_Origin", "([Origin] = 1 AND [VerificationSessionId] IS NOT NULL AND [CrmCustomerId] IS NULL AND [CrmLeadId] IS NULL) OR ([Origin] = 2 AND [VerificationSessionId] IS NULL AND [CrmCustomerId] IS NOT NULL AND [CrmLeadId] IS NOT NULL)");
+                        });
                 });
 
             modelBuilder.Entity("TigerCS.Domain.Modules.CustomerVerification.CustomerOtpChallenge", b =>

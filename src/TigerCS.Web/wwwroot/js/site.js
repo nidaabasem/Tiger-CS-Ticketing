@@ -154,6 +154,100 @@
     if (radio.checked && deferred()) load("");
   });
 
+  // Customer Profile · Documents tab: fetched the first time the tab is opened,
+  // and again whenever the unit changes. On a unit change the previous unit's
+  // documents are removed from the page BEFORE the request is made (only the
+  // selector stays), the previous request is aborted, and only the answer to the
+  // LATEST request is applied - and only if it is for the unit that was asked
+  // for - so a slow answer for another unit can never show under this one.
+  // Without JS the selector form and every link load the page with the tab
+  // rendered server-side (?tab=documents&unit=...).
+  document.querySelectorAll("[data-documents-src]").forEach(function (panel) {
+    var radio = document.getElementById("tab-documents");
+    if (!radio) return;
+    var latest = 0;
+    var controller = null;
+
+    var loadingNode = function () {
+      var wrap = document.createElement("div");
+      wrap.className = "payment-loading";
+      wrap.setAttribute("role", "status");
+      wrap.setAttribute("aria-live", "polite");
+      wrap.setAttribute("data-documents-loading", "");
+      wrap.innerHTML = '<span class="payment-spinner" aria-hidden="true"></span><span>Loading documents\u2026</span>';
+      return wrap;
+    };
+
+    var clearToLoading = function () {
+      var tab = panel.querySelector(".documents-tab");
+      if (!tab) return null;
+      Array.prototype.slice.call(tab.children).forEach(function (child) {
+        if (!child.hasAttribute("data-documents-selector")) tab.removeChild(child);
+      });
+      tab.setAttribute("aria-busy", "true");
+      tab.setAttribute("data-documents-state", "Deferred");
+      tab.appendChild(loadingNode());
+      return tab;
+    };
+
+    var load = function (unit) {
+      var request = ++latest;
+      if (controller) controller.abort();
+      controller = typeof AbortController === "function" ? new AbortController() : null;
+      clearToLoading();
+      var url = panel.getAttribute("data-documents-src") + (unit ? "&unit=" + encodeURIComponent(unit) : "");
+      fetch(url, { credentials: "same-origin", headers: { "Accept": "text/html" }, signal: controller ? controller.signal : undefined })
+        .then(function (response) {
+          if (!response.ok) throw new Error(String(response.status));
+          return response.text();
+        })
+        .then(function (html) {
+          if (request !== latest) return; // a newer selection superseded this one
+          var holder = document.createElement("div");
+          holder.innerHTML = html;
+          var fresh = holder.querySelector(".documents-tab");
+          var answered = fresh && fresh.getAttribute("data-documents-unit");
+          if (!fresh || (unit && answered && answered !== String(unit))) throw new Error("wrong unit");
+          var tab = panel.querySelector(".documents-tab");
+          if (tab) tab.outerHTML = fresh.outerHTML;
+        })
+        .catch(function (error) {
+          if (request !== latest || (error && error.name === "AbortError")) return;
+          var tab = panel.querySelector(".documents-tab");
+          if (!tab) return;
+          tab.removeAttribute("aria-busy");
+          var loading = tab.querySelector("[data-documents-loading]");
+          if (loading) tab.removeChild(loading);
+          tab.setAttribute("data-documents-state", "Error");
+          tab.insertAdjacentHTML("beforeend", '<div class="alert alert-error payment-alert-action" role="alert" data-documents-error><span><strong>Documents could not be retrieved.</strong> No documents are shown.</span><a class="btn btn-sm" href="#" data-documents-retry>Retry</a></div>');
+        });
+    };
+
+    var currentUnit = function () {
+      var select = panel.querySelector("#documentsUnit");
+      if (select && select.value) return select.value;
+      var tab = panel.querySelector(".documents-tab");
+      return (tab && tab.getAttribute("data-documents-unit")) || "";
+    };
+
+    panel.addEventListener("change", function (event) {
+      if (event.target && event.target.id === "documentsUnit") {
+        // The "Select a unit" placeholder exists only while nothing is shown, so an empty value has nothing to clear.
+        if (event.target.value) load(event.target.value);
+      }
+    });
+    panel.addEventListener("click", function (event) {
+      var link = event.target.closest && event.target.closest("[data-documents-retry], [data-documents-fallback]");
+      if (!link || !panel.contains(link)) return;
+      event.preventDefault();
+      load(currentUnit());
+    });
+
+    var deferred = function () { return panel.querySelector('[data-documents-state="Deferred"]'); };
+    radio.addEventListener("change", function () { if (radio.checked && deferred()) load(currentUnit()); });
+    if (radio.checked && deferred()) load(currentUnit());
+  });
+
   // Prevent duplicate submission: the FIRST submit of a form wins, and every
   // further submit while that one is still in flight is dropped. This covers
   // the double-click, the second Enter in a search box, and a filter control

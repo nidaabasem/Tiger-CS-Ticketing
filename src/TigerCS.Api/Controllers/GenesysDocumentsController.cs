@@ -90,66 +90,7 @@ public class GenesysDocumentsController(CrmDocumentCopyAppService documentCopyAp
 
         var result = await documentCopyAppService.SendAsync(employeeId.Value, request, idempotencyKey, cancellationToken);
 
-        return result.Status switch
-        {
-            CrmDocumentCopyStatus.Sent or CrmDocumentCopyStatus.SelectionRequired => Ok(result),
-            CrmDocumentCopyStatus.Queued => Accepted(result),
-
-            CrmDocumentCopyStatus.InvalidRequest => Coded(result, StatusCodes.Status400BadRequest, "Invalid document request"),
-            CrmDocumentCopyStatus.VerificationFailed => Coded(result, StatusCodes.Status403Forbidden, "Customer verification failed"),
-            CrmDocumentCopyStatus.OwnershipMismatch => Coded(result, StatusCodes.Status403Forbidden, "Record does not belong to the verified customer"),
-            CrmDocumentCopyStatus.IdempotencyConflict => Coded(result, StatusCodes.Status409Conflict, "Idempotency key already used"),
-            CrmDocumentCopyStatus.Disabled => Coded(result, StatusCodes.Status503ServiceUnavailable, "Document copies are switched off"),
-
-            CrmDocumentCopyStatus.DocumentUnavailable => Coded(
-                result,
-                result.Code switch
-                {
-                    CrmDocumentCodes.DocumentNotFound => StatusCodes.Status404NotFound,
-                    // CRM said 400/401/403 or sent a body that breaks its contract: an upstream defect or
-                    // configuration problem, not "try again" — a 502, with the CRM-specific code.
-                    CrmDocumentCodes.CrmRequestRejected
-                        or CrmDocumentCodes.CrmAuthenticationFailed
-                        or CrmDocumentCodes.CrmAccessDenied
-                        or CrmDocumentCodes.CrmInvalidResponse => StatusCodes.Status502BadGateway,
-                    // Unreachable, timed out, 500 or 503.
-                    _ => StatusCodes.Status503ServiceUnavailable
-                },
-                result.Code == CrmDocumentCodes.DocumentNotFound ? "Document not found" : "Document source unavailable"),
-
-            CrmDocumentCopyStatus.DeliveryFailed => Coded(
-                result,
-                result.Code switch
-                {
-                    CrmDocumentCodes.DeliveryChannelNotIntegrated => StatusCodes.Status501NotImplemented,
-                    CrmDocumentCodes.DeliveryDestinationUnavailable => StatusCodes.Status422UnprocessableEntity,
-                    _ => StatusCodes.Status502BadGateway
-                },
-                "Document could not be delivered"),
-
-            _ => Problem(statusCode: StatusCodes.Status500InternalServerError)
-        };
-    }
-
-    /// <summary>The standard ProblemDetails body plus the stable machine-readable <c>code</c> and the same relevant identifiers the success body carries.</summary>
-    private ObjectResult Coded(CrmDocumentCopyResult result, int statusCode, string title)
-    {
-        var problem = Problem(
-            type: $"https://tigercs.internal/problems/{(result.Code ?? "document-copy").ToLowerInvariant().Replace('_', '-')}",
-            title: title, detail: result.Message, statusCode: statusCode);
-
-        if (problem.Value is ProblemDetails details)
-        {
-            details.Extensions["code"] = result.Code;
-            details.Extensions["outcome"] = result.Status.ToString();
-            if (result.DocumentType is not null) details.Extensions["documentType"] = result.DocumentType;
-            if (result.RecordId is not null) details.Extensions["recordId"] = result.RecordId;
-            if (result.DeliveryChannel is not null) details.Extensions["deliveryChannel"] = result.DeliveryChannel;
-            if (result.DeliveryRequestId is not null) details.Extensions["deliveryRequestId"] = result.DeliveryRequestId;
-            if (result.Retryable is not null) details.Extensions["retryable"] = result.Retryable;
-        }
-
-        return problem;
+        return this.ToDocumentCopyResponse(result);
     }
 
     private Guid? GetEmployeeId()
