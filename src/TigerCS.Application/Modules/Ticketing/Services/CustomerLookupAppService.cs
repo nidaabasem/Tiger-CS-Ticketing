@@ -4,6 +4,7 @@ using TigerCS.Application.Modules.CustomerVerification.PactIntegration;
 using TigerCS.Application.Modules.CustomerVerification.Services;
 using TigerCS.Application.Modules.Ticketing.Abstractions;
 using TigerCS.Application.Modules.Ticketing.Dto;
+using TigerCS.Domain.Modules.Collections;
 using TigerCS.Domain.Modules.Ticketing;
 
 namespace TigerCS.Application.Modules.Ticketing.Services;
@@ -272,7 +273,8 @@ public sealed class CustomerLookupAppService(
                         UnitReferenceId: null,
                         ContactReferenceId: null,
                         contract.Contract.ContractEndDate,
-                        IsContractExpired: !contract.IsActive, CompanyId: contract.Contract.CompanyId))
+                        IsContractExpired: !contract.IsActive, CompanyId: contract.Contract.CompanyId,
+                        UnitCode: CollectionsUnitKey.IsListable(contract.Contract.UnitCode) ? CollectionsUnitKey.Normalize(contract.Contract.UnitCode) : null))
                     .ToList()))
             .ToList();
         return CustomerLookupSourceResultDto.Found(sourceName, customers);

@@ -1,3 +1,5 @@
+using TigerCS.Domain.Modules.Collections;
+
 namespace TigerCS.Application.Modules.CustomerVerification.Dto;
 
 /// <summary>A CRM customer, as returned by <c>GET /TicketingSystem/GetBuyerByPhone</c>.</summary>
@@ -33,7 +35,8 @@ public sealed record CrmCustomerDto(
 /// <param name="ProjectArabicName">The project's name in Arabic.</param>
 /// <param name="CustomerType">1 = Buyer. This phase supports Buyer only.</param>
 /// <param name="CustomerTypeName">CRM's display name for <paramref name="CustomerType"/> (e.g. "Buyer").</param>
-/// <param name="ProjectCode">The PACT unit-code prefix CRM holds for the project (<c>TP125</c>), when CRM publishes it (not yet part of the deployed <c>GetBuyerByPhone</c>). When present it is CRM's own statement of the project's PACT code and replaces any guess; null = not published.</param>
+/// <param name="ProjectCode">The PACT unit-code prefix CRM holds for the project (<c>TP125</c>), as published by CRM's <c>GetBuyerByPhone</c> (present in the UAT response). It is CRM's own statement of the project's PACT code and replaces any guess; null when CRM omitted or left it blank for that project.</param>
+/// <remarks>Also exposes the derived <see cref="UnitCode"/> (read-only).</remarks>
 public sealed record CrmBuyerUnitDto(
     int LeadId,
     int LeadStatus,
@@ -48,7 +51,35 @@ public sealed record CrmBuyerUnitDto(
     string? ProjectArabicName,
     int CustomerType,
     string? CustomerTypeName,
-    string? ProjectCode = null);
+    string? ProjectCode = null)
+{
+    /// <summary>
+    /// The PACT unit code of this unit (<c>TP130-902-B</c>): the CRM project code
+    /// and the unit number, suffix preserved — the same key
+    /// <c>CollectionsUnitKey.FromCrm</c> builds. Null when
+    /// <see cref="ProjectCode"/> is missing or is not a <c>TP</c>/numeric tower code, or
+    /// <see cref="UnitNumber"/> is blank: nothing is guessed, and it is never derived
+    /// from <see cref="ProjectId"/> (a CRM id is not a PACT tower number). Computed, so
+    /// it can never disagree with the fields it comes from; additive on the wire.
+    /// </summary>
+    public string? UnitCode => CrmUnitCode.From(ProjectCode, UnitNumber);
+}
+
+/// <summary>Builds the PACT-style unit code of a CRM unit, refusing any project code that is not a tower code.</summary>
+public static class CrmUnitCode
+{
+    /// <summary><c>projectCode + "-" + unitNumber</c>, normalized (upper case, one <c>TP</c> prefix); null when either part is missing or the project code is not <c>TP</c>+digits (or plain digits).</summary>
+    public static string? From(string? projectCode, string? unitNumber)
+    {
+        var project = projectCode?.Trim();
+        if (string.IsNullOrEmpty(project)) return null;
+        var digits = project.StartsWith("TP", StringComparison.OrdinalIgnoreCase) ? project[2..] : project;
+        if (digits.Length == 0 || !digits.All(char.IsAsciiDigit)) return null;
+
+        var code = CollectionsUnitKey.FromCrm(project, unitNumber);
+        return CollectionsUnitKey.IsListable(code) ? code : null;
+    }
+}
 
 /// <summary>
 /// One CRM customer matched by phone, plus every valid Buyer unit they own.

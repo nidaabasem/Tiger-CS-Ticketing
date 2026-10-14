@@ -235,12 +235,19 @@ tickets (`+971 50 123 4567` is the same caller).
     "matchedCustomerCount": 1,
     "units": ["Tiger Tower A - 1204"],
     "unitsText": "Tiger Tower A - 1204",
+    "selectableUnits": [
+      { "label": "Tiger Tower A - 1204", "unitCode": "TP125-1204", "paymentLookupReady": true, "sources": ["Crm"],
+        "customers": [ { "source": "Crm", "externalCustomerId": "4001" } ],
+        "sourcesText": "Crm", "customersText": "Crm:4001" }
+    ],
     "recentTicketNumbers": ["TG-CS-20260901-0044"],
     "openTicketNumbers": ["TG-CS-20260901-0044"],
     "recentTicketsText": "TG-CS-20260901-0044 (InProgress)"
   }
 }
 ```
+
+**Units.** Expired PACT contracts (end date before today in Dubai; ending today or no end date stay) are omitted from `externalSources[].customers[].units`, `screenPop.units`, `unitsText` and `selectableUnits`; CRM units are never dropped for a PACT expiry. CRM units (`crmBuyers[].units[]`) gain an additive `unitCode` (`projectCode` + `-` + `unitNumber`, e.g. `TP130-902-B`); it is null when `projectCode` is missing or not a tower code, and is never derived from `projectId`. `selectableUnits` is the de-duplicated list: a unit is merged only when records resolve to the same unit code (CRM label kept) — never by unit number, similar tower names or an identical display label. Records without a resolved code are never merged: each stays its own entry with its own `sources` and `customers`, so `units` may repeat a label when two sources list an unresolved unit. `customers[]` on each selectable unit keeps every matched customer record (source + id) the unit was found under, so two people sharing a phone number are never merged. `sourcesText` / `customersText` are the same two lists flattened to strings (`Crm,Pact` / `Crm:4001;Pact:T1`); the Genesys Data Action maps those as parallel primitive arrays (`selectableUnitLabels`, `selectableUnitCodes`, `selectableUnitPaymentReady`, `selectableUnitSources`, `selectableUnitCustomers`) because Architect outputs cannot hold nested arrays. `paymentLookupReady` only means the unit code is resolved (false, with an empty `unitCode`, when it is not); it does not mean ownership or the caller's identity is verified. `matchedCustomerCount` and the customer records are unaffected, and a shared phone number is not verified identity.
 
 `tickets` are the tickets that already arrived from this number, **open ones
 first**, so the agent knows the caller has a live case before they speak.

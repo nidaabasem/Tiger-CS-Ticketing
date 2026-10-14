@@ -33,6 +33,7 @@ public enum CustomerLookupSourceStatus
 /// <param name="ContractEndDate">The contract's end date, when the source has a readable one on file (PACT only); null otherwise.</param>
 /// <param name="IsContractExpired">True when <paramref name="ContractEndDate"/> falls before today's Dubai calendar date. Both lookup paths retain the contract for identity and historical reads; New Ticket excludes it from selectable units.</param>
 /// <param name="CompanyId">The PACT company associated with this contract, retained alongside the tenant for verified financial mapping.</param>
+/// <param name="UnitCode">PACT's own unit code for the contract, normalized (<c>TP130-902-B</c>), when PACT issued a listable one (PACT only); null otherwise. Used as unit identity — never derived from names.</param>
 public sealed record CustomerLookupUnitDto(
     string ExternalUnitId,
     string? UnitNumber,
@@ -43,7 +44,8 @@ public sealed record CustomerLookupUnitDto(
     int? ContactReferenceId,
     DateOnly? ContractEndDate = null,
     bool IsContractExpired = false,
-    int? CompanyId = null);
+    int? CompanyId = null,
+    string? UnitCode = null);
 
 /// <summary>
 /// One matched customer inside a <see cref="CustomerLookupSourceResultDto"/>.

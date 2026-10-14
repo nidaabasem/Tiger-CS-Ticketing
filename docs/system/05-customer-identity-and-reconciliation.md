@@ -130,7 +130,7 @@ Rule: `PactContractActivity.IsActiveOn` - expired only if `ContractEndDate` is *
 | Customer Lookup page | Shown, labelled expired (`CustomerLookup.cshtml.cs:35-39`) |
 | Identity linking | Expired PACT units count as evidence |
 | **Collections / EDSM mapping** | **Never filtered**: every contract of the tenant is needed to resolve (companyID, tenantID) pairs (`CollectionsPaymentSummaryAppService.cs:535-543`, `PactContractActivity.cs` remarks) |
-| Genesys lookup | Nested `externalSources` keeps flags; the flat `screenPop.units` / `unitsText` lists **expired units unflagged** (`GenesysCustomerLookupAppService.cs:143`, F-11) |
+| Genesys lookup | Nested `externalSources` keeps flags; the Genesys response (`externalSources` unit lists, `screenPop.units`/`unitsText`/`selectableUnits`) **omits expired PACT units**; shared search and Collections keep them. Screen-pop units are de-duplicated only on a resolved unit code (CRM `projectCode`-`unitNumber` = PACT `unitCode`), never by unit number or tower-name similarity |
 | Unit-details / OTP / documents | CRM only - PACT contracts are irrelevant |
 
 ## 5.9 Invalid unit `0`: every path checked

@@ -427,6 +427,8 @@ Input: `phoneNumber` (required).
 Output: `found` (bool), `phoneNumber`, `crmStatus`, `customerName`,
 `customerEmail`, `verificationSource`, `externalCustomerId`,
 `matchedCustomerCount` (int), `units` (string collection), `unitsText`,
+`selectableUnitLabels`, `selectableUnitCodes` (strings), `selectableUnitPaymentReady` (booleans),
+`selectableUnitSources`, `selectableUnitCustomers` (strings) — five parallel collections, same length, same index = same unit, no nested arrays,
 `recentTicketNumbers` (collection), `openTicketNumbers` (collection),
 `recentTicketsText`, `openTicketCount` (int).
 

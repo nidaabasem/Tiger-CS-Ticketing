@@ -26,6 +26,11 @@
         "matchedCustomerCount": "$.screenPop.matchedCustomerCount",
         "units": "$.screenPop.units",
         "unitsText": "$.screenPop.unitsText",
+        "selectableUnitLabels": "$.screenPop.selectableUnits[*].label",
+        "selectableUnitCodes": "$.screenPop.selectableUnits[*].unitCode",
+        "selectableUnitPaymentReady": "$.screenPop.selectableUnits[*].paymentLookupReady",
+        "selectableUnitSources": "$.screenPop.selectableUnits[*].sourcesText",
+        "selectableUnitCustomers": "$.screenPop.selectableUnits[*].customersText",
         "recentTicketNumbers": "$.screenPop.recentTicketNumbers",
         "openTicketNumbers": "$.screenPop.openTicketNumbers",
         "recentTicketsText": "$.screenPop.recentTicketsText"
@@ -42,11 +47,16 @@
         "matchedCustomerCount": "0",
         "units": "[]",
         "unitsText": "\"\"",
+        "selectableUnitLabels": "[]",
+        "selectableUnitCodes": "[]",
+        "selectableUnitPaymentReady": "[]",
+        "selectableUnitSources": "[]",
+        "selectableUnitCustomers": "[]",
         "recentTicketNumbers": "[]",
         "openTicketNumbers": "[]",
         "recentTicketsText": "\"\""
       },
-      "successTemplate": "{\"found\": ${found}, \"phoneNumber\": ${phoneNumber}, \"crmStatus\": ${crmStatus}, \"customerName\": ${customerName}, \"customerEmail\": ${customerEmail}, \"verificationSource\": ${verificationSource}, \"externalCustomerId\": ${externalCustomerId}, \"matchedCustomerCount\": ${matchedCustomerCount}, \"units\": ${units}, \"unitsText\": ${unitsText}, \"recentTicketNumbers\": ${recentTicketNumbers}, \"openTicketNumbers\": ${openTicketNumbers}, \"recentTicketsText\": ${recentTicketsText}, \"openTicketCount\": ${openTicketCount}}"
+      "successTemplate": "{\"found\": ${found}, \"phoneNumber\": ${phoneNumber}, \"crmStatus\": ${crmStatus}, \"customerName\": ${customerName}, \"customerEmail\": ${customerEmail}, \"verificationSource\": ${verificationSource}, \"externalCustomerId\": ${externalCustomerId}, \"matchedCustomerCount\": ${matchedCustomerCount}, \"units\": ${units}, \"unitsText\": ${unitsText}, \"selectableUnitLabels\": ${selectableUnitLabels}, \"selectableUnitCodes\": ${selectableUnitCodes}, \"selectableUnitPaymentReady\": ${selectableUnitPaymentReady}, \"selectableUnitSources\": ${selectableUnitSources}, \"selectableUnitCustomers\": ${selectableUnitCustomers}, \"recentTicketNumbers\": ${recentTicketNumbers}, \"openTicketNumbers\": ${openTicketNumbers}, \"recentTicketsText\": ${recentTicketsText}, \"openTicketCount\": ${openTicketCount}}"
     }
   },
   "contract": {
@@ -109,11 +119,36 @@
             "items": {
               "type": "string"
             },
-            "description": "\"Project - Unit\" labels."
+            "description": "\"Project - Unit\" labels, de-duplicated. Expired PACT contracts are never listed."
           },
           "unitsText": {
             "type": "string",
             "description": "Units joined with \"; \"."
+          },
+          "selectableUnitLabels": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "One entry per selectable unit, parallel to the other selectableUnit* arrays (same length, same index = same unit). Label is the CRM label when CRM and PACT confirm the unit by resolved unit code."
+          },
+          "selectableUnitCodes": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Resolved PACT unit code (e.g. TP130-902-B) per unit, or an empty string when it could not be resolved. Never guessed."
+          },
+          "selectableUnitPaymentReady": {
+            "type": "array",
+            "items": { "type": "boolean" },
+            "description": "True only when that unit's code is resolved. It does not mean ownership or the caller is verified."
+          },
+          "selectableUnitSources": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Per unit, the confirming sources joined with a comma, e.g. Crm,Pact."
+          },
+          "selectableUnitCustomers": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Per unit, every matched customer record it was found under as Source:ExternalCustomerId joined with a semicolon, e.g. Crm:4001;Pact:T1. People sharing a phone number are all listed; this is not proof the caller is any of them."
           },
           "recentTicketNumbers": {
             "type": "array",
