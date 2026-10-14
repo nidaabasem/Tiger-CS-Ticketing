@@ -4,10 +4,8 @@ namespace TigerCS.Domain.Modules.Collections;
 /// The single rule for a CRM sale that counts as a unit's owner (Collections lists, the CRM owner feed, phone lookup and ticket creation): a buyer's lead whose status is
 /// <b>Sold</b> or <b>Contract</b> and is not cancelled.
 /// <para>
-/// The status NAME that CRM sends decides. The numeric lead-status values are NOT verified anywhere in this repository (the only definition is the test stub
-/// <c>docs/Genesys/crm-insertion/harness/Stubs.cs</c>: Contract = 4, Sold = 8, Cancelled = 9, written for the CRM insertion harness; CRM's own enum and whether
-/// <c>LeadStatus.Contract</c> exists are open question A7 in <c>docs/Genesys/CRM-GetUnitDetails-Field-Mapping.md</c>), so a number is consulted only when CRM sent no name at all, and
-/// then only the configured fallback list. A cancelled lead is refused by name and its number is deliberately not hard-coded.
+/// The status NAME that CRM sends decides. CRM's confirmed numbers are Sold = 8, Contract = 9, Approved = 4 (not a sale), Cancelled = 6; a number is consulted only when CRM sent no name at all,
+/// and then only the configured fallback list (default 8, 9). A cancelled lead is refused by name. (The harness stub in <c>docs/Genesys/crm-insertion/harness/Stubs.cs</c> has different numbers and is NOT CRM's enum.)
 /// </para>
 /// </summary>
 public static class CrmSaleEligibility

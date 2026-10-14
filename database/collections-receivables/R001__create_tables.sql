@@ -44,7 +44,7 @@ CREATE TABLE dbo.CollectionsRcvRun
   dbo.CollectionsRcvAccountUnit - the unit/account DIRECTORY of a published run: one row per (company, tenant, unit) that PACT's receivables procedure returned, INCLUDING fully paid
   (settled) units and cancelled ('*') codes. It exists so a unit can be tied to its (CompanyId, TenantId, UnitId) and so the other units of a tenant account are known even when nothing is
   open on them. It is bound to the run exactly like CollectionsRcvLine. Completeness is NOT assumed: it holds only what the procedure returned (units without a payment plan / ledger row are
-  absent), so the application treats it as complete scope evidence only when ReceivablesSnapshot:AccountDirectoryComplete is switched on after live verification.
+  absent), so the application treats it as complete scope evidence only when Collections:ReceivablesSnapshot:AccountDirectoryComplete is switched on after live verification.
 */
 IF OBJECT_ID(N'dbo.CollectionsRcvAccountUnit', N'U') IS NULL
 CREATE TABLE dbo.CollectionsRcvAccountUnit

@@ -220,7 +220,7 @@ public sealed class DueMonthRuleTests
         var h = Campaigns();   // today = 14 Oct 2026
         h.Source.Items.Add(Pay("A", 1, new(2026, 10, 28), 500m, "O28"));
         foreach (var stage in new[] { "CurrentMonthReminder", "FollowUpReminder", "OverdueReminder", "LegalNotice", "LegalReferral" })
-            Assert.Empty((await h.Service.PreviewAsync(h.Manager, stage, minTotal: null)).Value!.Items);          // a unit with ONLY a coming day is a candidate for no stage (as before)
+            Assert.All((await h.Service.PreviewAsync(h.Manager, stage, minTotal: null)).Value!.Items, i => { Assert.Equal("NotEligible", i.Status); Assert.Equal(500m, i.DueAmount); });   // ONLY a coming day: listed with its Due, a candidate for no stage (as before)
         h.Source.Items.Add(Pay("A", 1, new(2026, 10, 9), 100m, "O09"));
         var item = Assert.Single((await h.Service.PreviewAsync(h.Manager, "CurrentMonthReminder", minTotal: null)).Value!.Items);
         Assert.Equal(100m, item.Amount);                                                                  // the stage amount: only the 9 Oct instalment (up to today)

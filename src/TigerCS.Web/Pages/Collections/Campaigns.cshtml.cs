@@ -201,5 +201,16 @@ public sealed class CampaignsModel(CollectionsApiClient api, Microsoft.Extension
     public static string NoMobileNote(CollectionsCampaignContactDto row) =>
         row.Reason.Contains("CrmUnavailable", StringComparison.Ordinal) ? "Mobile unconfirmed: CRM unavailable" : "No mobile: voice / SMS not possible";
 
+    /// <summary>Readiness to send. It never changes the displayed balances: a unit the stage rule does not make eligible keeps its Due / Overdue / Total and only says why it is not ready.</summary>
+    public static string Readiness(CollectionsCampaignContactDto row) => row.Status switch
+    {
+        "Ready" => "Ready",
+        "NeedsReview" => "Needs review",
+        "PreviewOnly" => "Preview only",
+        "InternalReview" => "Internal review",
+        "NotEligible" => row.Reason.Contains("BelowThreshold", StringComparison.Ordinal) ? "Not eligible: below this stage's threshold" : "Not eligible: no balance qualifies for this stage",
+        _ => row.Status,
+    };
+
     public static string MoneyOrDash(decimal amount) => amount > 0 ? amount.ToString("N2", CultureInfo.InvariantCulture) : "—";
 }

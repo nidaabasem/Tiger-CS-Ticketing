@@ -45,7 +45,7 @@ namespace System.Web.Mvc
 namespace CRM_Performance.Models
 {
     public enum CustomerType { Buyer = 1, Seller = 2 }
-    public enum LeadStatus { New = 1, Hot = 2, Reserved = 3, Contract = 4, Sold = 8, Cancelled = 9 }
+    public enum LeadStatus { New = 1, Hot = 2, Reserved = 3, Approved = 4, Cancelled = 6, Sold = 8, Contract = 9 }   // values confirmed by the CRM owners
 
     public class tblLeadCustomers { public long LeadID; public long CustomerID; public int CustomerType; public long? UnitID; }
     public class tblLeads { public long ID; public int Status; }

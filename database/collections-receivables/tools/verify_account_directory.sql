@@ -1,5 +1,5 @@
 /*
-  verify_account_directory.sql - READ-ONLY (TigerCsTicketing). Run BEFORE switching ReceivablesSnapshot:AccountDirectoryComplete on.
+  verify_account_directory.sql - READ-ONLY (TigerCsTicketing). Run BEFORE switching Collections:ReceivablesSnapshot:AccountDirectoryComplete on.
   The unit/account directory (CollectionsRcvAccountUnit) holds what PACT's receivables procedure returned, fully paid units included. It is complete scope evidence for the payment statement
   only if it lists EVERY unit of a tenant account. This script gives the figures and sample tenants to compare with PACT/EDSM by hand:
     for each sample tenant, GET v1/contracts/{mobile} (PACT) must list exactly the units shown here - no more (e.g. a parking contract, a unit without a payment plan), no fewer.

@@ -171,4 +171,26 @@ public sealed class UnitPaymentStatementTests
         Assert.Equal("SourceUnavailable", s.Status);
         Assert.Null(s.Total);
     }
+
+    [Fact]
+    public void ARowsPaymentStatus_IsTheListTheSourceReturnedItIn_NeverDerivedFromItsDateOrAmount()
+    {
+        var read = Read("Owned", [Field("paidAmount", "Provided", 10m)],
+            List("Paid", Tx(10m, 2030, 1, 1)),                          // a FUTURE date in the Paid list stays Paid
+            List("Due", Tx(5m, 2020, 1, 1)),                            // a long-past date in the Due list stays Due
+            List("Outstanding", Tx(1m, 2020, 6, 1)));                   // a past date in the Outstanding list stays Outstanding
+        var s = CollectionsUnitStatementService.Compose("TP140-909", Account(), read, "Edsm", "AED", DateTime.UtcNow);
+        Assert.Equal([("Due", 2020), ("Outstanding", 2020), ("Paid", 2030)], s.Rows.Select(r => (r.Status, r.Date!.Value.Year)).ToArray());
+    }
+
+    [Fact]
+    public void AFullyPaidAccount_ListsItsPaidRowsOnly_AndInventsNoDueOrOutstandingRows()
+    {
+        var read = Read("Owned", [Field("paidAmount", "Provided", 30m), Field("dueAmount", "Provided", 0m), Field("outstandingAmount", "Provided", 0m), Field("totalAmount", "Provided", 30m)],
+            List("Paid", Tx(10m, 2026, 1, 1, "C1"), Tx(20m, 2026, 2, 1, "C2")), List("Due"), List("Outstanding"));
+        var s = CollectionsUnitStatementService.Compose("TP140-909", Account(), read, "Edsm", "AED", DateTime.UtcNow);
+        Assert.All(s.Rows, r => Assert.Equal("Paid", r.Status));
+        Assert.Equal((0m, 0m, 30m, 30m), (s.Due!.Value, s.Outstanding!.Value, s.Paid!.Value, s.Total!.Value));
+        Assert.True(s.RowsComplete);
+    }
 }

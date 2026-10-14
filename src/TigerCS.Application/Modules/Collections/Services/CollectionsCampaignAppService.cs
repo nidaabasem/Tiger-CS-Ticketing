@@ -160,7 +160,7 @@ public sealed class CollectionsCampaignAppService(
                 unitStatus, string.Join(";", reasons.Count == 0 ? ["Qualifies"] : reasons), f.TowerNumber, f.TowerName, f.DueAmount, f.OverdueAmount, f.CrmCustomerId);
         }
 
-        int count, ready, review;
+        int count, ready, review, notEligible = 0;
         List<CollectionsCampaignContactDto> items;
         if (sqlPage is not null)
         {
@@ -206,6 +206,7 @@ public sealed class CollectionsCampaignAppService(
             count = contacts.Count;
             ready = contacts.Count(x => x.Status == "Ready");
             review = contacts.Count(x => x.Status == "NeedsReview");
+            notEligible = contacts.Count(x => x.Status == "NotEligible");
             items = forExport ? contacts : contacts.Skip((page - 1) * pageSize).Take(pageSize).ToList();
         }
         return CollectionsResult<CollectionsCampaignPreviewDto>.Ok(new(date, clock.BusinessDate, readAtUtc,
@@ -213,7 +214,7 @@ public sealed class CollectionsCampaignAppService(
             campaignOptions.FinancialSourceValidated, sqlPage is null && snapshot!.LegacyExclusionsApplied, permissions.CanSendReminders,
             count, ready, review, page, pageSize, items,
             from, to, CollectionsCampaignPolicy.RangeNotes(selected, date, eligibleFrom, to), towerId, snapshotStatus, min,
-            new ServerTimingsDto(sourceMs, total.Elapsed.TotalMilliseconds - sourceMs, total.Elapsed.TotalMilliseconds), CrmContactStatusDto.From(crmSet.Availability)));
+            new ServerTimingsDto(sourceMs, total.Elapsed.TotalMilliseconds - sourceMs, total.Elapsed.TotalMilliseconds), CrmContactStatusDto.From(crmSet.Availability), notEligible));
     }
 
     /// <summary>Review reasons and status of a candidate from its unit-level flags and the global (source / schedule / release) gates. Order is part of the contract.</summary>
@@ -221,6 +222,9 @@ public sealed class CollectionsCampaignAppService(
         DateOnly date, IReadOnlyList<DateOnly> dates)
     {
         bool Has(CollectionsCampaignFlags flag) => (flags & (int)flag) != 0;
+        // The stage rule found nothing to send for this unit: it stays listed with its real balances; only its readiness says NotEligible.
+        if (Has(CollectionsCampaignFlags.NoQualifyingBalance)) return ("NotEligible", ["NoQualifyingBalance"]);
+        if (Has(CollectionsCampaignFlags.BelowThreshold)) return ("NotEligible", ["BelowThreshold"]);
         var reasons = new List<string>();
         if (Has(CollectionsCampaignFlags.AmbiguousInstalments)) reasons.Add("AmbiguousInstalments");
         if (Has(CollectionsCampaignFlags.AmountPrecisionNeedsReview)) reasons.Add("AmountPrecisionNeedsReview");
@@ -281,14 +285,20 @@ public sealed class CollectionsCampaignAppService(
                 || g.GroupBy(r => r.UnitCode.Trim()).Any(u => u.Select(r => r.UnitId).Distinct().Count() > 1))
             .Select(g => g.Key).ToHashSet();
         var readGroups = rows.GroupBy(r => (r.CompanyId, Tenant: r.TenantId.Trim(), r.UnitId, Code: r.UnitCode.Trim())).ToDictionary(g => g.Key, g => g.ToList());
-        var facts = eligibleRows.GroupBy(r => (r.CompanyId, Tenant: r.TenantId.Trim(), r.UnitId, Code: r.UnitCode.Trim()))
-            .Select(g =>
+        var eligibleByUnit = eligibleRows.GroupBy(r => (r.CompanyId, Tenant: r.TenantId.Trim(), r.UnitId, Code: r.UnitCode.Trim())).ToDictionary(g => g.Key, g => g.ToList());
+        // EVERY unit of the read scope is listed - the same units, contacts, tower names, order and Due / Overdue / Total as Receivables. The stage rule (eligibility scope) only decides READINESS:
+        // a unit with no qualifying stage amount stays in the list, flagged NoQualifyingBalance / BelowThreshold (status NotEligible), and its displayed balances are never changed or dropped.
+        var facts = readGroups.Select(entry =>
             {
-                var first = g.First();
-                var all = readGroups[g.Key];   // the unit's rows over the whole read scope (a superset of g)
-                var amount = CollectionsCampaignPolicy.Evaluate(g.Select(r =>
-                    new CampaignInstalment(DateOnly.FromDateTime(r.DueDate), r.Amount)), selected, date);
-                if (amount.Reason is "NoQualifyingBalance" or "BelowThreshold") return null;
+                var key = entry.Key;
+                var all = entry.Value;   // the unit's rows over the whole read scope
+                var g = eligibleByUnit.TryGetValue(key, out var eligible) ? eligible : [];
+                var basis = g.Count > 0 ? g : all;
+                // PACT's contact of the apartment is that of its EARLIEST payment (then smallest voucher) - the representative row Receivables uses.
+                var first = all.OrderBy(r => r.DueDate).ThenBy(r => r.VoucherNumber, StringComparer.Ordinal).First();
+                var amount = g.Count > 0
+                    ? CollectionsCampaignPolicy.Evaluate(g.Select(r => new CampaignInstalment(DateOnly.FromDateTime(r.DueDate), r.Amount)), selected, date)
+                    : new CampaignAmount(0m, null, "NoQualifyingBalance");
                 // Due = due inside the current month of today, Overdue = due before its first day (CollectionsDueMonth; the window never reaches the next month).
                 // Nothing Due or Overdue: not listed; Minimum Total is on the unit's sum of the remaining amounts.
                 var dueAmount = today is { } t1 ? all.Where(r => CollectionsDueMonth.IsDue(DateOnly.FromDateTime(r.DueDate), t1)).Sum(r => r.Amount) : 0m;
@@ -296,27 +306,29 @@ public sealed class CollectionsCampaignAppService(
                 if (today is not null && dueAmount + overdueAmount <= 0) return null;
                 if (minTotal is { } floor && dueAmount + overdueAmount <= floor) return null;
                 // CRM first, PACT completing; several CRM customers or conflicting people are flagged, never merged (CollectionsContactLinker).
-                var unitKey = CollectionsUnitKey.Normalize(g.Key.Code);
-                var link = unitKey is not null && crmLinks is not null && crmLinks.TryGetValue((g.Key.CompanyId, unitKey), out var found) ? found : null;
+                var unitKey = CollectionsUnitKey.Normalize(key.Code);
+                var link = unitKey is not null && crmLinks is not null && crmLinks.TryGetValue((key.CompanyId, unitKey), out var found) ? found : null;
                 var linked = CollectionsContactLinker.Link(
                     new SourceContact(first.FullName.Trim(), CollectionsContactNormalizer.NormalizePhone(first.Mobile), CollectionsContactNormalizer.NormalizeEmail(first.Email)),
                     link?.Contact ?? SourceContact.Empty, link?.Status ?? CrmLinkStatus.None);
                 var phone = linked.Phone;
                 var email = linked.Email;
                 var flags = CollectionsCampaignFlags.None;
-                if (amount.Reason != "Qualifies") flags |= CollectionsCampaignFlags.AmbiguousInstalments;
+                if (amount.Reason == "NoQualifyingBalance") flags |= CollectionsCampaignFlags.NoQualifyingBalance;
+                else if (amount.Reason == "BelowThreshold") flags |= CollectionsCampaignFlags.BelowThreshold;
+                else if (amount.Reason != "Qualifies") flags |= CollectionsCampaignFlags.AmbiguousInstalments;
                 if (amount.Amount is { } value && value != decimal.Round(value, 2)) flags |= CollectionsCampaignFlags.AmountPrecisionNeedsReview;
-                if (g.Key.UnitId is not > 0 || string.IsNullOrWhiteSpace(g.Key.Code) || g.Key.Code == "0")
+                if (key.UnitId is not > 0 || string.IsNullOrWhiteSpace(key.Code) || key.Code == "0")
                     flags |= CollectionsCampaignFlags.MissingUnitIdentity;
-                if (g.Select(r => (r.FullName.Trim(), Phone: CollectionsContactNormalizer.NormalizePhone(r.Mobile),
+                if (basis.Select(r => (r.FullName.Trim(), Phone: CollectionsContactNormalizer.NormalizePhone(r.Mobile),
                         Email: CollectionsContactNormalizer.NormalizeEmail(r.Email), r.ProjectCode)).Distinct().Count() > 1)
                     flags |= CollectionsCampaignFlags.ConflictingContactDetails;
-                if (ambiguousTenants.Contains((g.Key.CompanyId, g.Key.Tenant))) flags |= CollectionsCampaignFlags.UnitAllocationNeedsReview;
-                if (g.Any(r => string.Equals(r.SourceStatus?.Trim(), "Paid", StringComparison.OrdinalIgnoreCase)))
+                if (ambiguousTenants.Contains((key.CompanyId, key.Tenant))) flags |= CollectionsCampaignFlags.UnitAllocationNeedsReview;
+                if (basis.Any(r => string.Equals(r.SourceStatus?.Trim(), "Paid", StringComparison.OrdinalIgnoreCase)))
                     flags |= CollectionsCampaignFlags.ContradictoryPaymentStatus;
                 flags |= CollectionsContactLinker.Flags(linked, selected != CollectionsCampaignStage.LegalReferral);
                 if (crmUnavailable) flags |= CollectionsCampaignFlags.CrmUnavailable;
-                return new CampaignUnitFacts(first.CompanyId, g.Key.Tenant, linked.NameSource == "Crm" ? linked.Name : first.FullName, phone, email, first.UnitId, g.Key.Code, first.ProjectCode,
+                return new CampaignUnitFacts(first.CompanyId, key.Tenant, linked.NameSource == "Crm" ? linked.Name : first.FullName, phone, email, first.UnitId, key.Code, first.ProjectCode,
                     amount.Amount, amount.EarliestDueDate, (int)flags, first.TowerNumber, first.TowerName, dueAmount, overdueAmount,
                     link?.Status switch { CrmLinkStatus.Single => 1, CrmLinkStatus.Ambiguous => 2, CrmLinkStatus.CompanyAmbiguous => 3, _ => 0 }, link?.Status == CrmLinkStatus.Single ? link.CustomerId : null,
                     all.Max(r => DateOnly.FromDateTime(r.DueDate)));
@@ -352,11 +364,16 @@ public sealed class CollectionsCampaignAppService(
         if (report.Snapshot is { IsReady: false } stale)
             return CollectionsResult<CollectionsCampaignExportDto>.Fail(CollectionsOutcome.InvalidRequest,
                 $"Receivables data is not ready to export. {stale.ReadyProblem} No file was created; once the data is loaded and fresh, retry.");
-        if (mode == "genesys" && (report.Stage == nameof(CollectionsCampaignStage.LegalReferral)
-            || report.BusinessDate != report.LiveBusinessDate || !report.IsScheduledDate
-            || report.Items.Any(c => c.Status != "Ready") || report.Items.Count == 0))
-            return CollectionsResult<CollectionsCampaignExportDto>.Fail(CollectionsOutcome.InvalidRequest,
-                "Genesys export needs a current scheduled date and every selected row ready. Review the list first; internal legal referrals cannot be sent to a customer campaign.");
+        if (mode == "genesys")
+        {
+            // The Genesys file carries ONLY ready units; units the stage rule does not make eligible stay in the review file with their balances but are never sent. Any unit that is eligible
+            // yet not ready (needs review, preview only, internal) blocks the file: the list must be reviewed first.
+            if (report.Stage == nameof(CollectionsCampaignStage.LegalReferral) || report.BusinessDate != report.LiveBusinessDate || !report.IsScheduledDate
+                || report.Items.Any(c => c.Status is not ("Ready" or "NotEligible")) || !report.Items.Any(c => c.Status == "Ready"))
+                return CollectionsResult<CollectionsCampaignExportDto>.Fail(CollectionsOutcome.InvalidRequest,
+                    "Genesys export needs a current scheduled date and every eligible row ready. Review the list first; internal legal referrals cannot be sent to a customer campaign.");
+            report = report with { Items = report.Items.Where(c => c.Status == "Ready").ToList() };
+        }
         var csv = CollectionsCampaignCsv.Write(report, review: mode == "review");
         return CollectionsResult<CollectionsCampaignExportDto>.Ok(new(
             $"collections-{report.Stage}-{report.BusinessDate:yyyy-MM-dd}-{mode}.csv", csv, report.Items.Count));
