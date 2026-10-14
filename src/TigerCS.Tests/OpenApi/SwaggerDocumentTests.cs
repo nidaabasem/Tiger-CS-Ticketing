@@ -117,6 +117,9 @@ public class SwaggerDocumentTests(SwaggerDocumentFixture fixture) : IClassFixtur
         "GET /api/customers/search",
         "GET /api/customers",
         "GET /api/customers/profile/{customerKey}",
+        "GET /api/customers/{customerKey}/documents",
+        "GET /api/customers/{customerKey}/documents/{crmLeadId}/{documentType}/{recordId}/file",
+        "POST /api/customers/{customerKey}/documents/send",
 
         "GET /api/dashboard",
         "GET /api/dashboard/overview",

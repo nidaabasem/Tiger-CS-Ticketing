@@ -58,6 +58,36 @@ public abstract class ApiClientBase(HttpClient httpClient, ILogger logger)
         }
     }
 
+    /// <summary>GET a file: the bytes, their media type and the file name the Api chose. Failures map exactly like the JSON calls.</summary>
+    protected async Task<ApiResult<ApiFile>> GetFileAsync(string requestUri, CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var response = await Http.GetAsync(requestUri, cancellationToken);
+            if (!response.IsSuccessStatusCode)
+            {
+                var (outcome, detail, problemType) = await DescribeFailureAsync(HttpMethod.Get, requestUri, response, cancellationToken);
+                return ApiResult<ApiFile>.Failure(outcome, detail, problemType);
+            }
+
+            var bytes = await response.Content.ReadAsByteArrayAsync(cancellationToken);
+            var disposition = response.Content.Headers.ContentDisposition;
+            return ApiResult<ApiFile>.Success(new ApiFile(
+                bytes, response.Content.Headers.ContentType?.MediaType ?? "application/octet-stream",
+                disposition?.FileNameStar ?? disposition?.FileName?.Trim('"') ?? "document"));
+        }
+        catch (HttpRequestException ex)
+        {
+            LogUnreachable(HttpMethod.Get, requestUri, ex);
+            return ApiResult<ApiFile>.Failure(ApiOutcome.Unreachable, ex.Message);
+        }
+        catch (TaskCanceledException ex) when (!cancellationToken.IsCancellationRequested)
+        {
+            LogUnreachable(HttpMethod.Get, requestUri, ex);
+            return ApiResult<ApiFile>.Failure(ApiOutcome.Unreachable, "The request timed out.");
+        }
+    }
+
     protected async Task<ApiResult<TResponse>> PostAsync<TRequest, TResponse>(
         string requestUri, TRequest body, CancellationToken cancellationToken)
     {

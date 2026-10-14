@@ -29,7 +29,22 @@ public class CrmDocumentDeliveryRequest
     /// <summary>SHA-256 over the request's meaning (session, type, record, channel). The same key with a different fingerprint is a client bug and is refused.</summary>
     public string Fingerprint { get; private set; } = string.Empty;
 
-    public Guid VerificationSessionId { get; private set; }
+    /// <summary>Which door asked: a customer proven by a verified OTP session (Genesys), or a signed-in agent on Customer Details.</summary>
+    public DocumentDeliveryOrigin Origin { get; private set; }
+
+    /// <summary>
+    /// The real verification session that proved the customer — <b>set for <see cref="DocumentDeliveryOrigin.GenesysVerifiedSession"/>
+    /// and null for <see cref="DocumentDeliveryOrigin.AgentDesk"/></b>, which has no verification session and must never be given
+    /// an invented one.
+    /// </summary>
+    public Guid? VerificationSessionId { get; private set; }
+
+    /// <summary>CRM customer the copy is for — set for <see cref="DocumentDeliveryOrigin.AgentDesk"/> (the agent route's only scope).</summary>
+    public int? CrmCustomerId { get; private set; }
+
+    /// <summary>CRM lead (the unit) the copy is for — set for <see cref="DocumentDeliveryOrigin.AgentDesk"/>.</summary>
+    public int? CrmLeadId { get; private set; }
+
     public CrmDocumentType DocumentType { get; private set; }
 
     /// <summary>The CRM record that was (or is being) sent. Always a record the verified customer owns.</summary>
@@ -46,9 +61,37 @@ public class CrmDocumentDeliveryRequest
 
     private CrmDocumentDeliveryRequest() { }
 
+    /// <summary>A Genesys-origin delivery: proven by a real, verified OTP session.</summary>
     public CrmDocumentDeliveryRequest(
         Guid callerEmployeeId, string idempotencyKey, string fingerprint, Guid verificationSessionId,
         CrmDocumentType documentType, string crmRecordId, DocumentDeliveryChannel channel,
+        string? maskedDestination, DateTime nowUtc)
+        : this(callerEmployeeId, idempotencyKey, fingerprint, DocumentDeliveryOrigin.GenesysVerifiedSession,
+            RequireSession(verificationSessionId), null, null, documentType, crmRecordId, channel, maskedDestination, nowUtc)
+    {
+    }
+
+    /// <summary>
+    /// An agent-desk delivery: scoped to the CRM customer and lead the agent acted for, with <b>no</b> verification session
+    /// (the column stays null — an invented id there would look like a session reference to every consumer of it).
+    /// </summary>
+    public static CrmDocumentDeliveryRequest ForAgentDesk(
+        Guid callerEmployeeId, string idempotencyKey, string fingerprint, int crmCustomerId, int crmLeadId,
+        CrmDocumentType documentType, string crmRecordId, DocumentDeliveryChannel channel, string? maskedDestination, DateTime nowUtc)
+    {
+        if (crmCustomerId <= 0 || crmLeadId <= 0)
+        {
+            throw new ArgumentException("An agent-desk delivery needs the CRM customer and lead.");
+        }
+
+        return new CrmDocumentDeliveryRequest(
+            callerEmployeeId, idempotencyKey, fingerprint, DocumentDeliveryOrigin.AgentDesk, null, crmCustomerId, crmLeadId,
+            documentType, crmRecordId, channel, maskedDestination, nowUtc);
+    }
+
+    private CrmDocumentDeliveryRequest(
+        Guid callerEmployeeId, string idempotencyKey, string fingerprint, DocumentDeliveryOrigin origin, Guid? verificationSessionId,
+        int? crmCustomerId, int? crmLeadId, CrmDocumentType documentType, string crmRecordId, DocumentDeliveryChannel channel,
         string? maskedDestination, DateTime nowUtc)
     {
         if (callerEmployeeId == Guid.Empty)
@@ -63,7 +106,10 @@ public class CrmDocumentDeliveryRequest
         CallerEmployeeId = callerEmployeeId;
         IdempotencyKey = idempotencyKey;
         Fingerprint = fingerprint;
+        Origin = origin;
         VerificationSessionId = verificationSessionId;
+        CrmCustomerId = crmCustomerId;
+        CrmLeadId = crmLeadId;
         DocumentType = documentType;
         CrmRecordId = crmRecordId.Length <= RecordIdMaxLength ? crmRecordId : crmRecordId[..RecordIdMaxLength];
         Channel = channel;
@@ -73,6 +119,15 @@ public class CrmDocumentDeliveryRequest
         CreatedAtUtc = nowUtc;
         UpdatedAtUtc = nowUtc;
     }
+
+    private static Guid RequireSession(Guid verificationSessionId) =>
+        verificationSessionId != Guid.Empty
+            ? verificationSessionId
+            : throw new ArgumentException("A Genesys-origin delivery needs the real verification session.", nameof(verificationSessionId));
+
+    /// <summary>True when this row was made for exactly this agent scope (customer + lead).</summary>
+    public bool IsAgentScope(int crmCustomerId, int crmLeadId) =>
+        Origin == DocumentDeliveryOrigin.AgentDesk && CrmCustomerId == crmCustomerId && CrmLeadId == crmLeadId;
 
     /// <summary>An in-progress claim whose worker evidently died: older than <paramref name="staleAfter"/>, so a retry may take it over.</summary>
     public bool IsStale(DateTime nowUtc, TimeSpan staleAfter) =>

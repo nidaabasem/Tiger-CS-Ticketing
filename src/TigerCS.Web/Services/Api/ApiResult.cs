@@ -45,3 +45,6 @@ public sealed record ApiResult(ApiOutcome Outcome, string? Detail = null, string
 
     public static ApiResult Failure(ApiOutcome outcome, string? detail = null, string? problemType = null) => new(outcome, detail, problemType);
 }
+
+/// <summary>A file the Api returned.</summary>
+public sealed record ApiFile(byte[] Bytes, string ContentType, string FileName);

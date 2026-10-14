@@ -21,6 +21,16 @@ public enum DocumentDeliveryChannel : byte
     Sms = 3
 }
 
+/// <summary>Which door asked for a document copy. Stored explicitly so a row never has to be guessed from which columns are null.</summary>
+public enum DocumentDeliveryOrigin : byte
+{
+    /// <summary>The Genesys chatbot, proven by a real OTP-verified <c>VerificationSession</c> (the default for every row that existed before agent sends).</summary>
+    GenesysVerifiedSession = 1,
+
+    /// <summary>A signed-in agent on Customer Details → Documents; no verification session exists.</summary>
+    AgentDesk = 2
+}
+
 public enum DocumentDeliveryStatus : byte
 {
     /// <summary>A send has been claimed and is running (or its process died — see <see cref="CrmDocumentDeliveryRequest.IsStale"/>).</summary>

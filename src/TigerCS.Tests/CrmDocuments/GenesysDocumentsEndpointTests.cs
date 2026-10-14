@@ -282,6 +282,17 @@ public sealed class GenesysDocumentsEndpointTests : IDisposable
         Assert.Equal("https://crm.uat.example.test:8014/Uploads/Contracts/5002.pdf", download.Url);
         Assert.Equal(SecretKey, download.Secret);
 
+        // The delivery row keeps the REAL verification session, is marked Genesys-origin, and has no agent scope.
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<TigerCS.Infrastructure.Persistence.TigerCsDbContext>();
+            var row = Assert.Single(db.CrmDocumentDeliveryRequests.Where(r => r.CrmRecordId == "5002").ToList());
+            Assert.Equal(TigerCS.Domain.Modules.CustomerVerification.DocumentDeliveryOrigin.GenesysVerifiedSession, row.Origin);
+            Assert.Equal(sessionId, row.VerificationSessionId);
+            Assert.Null(row.CrmCustomerId);
+            Assert.Null(row.CrmLeadId);
+        }
+
         var documentMail = Assert.Single(Mailbox.Recorded.Skip(documentMailsBefore));
         Assert.Equal(BuyerEmail, documentMail.ToAddress);
         Assert.Equal(["Addendum 1.pdf"], documentMail.AttachmentFileNames);

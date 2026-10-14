@@ -100,7 +100,10 @@ public enum CrmDocumentCopyStatus
     VerificationFailed,
     OwnershipMismatch,
     IdempotencyConflict,
-    Disabled
+    Disabled,
+
+    /// <summary>Agent desk only: the signed-in agent holds no document-send permission (<c>CrmDocuments:AgentSendRoles</c>). Nothing was fetched or sent.</summary>
+    NotPermitted
 }
 
 /// <summary>
@@ -157,6 +160,17 @@ public static class CrmDocumentCodes
     public const string DeliveryDestinationUnavailable = "DELIVERY_DESTINATION_UNAVAILABLE";
     public const string DocumentTooLarge = "DOCUMENT_TOO_LARGE";
     public const string DeliveryFailed = "DELIVERY_FAILED";
+
+    /// <summary>The configured mail provider only records messages (no real SMTP); nothing was sent.</summary>
+    public const string EmailTransportNotReal = "EMAIL_TRANSPORT_NOT_REAL";
+
+    /// <summary>The agent has no document-send permission.</summary>
+    public const string DocumentSendNotPermitted = "DOCUMENT_SEND_NOT_PERMITTED";
     public const string IdempotencyKeyReused = "IDEMPOTENCY_KEY_REUSED";
     public const string RequestInProgress = "REQUEST_IN_PROGRESS";
 }
+
+/// <summary>
+/// Who an agent-initiated copy is for, resolved server-side from CRM (never typed by the agent). The address is CRM's.
+/// </summary>
+public sealed record AgentDocumentRecipient(int CustomerId, int LeadId, string? UnitNumber, string? Email, string DisplayName);

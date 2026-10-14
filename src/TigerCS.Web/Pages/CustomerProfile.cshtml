@@ -104,7 +104,7 @@
         </section>
 
         <div class="tabs-card tabs-card--page">
-            <input type="radio" name="customerProfileTab" id="tab-overview" class="tab-input" checked="@(!Model.PaymentTabActive)" />
+            <input type="radio" name="customerProfileTab" id="tab-overview" class="tab-input" checked="@(!Model.PaymentTabActive && !Model.DocumentsTabActive)" />
             <label class="tab-label" for="tab-overview">Overview</label>
             <input type="radio" name="customerProfileTab" id="tab-contact" class="tab-input" />
             <label class="tab-label" for="tab-contact">Contact Info</label>
@@ -116,6 +116,8 @@
             <label class="tab-label" for="tab-interactions">Interactions <span class="tab-count">@profile.Interactions.Count</span></label>
             <input type="radio" name="customerProfileTab" id="tab-payment" class="tab-input" checked="@Model.PaymentTabActive" />
             <label class="tab-label" for="tab-payment">Payment</label>
+            <input type="radio" name="customerProfileTab" id="tab-documents" class="tab-input" checked="@Model.DocumentsTabActive" />
+            <label class="tab-label" for="tab-documents">Documents</label>
 
             <div class="tabs-body">
                 @* ---- Overview ---- *@
@@ -388,6 +390,15 @@
                 <div class="tab-panel" id="panel-payment" data-payment-src="/Customers/@Uri.EscapeDataString(Model.CustomerKey)?handler=PaymentPanel">
                     <span id="payment" class="anchor-target"></span>
                     <partial name="_CustomerPaymentTab" model="Model.PaymentPanel" />
+                </div>
+
+                @* ---- Documents ---- *@
+                @* Same pattern as Payment: a loading placeholder that site.js replaces with ?handler=DocumentsPanel when the tab
+                   opens (and again, with the previous documents cleared first, when the unit changes), or the panel rendered here
+                   for ?tab=documents (no-JS path, unit selector, return from Send to customer). *@
+                <div class="tab-panel" id="panel-documents" data-documents-src="/Customers/@Uri.EscapeDataString(Model.CustomerKey)?handler=DocumentsPanel">
+                    <span id="documents" class="anchor-target"></span>
+                    <partial name="_CustomerDocumentsTab" model="Model.DocumentsPanel" />
                 </div>
             </div>
         </div>

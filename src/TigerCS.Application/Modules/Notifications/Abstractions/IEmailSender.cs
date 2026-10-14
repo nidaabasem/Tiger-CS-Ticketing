@@ -27,6 +27,12 @@ namespace TigerCS.Application.Modules.Notifications.Abstractions;
 /// </summary>
 public interface IEmailSender
 {
+    /// <summary>
+    /// False for an adapter that records instead of sending (<c>EmailNotifications:Provider = "Recording"</c>): its "Sent" means
+    /// "kept in memory", not "accepted by a mail server". Callers that tell a person a message was accepted check this first.
+    /// </summary>
+    bool SendsRealMail => true;
+
     Task<EmailSendResult> SendAsync(EmailMessage message, CancellationToken cancellationToken = default);
 }
 

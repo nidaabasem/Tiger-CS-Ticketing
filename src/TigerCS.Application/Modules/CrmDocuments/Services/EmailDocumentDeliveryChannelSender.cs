@@ -18,6 +18,8 @@ public sealed class EmailDocumentDeliveryChannelSender(IEmailSender emailSender,
 {
     public DocumentDeliveryChannel Channel => DocumentDeliveryChannel.Email;
 
+    public bool SendsRealMail => emailSender.SendsRealMail;
+
     public async Task<DocumentDeliveryResult> SendAsync(DocumentDeliveryMessage message, CancellationToken cancellationToken = default)
     {
         if (!emailPolicy.Enabled)

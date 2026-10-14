@@ -148,6 +148,9 @@ public class ProtectedEndpointInventoryTests : IClassFixture<TigerCsApiFactory>
         ["GET /api/customers/search"] = nameof(SystemAdministratorEndpointAuthorizationTests.SearchCustomers_Returns200),
         ["GET /api/customers"] = nameof(SystemAdministratorEndpointAuthorizationTests.ListCustomers_Returns200),
         ["GET /api/customers/profile/{customerKey}"] = nameof(SystemAdministratorEndpointAuthorizationTests.GetCustomerProfileByKey_Returns200),
+        ["GET /api/customers/{customerKey}/documents"] = nameof(CrmDocuments.CustomerDocumentsEndpointTests.SystemAdministrator_IsAuthorizedOnEveryDocumentsRoute_ThroughTheOverride),
+        ["GET /api/customers/{customerKey}/documents/{crmLeadId:int}/{documentType}/{recordId}/file"] = nameof(CrmDocuments.CustomerDocumentsEndpointTests.SystemAdministrator_IsAuthorizedOnEveryDocumentsRoute_ThroughTheOverride),
+        ["POST /api/customers/{customerKey}/documents/send"] = nameof(CrmDocuments.CustomerDocumentsEndpointTests.SystemAdministrator_IsAuthorizedOnEveryDocumentsRoute_ThroughTheOverride),
         ["GET /api/dashboard"] = nameof(SystemAdministratorEndpointAuthorizationTests.GetDashboard_Returns200),
         ["GET /api/dashboard/overview"] = nameof(SystemAdministratorEndpointAuthorizationTests.GetDashboardOverview_Returns200),
 
