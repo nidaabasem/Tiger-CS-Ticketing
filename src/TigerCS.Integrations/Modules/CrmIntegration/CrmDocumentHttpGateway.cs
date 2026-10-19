@@ -99,6 +99,14 @@ public sealed class CrmDocumentHttpGateway(
             return null;
         }
 
+        if ((int)response.StatusCode is >= 300 and < 400)
+        {
+            // Often a login redirect: the file route is not accepting X-SECRET-KEY. Where it points is useful; its query is not logged.
+            logger.LogWarning(
+                "CRM document download for record {RecordId} was redirected ({Status}) to {Location}; redirects are never followed with the CRM credential.",
+                record.RecordId, (int)response.StatusCode, RedactLocation(response.Headers.Location));
+        }
+
         if (response.StatusCode != HttpStatusCode.OK)
         {
             throw FailureFor(response.StatusCode, "document download");
@@ -231,7 +239,13 @@ public sealed class CrmDocumentHttpGateway(
         }
         else
         {
-            throw Rejected();
+            throw Rejected(reference, "NotAnHttpUrl", baseAddress);
+        }
+
+        if (target.Scheme != Uri.UriSchemeHttp && target.Scheme != Uri.UriSchemeHttps)
+        {
+            // e.g. a Windows physical path ("C:\\…") that parses as a URI with a one-letter scheme.
+            throw Rejected(reference, "NotAnHttpUrl", baseAddress);
         }
 
         var sameOrigin = string.Equals(target.Host, baseAddress.Host, StringComparison.OrdinalIgnoreCase)
@@ -241,17 +255,57 @@ public sealed class CrmDocumentHttpGateway(
 
         if (!sameOrigin && !allowedHost)
         {
-            logger.LogWarning("CRM document reference points at host {Host}, which is not the configured CRM origin or an allowed file host; nothing was fetched.", target.Host);
-            throw Rejected();
+            throw Rejected(reference, RejectionReason(target, baseAddress), baseAddress);
         }
 
         // The CRM secret goes to the CRM origin and nowhere else. An allow-listed storage host is fetched
         // WITHOUT it: that host is not CRM, and the secret is not ours to hand it.
         return (target, sameOrigin);
 
-        static CrmDocumentSourceException Rejected() =>
-            new(CrmDocumentSourceFailure.ReferenceRejected, "The document reference is not on the configured CRM origin.");
+        CrmDocumentSourceException Rejected(string rawReference, string reason, Uri crmOrigin)
+        {
+            // Which rule failed and where the reference points — never the query string, fragment or user info, which can carry tokens.
+            logger.LogWarning(
+                "CRM document reference refused ({Reason}): {Reference}. Configured CRM origin is {Origin}; nothing was fetched and the CRM secret was not sent.",
+                reason, Redact(rawReference), $"{crmOrigin.Scheme}://{crmOrigin.Host}:{crmOrigin.Port}");
+            return new CrmDocumentSourceException(CrmDocumentSourceFailure.ReferenceRejected, "The document reference is not on the configured CRM origin.");
+        }
     }
+
+    private static string RejectionReason(Uri target, Uri crmOrigin)
+    {
+        if (target.Scheme == Uri.UriSchemeHttps && !string.Equals(target.Host, crmOrigin.Host, StringComparison.OrdinalIgnoreCase))
+        {
+            return "HostNotOnCrmOriginOrAllowList";
+        }
+
+        if (!string.Equals(target.Host, crmOrigin.Host, StringComparison.OrdinalIgnoreCase))
+        {
+            return "HostNotOnCrmOrigin_NotHttps";
+        }
+
+        return target.Scheme != crmOrigin.Scheme ? "SchemeDiffersFromCrmOrigin" : "PortDiffersFromCrmOrigin";
+    }
+
+    /// <summary>
+    /// A reference safe to log: scheme, host, port and path of a URL (user info, query and fragment dropped), or the first
+    /// characters of a non-URL value (a physical path, say) with any query dropped.
+    /// </summary>
+    internal static string Redact(string reference)
+    {
+        const int Max = 200;
+        if (Uri.TryCreate(reference, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https")
+        {
+            var text = $"{uri.Scheme}://{uri.Host}:{uri.Port}{uri.AbsolutePath}";
+            return text.Length > Max ? text[..Max] + "…" : text;
+        }
+
+        var cut = reference.IndexOfAny(['?', '#']);
+        var bare = cut >= 0 ? reference[..cut] : reference;
+        return bare.Length > Max ? bare[..Max] + "…" : bare;
+    }
+
+    private static string? RedactLocation(Uri? location) => location is null ? null : Redact(location.IsAbsoluteUri ? location.ToString() : location.OriginalString);
 
     // ---- plumbing ----
 
