@@ -1,6 +1,7 @@
 using System.Net;
 using Microsoft.Extensions.Options;
 using TigerCS.Application.Modules.CrmDocuments.Abstractions;
+using TigerCS.Domain.Modules.CustomerVerification;
 using TigerCS.Integrations.Modules.CrmIntegration;
 using TigerCS.Tests.CustomerVerification.Fakes;
 using TigerCS.Tests.Notifications.Fakes;
@@ -29,7 +30,7 @@ public class CrmDocumentReferenceDiagnosticsTests
     }
 
     private static Task Download(CrmDocumentHttpGateway g, string reference) =>
-        g.DownloadAsync(new CrmDocumentRecord("5001", "Contract", reference));
+        g.DownloadAsync(CrmDocumentType.UnitLayout, 9001, 12345, new CrmDocumentRecord("5001", "Contract", reference));
 
     [Theory]
     [InlineData("https://other.example.test/Uploads/a.pdf", "HostNotOnCrmOriginOrAllowList")]

@@ -66,9 +66,9 @@ public sealed class CustomerDocumentsEndpointTests : IDisposable
             Requests.Where(r => r.Url.Contains("GetCustomerDocuments", StringComparison.Ordinal));
 
         public IEnumerable<(HttpMethod Method, string Url, string? Secret, string? Body)> FileCalls =>
-            Requests.Where(r => r.Url.Contains("/Uploads/", StringComparison.Ordinal));
+            Requests.Where(r => r.Url.Contains("GetCustomerDocumentFile", StringComparison.Ordinal));
 
-        public static byte[] FileBytes(string id) => Encoding.ASCII.GetBytes($"%PDF-1.7\nrecord-{id}\n");
+        public static byte[] FileBytes(string id) => Encoding.ASCII.GetBytes($"%PDF-1.7\nrecord-{id}\n%%EOF\n");
 
         public HttpMessageHandler Handler => new StubHttpMessageHandler(async (request, _) =>
         {
@@ -108,8 +108,16 @@ public sealed class CustomerDocumentsEndpointTests : IDisposable
                 }));
             }
 
-            // The file route: /Uploads/{id}.pdf
-            var id = Path.GetFileNameWithoutExtension(path);
+            // The authenticated file route: CRM re-checks the attachment belongs to that customer, lead and type; otherwise 404.
+            using var fileRequest = JsonDocument.Parse(body!);
+            var fileLead = fileRequest.RootElement.GetProperty("LeadID").GetInt32();
+            var fileType = fileRequest.RootElement.GetProperty("DocumentType").GetString()!;
+            var id = fileRequest.RootElement.GetProperty("AttachmentId").GetRawText();
+            if (!(Documents.GetValueOrDefault((fileLead, fileType)) ?? []).Any(r => r.Id.ToString() == id))
+            {
+                return new HttpResponseMessage(HttpStatusCode.NotFound);
+            }
+
             return new HttpResponseMessage(HttpStatusCode.OK)
             {
                 Content = new ByteArrayContent(FileBytes(id)) { Headers = { ContentType = new MediaTypeHeaderValue("application/pdf") } }
@@ -433,8 +441,10 @@ public sealed class CustomerDocumentsEndpointTests : IDisposable
         Assert.Equal(StubCrm.FileBytes("5002"), await download.Content.ReadAsByteArrayAsync());
 
         var fetched = _crm.FileCalls.First();
-        Assert.Equal("https://crm.uat.example.test:8014/Uploads/5002.pdf", fetched.Url);
+        Assert.Equal("https://crm.uat.example.test:8014/TicketingSystem/GetCustomerDocumentFile", fetched.Url);
+        Assert.Equal(HttpMethod.Post, fetched.Method);
         Assert.Equal(SecretKey, fetched.Secret);
+        Assert.Contains("\"AttachmentId\":5002", fetched.Body);
     }
 
     [Fact]
@@ -566,7 +576,7 @@ public sealed class CustomerDocumentsEndpointTests : IDisposable
         Assert.Equal(BuyerEmail, mail.ToAddress);
         Assert.Equal(["Addendum 1205.pdf"], mail.AttachmentFileNames);
         var fetched = Assert.Single(_crm.FileCalls);
-        Assert.EndsWith("/Uploads/5002.pdf", fetched.Url);
+        Assert.EndsWith("/TicketingSystem/GetCustomerDocumentFile", fetched.Url);
         Assert.Equal(SecretKey, fetched.Secret);
     }
 

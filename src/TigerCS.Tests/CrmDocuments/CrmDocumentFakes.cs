@@ -29,6 +29,7 @@ public sealed class FakeCrmDocumentGateway : ICrmDocumentGateway
 
     public List<(CrmDocumentType Type, int CustomerId, int LeadId)> ListCalls { get; } = [];
     public List<string> DownloadCalls { get; } = [];
+    public List<(CrmDocumentType Type, int CustomerId, int LeadId, string RecordId)> DownloadRequests { get; } = [];
 
     public CrmDocumentRecord Add(int customerId, int leadId, CrmDocumentType type, string recordId, string name = "Sale and Purchase Agreement")
     {
@@ -49,9 +50,11 @@ public sealed class FakeCrmDocumentGateway : ICrmDocumentGateway
         return Task.FromResult(new CrmDocumentListing(customerId, leadId, ForceSelectionRequired || rows.Count > 1, rows));
     }
 
-    public Task<CrmDocumentContent?> DownloadAsync(CrmDocumentRecord record, CancellationToken cancellationToken = default)
+    public Task<CrmDocumentContent?> DownloadAsync(
+        CrmDocumentType type, int customerId, int leadId, CrmDocumentRecord record, CancellationToken cancellationToken = default)
     {
         DownloadCalls.Add(record.RecordId);
+        DownloadRequests.Add((type, customerId, leadId, record.RecordId));
         if (DownloadFailure is { } failure)
         {
             throw new CrmDocumentSourceException(failure, "scripted");

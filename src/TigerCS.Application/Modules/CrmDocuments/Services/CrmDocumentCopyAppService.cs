@@ -478,7 +478,7 @@ public sealed partial class CrmDocumentCopyAppService(
         CrmDocumentContent? content;
         try
         {
-            content = await documentGateway.DownloadAsync(selected, cancellationToken);
+            content = await documentGateway.DownloadAsync(type, target.CustomerId, target.LeadId, selected, cancellationToken);
         }
         catch (CrmDocumentSourceException ex)
         {

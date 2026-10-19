@@ -41,7 +41,7 @@ public sealed class GenesysDocumentsEndpointTests : IDisposable
     private const string Phone = "+971501234567";
     private const string BuyerEmail = "ahmed.ali@example.test";
 
-    private static readonly byte[] PdfBytes = [.. "%PDF-1.7\n"u8, 1, 2, 3];
+    private static readonly byte[] PdfBytes = [.. "%PDF-1.7\n"u8, 1, 2, 3, .. "\n%%EOF\n"u8];
     private static readonly byte[] PngBytes = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 0];
 
     /// <summary>An in-process Tiger CRM: records requests, answers as scripted.</summary>
@@ -259,7 +259,7 @@ public sealed class GenesysDocumentsEndpointTests : IDisposable
         Assert.Equal("SelectionRequired", offered.GetProperty("status").GetString());
         Assert.Equal("Document", offered.GetProperty("choiceKind").GetString());
         Assert.Equal(documentMailsBefore, MailCount);
-        Assert.DoesNotContain(_crm.Requests, r => r.Url.Contains("/Uploads/", StringComparison.Ordinal));
+        Assert.DoesNotContain(_crm.Requests, r => r.Url.Contains("GetCustomerDocumentFile", StringComparison.Ordinal));
 
         // 6. The choice → download (with the CRM secret, on the CRM origin) → one email with that file.
         var key = NewKey();
@@ -278,9 +278,20 @@ public sealed class GenesysDocumentsEndpointTests : IDisposable
             Assert.Equal("TigerContract", body.RootElement.GetProperty("DocumentType").GetString());
         }
 
-        var download = _crm.Requests.Last(r => r.Url.Contains("/Uploads/", StringComparison.Ordinal));
-        Assert.Equal("https://crm.uat.example.test:8014/Uploads/Contracts/5002.pdf", download.Url);
+        var download = _crm.Requests.Last(r => r.Url.Contains("GetCustomerDocumentFile", StringComparison.Ordinal));
+        Assert.Equal("https://crm.uat.example.test:8014/TicketingSystem/GetCustomerDocumentFile", download.Url);
+        Assert.Equal(HttpMethod.Post, download.Method);
         Assert.Equal(SecretKey, download.Secret);
+        using (var fileBody = JsonDocument.Parse(download.Body!))
+        {
+            Assert.Equal(9001, fileBody.RootElement.GetProperty("CustomerID").GetInt32());
+            Assert.Equal(12345, fileBody.RootElement.GetProperty("LeadID").GetInt32());
+            Assert.Equal("TigerContract", fileBody.RootElement.GetProperty("DocumentType").GetString());
+            Assert.Equal(5002, fileBody.RootElement.GetProperty("AttachmentId").GetInt64());
+        }
+
+        // The private storage reference CRM listed is never requested.
+        Assert.DoesNotContain(_crm.Requests, r => r.Url.Contains("/Uploads/", StringComparison.Ordinal));
 
         // The delivery row keeps the REAL verification session, is marked Genesys-origin, and has no agent scope.
         using (var scope = _factory.Services.CreateScope())

@@ -156,6 +156,29 @@ buyers-only (no CRM work; TigerCS builds the cache path) or full 4.1–4.3.
 
 **Authorization model to accept:** the shared secret authorises reading *any* file route; TigerCS enforces ownership by only ever fetching references that `GetCustomerDocuments` just returned for the verified customer and lead. If CRM wants that enforced on its side too, the stronger option is a download route keyed by ids, e.g. `GET /TicketingSystem/GetCustomerDocumentFile?customerId=&leadId=&documentType=&attachmentId=` (CRM re-checks the attachment belongs to that lead/customer; Layout has no `attachmentId`). That is a small TigerCS change once the route exists; say if you prefer it.
 
+## 6a. Attachment documents are downloaded through CRM, not from `fileUrl` (supersedes the file route for these types)
+
+`fileUrl` points at **private** storage (S3 / database), so TigerCS cannot and must not fetch it. For `ReservationForm`, `TigerContract` and
+`RegistrationReceipt` TigerCS now calls an authenticated CRM action instead (insertion-ready code:
+[`crm-insertion/TicketingSystemController.GetCustomerDocumentFile.cs`](crm-insertion/TicketingSystemController.GetCustomerDocumentFile.cs)):
+
+```
+POST {Crm:BaseUrl}/TicketingSystem/GetCustomerDocumentFile
+X-SECRET-KEY: <shared secret>
+{ "CustomerID": 9001, "LeadID": 12345, "DocumentType": "TigerContract", "AttachmentId": 5001 }
+```
+
+| Response | Meaning | TigerCS result |
+|---|---|---|
+| `200` + raw bytes, `Content-Type: application/pdf`, safe `Content-Disposition`, optional `X-Content-SHA256` (hex) | the attachment belongs to that customer, lead and type | validated (PDF header + `%%EOF`, size ≤ `Crm:MaxDocumentBytes`, checksum when sent) and emailed as an attachment |
+| `404` (JSON) | no such attachment **or** not this customer's / lead's / type — deliberately one answer | `DOCUMENT_NOT_FOUND`, nothing sent |
+| `400` / `401` / `403` / `5xx` | request rejected / bad secret / denied / unavailable | `CRM_REQUEST_REJECTED` / `CRM_AUTHENTICATION_FAILED` / `CRM_ACCESS_DENIED` / retryable `DOCUMENT_SOURCE_UNAVAILABLE` |
+
+CRM must authorise (customer + lead + document type + attachment, same rule as `GetCustomerDocuments`) **before** loading any bytes, resolve the GUID
+from the authorised record, and use the existing `GetAttachmentByGUIDAsync` — no S3 URL, key or credential is ever returned. `GetCustomerDocuments`
+no longer needs to return `fileUrl` for these types (TigerCS ignores it). **Unit layout** is unchanged: it is the unit's `unitplan` field and still
+uses `fileUrl` under the rules in §6.
+
 ## 7. Confirmations we need from CRM (no field is assumed)
 
 1. `crmUnitId` = `String(unitId)` of `GetBuyerByPhone` (§4.1) — yes/no.
