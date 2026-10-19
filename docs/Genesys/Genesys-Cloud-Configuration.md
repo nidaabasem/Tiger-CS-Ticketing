@@ -40,7 +40,7 @@ Genesys Cloud ──OAuth2 client_credentials──▶ TigerGroupWeb  (https://t
 
 | # | Contract | Route (on `https://tigergroup.ae`) | Data action(s) |
 |---|---|---|---|
-| 1 | Customer lookup | `GET /api/genesys/customers/lookup?phoneNumber={ANI}` | `TigerCS - Customer Lookup` |
+| 1 | Customer lookup | `GET /api/genesys/customers/lookup?phoneNumber={ANI}[&conversationId={id}]` | `TigerCS - Customer Lookup` |
 | 2 | Create / reuse interaction ticket | `POST /api/genesys/tickets` | `TigerCS - Create or Reuse Ticket` |
 | 3 | Conversation update | `PATCH /api/genesys/tickets/{ticketId}` | `TigerCS - Update Routing`, `TigerCS - End Conversation`, `TigerCS - Request Human Agent`, `TigerCS - Cancel Human Request`, `TigerCS - Customer Confirmed Resolved` |
 
@@ -129,6 +129,13 @@ action.
 
 Use **Test** on `TigerCS - Customer Lookup` with `phoneNumber = tel:+971500000002`
 to confirm the authentication chain before building the flows.
+
+> **Re-importing `01-customer-lookup.json`.** The action gained an optional
+> `conversationId` input and five `latestPreviousTicket*` / `noPreviousTicketFound`
+> outputs (see §11.1). If `TigerCS - Customer Lookup` is already published, import
+> the new file over it (or import as a new version), **Publish** it again, and
+> re-open the Call Data Action blocks in your flows so Architect refreshes the
+> input/output list. Existing flows keep working unchanged without edits.
 
 ---
 
@@ -413,6 +420,52 @@ Customer Service do that in TigerCS. Genesys never sends a ticket status.
 
 ---
 
+## 10a. "What is my latest ticket?" (AI / bot flows)
+
+TigerCS creates a ticket for every Genesys conversation, so at the moment the
+customer asks, the newest ticket for their number is the one **this**
+conversation just created. To answer correctly, pass the current conversation
+id to the lookup and read the `latestPreviousTicket*` outputs, which exclude
+only that conversation's ticket (manual and earlier Genesys tickets both count;
+newest `CreatedAt` wins). Nothing is created, closed or changed.
+
+### Architect changes (Inbound Message / Digital Bot flow, or Voice flow)
+
+1. **Re-import and publish** `01-customer-lookup.json` (see §3.3). The Call Data
+   Action block now lists the optional input `conversationId` and the new outputs.
+2. In the block that answers the "latest ticket" intent, set the inputs:
+   * `phoneNumber` ← the customer's number (`Call.Ani`, or the messaging
+     address / participant data you already pass today);
+   * `conversationId` ← `Message.ConversationId` (message/chat flows) or
+     `Call.ConversationId` (voice flows). **Required for this intent**; if it is
+     omitted the lookup still succeeds but returns no `latestPreviousTicket*`
+     values, and the exclusion cannot be applied.
+3. Map the outputs to flow variables, e.g. `Flow.TcsNoPreviousTicket`
+   (`noPreviousTicketFound`, Boolean), `Flow.TcsPrevTicketNumber`,
+   `Flow.TcsPrevTicketStatus`, `Flow.TcsPrevTicketSummary` and
+   `Flow.TcsPrevTicketMessage` (Strings).
+4. Add a **Decision** after the block:
+   * `Flow.TcsNoPreviousTicket == true` (or `Flow.TcsPrevTicketNumber == ""`) →
+     reply "You don't have any previous tickets with us."
+     (or speak `Flow.TcsPrevTicketMessage`);
+   * otherwise → reply "Your latest ticket is `Flow.TcsPrevTicketNumber`,
+     currently `Flow.TcsPrevTicketStatus`: `Flow.TcsPrevTicketSummary`."
+   * Failure / Timeout path → apologise and offer an agent; never block the conversation.
+5. For the Genesys AI / bot intent, point the "latest ticket" action at this data
+   action and make sure `conversationId` is passed as the conversation id.
+
+### Backward compatibility
+
+* `conversationId` is optional. Existing flows that only send `phoneNumber`
+  behave exactly as before: same fields, same `recentTicket*` / `openTicket*`
+  values (which still include the current ticket), and the new outputs come back
+  empty / `false`.
+* The URL uses `$!esc.url(...)`, so an unset `conversationId` renders as an empty
+  value and the server treats it as "not supplied".
+* Ticket creation (`TigerCS - Create or Reuse Ticket`) is untouched.
+
+---
+
 ## 11. Data action schemas (summary)
 
 The JSON files are the source of truth. This is what each action exchanges
@@ -423,14 +476,17 @@ Input: `customerReference`, `phoneNumber` (required), `unitId` (optional).
 Output: `mode`, `eligibleUnits`, unit/project fields, `handoverDateSource`, `detailsStatus`.
 
 **TigerCS - Customer Lookup**
-Input: `phoneNumber` (required).
+Input: `phoneNumber` (required), `conversationId` (optional).
 Output: `found` (bool), `phoneNumber`, `crmStatus`, `customerName`,
 `customerEmail`, `verificationSource`, `externalCustomerId`,
 `matchedCustomerCount` (int), `units` (string collection), `unitsText`,
 `selectableUnitLabels`, `selectableUnitCodes` (strings), `selectableUnitPaymentReady` (booleans),
 `selectableUnitSources`, `selectableUnitCustomers` (strings) — five parallel collections, same length, same index = same unit, no nested arrays,
 `recentTicketNumbers` (collection), `openTicketNumbers` (collection),
-`recentTicketsText`, `openTicketCount` (int).
+`recentTicketsText`, `openTicketCount` (int), and — only meaningful when
+`conversationId` is sent — `noPreviousTicketFound` (bool),
+`latestPreviousTicketNumber`, `latestPreviousTicketStatus`,
+`latestPreviousTicketSummary`, `latestPreviousTicketMessage` (strings; empty otherwise).
 
 **TigerCS - Create or Reuse Ticket**
 Input: `conversationId`\*, `channel`\* (`Phone` | `LiveChat`),

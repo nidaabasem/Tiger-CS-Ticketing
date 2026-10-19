@@ -5,7 +5,7 @@
   "category": "TigerCS",
   "config": {
     "request": {
-      "requestUrlTemplate": "https://tigergroup.ae/api/genesys/customers/lookup?phoneNumber=$esc.url(${input.phoneNumber})",
+      "requestUrlTemplate": "https://tigergroup.ae/api/genesys/customers/lookup?phoneNumber=$esc.url(${input.phoneNumber})&conversationId=$!esc.url($input.conversationId)",
       "requestType": "GET",
       "headers": {
         "Authorization": "${authResponse.token_type} ${authResponse.access_token}",
@@ -33,7 +33,12 @@
         "selectableUnitCustomers": "$.screenPop.selectableUnits[*].customersText",
         "recentTicketNumbers": "$.screenPop.recentTicketNumbers",
         "openTicketNumbers": "$.screenPop.openTicketNumbers",
-        "recentTicketsText": "$.screenPop.recentTicketsText"
+        "recentTicketsText": "$.screenPop.recentTicketsText",
+        "noPreviousTicketFound": "$.noPreviousTicketFound",
+        "latestPreviousTicketNumber": "$.screenPop.latestPreviousTicketNumber",
+        "latestPreviousTicketStatus": "$.screenPop.latestPreviousTicketStatus",
+        "latestPreviousTicketSummary": "$.screenPop.latestPreviousTicketSummary",
+        "latestPreviousTicketMessage": "$.screenPop.latestPreviousTicketMessage"
       },
       "translationMapDefaults": {
         "found": "false",
@@ -54,9 +59,14 @@
         "selectableUnitCustomers": "[]",
         "recentTicketNumbers": "[]",
         "openTicketNumbers": "[]",
-        "recentTicketsText": "\"\""
+        "recentTicketsText": "\"\"",
+        "noPreviousTicketFound": "false",
+        "latestPreviousTicketNumber": "\"\"",
+        "latestPreviousTicketStatus": "\"\"",
+        "latestPreviousTicketSummary": "\"\"",
+        "latestPreviousTicketMessage": "\"\""
       },
-      "successTemplate": "{\"found\": ${found}, \"phoneNumber\": ${phoneNumber}, \"crmStatus\": ${crmStatus}, \"customerName\": ${customerName}, \"customerEmail\": ${customerEmail}, \"verificationSource\": ${verificationSource}, \"externalCustomerId\": ${externalCustomerId}, \"matchedCustomerCount\": ${matchedCustomerCount}, \"units\": ${units}, \"unitsText\": ${unitsText}, \"selectableUnitLabels\": ${selectableUnitLabels}, \"selectableUnitCodes\": ${selectableUnitCodes}, \"selectableUnitPaymentReady\": ${selectableUnitPaymentReady}, \"selectableUnitSources\": ${selectableUnitSources}, \"selectableUnitCustomers\": ${selectableUnitCustomers}, \"recentTicketNumbers\": ${recentTicketNumbers}, \"openTicketNumbers\": ${openTicketNumbers}, \"recentTicketsText\": ${recentTicketsText}, \"openTicketCount\": ${openTicketCount}}"
+      "successTemplate": "{\"found\": ${found}, \"phoneNumber\": ${phoneNumber}, \"crmStatus\": ${crmStatus}, \"customerName\": ${customerName}, \"customerEmail\": ${customerEmail}, \"verificationSource\": ${verificationSource}, \"externalCustomerId\": ${externalCustomerId}, \"matchedCustomerCount\": ${matchedCustomerCount}, \"units\": ${units}, \"unitsText\": ${unitsText}, \"selectableUnitLabels\": ${selectableUnitLabels}, \"selectableUnitCodes\": ${selectableUnitCodes}, \"selectableUnitPaymentReady\": ${selectableUnitPaymentReady}, \"selectableUnitSources\": ${selectableUnitSources}, \"selectableUnitCustomers\": ${selectableUnitCustomers}, \"recentTicketNumbers\": ${recentTicketNumbers}, \"openTicketNumbers\": ${openTicketNumbers}, \"recentTicketsText\": ${recentTicketsText}, \"openTicketCount\": ${openTicketCount}, \"noPreviousTicketFound\": ${noPreviousTicketFound}, \"latestPreviousTicketNumber\": ${latestPreviousTicketNumber}, \"latestPreviousTicketStatus\": ${latestPreviousTicketStatus}, \"latestPreviousTicketSummary\": ${latestPreviousTicketSummary}, \"latestPreviousTicketMessage\": ${latestPreviousTicketMessage}}"
     }
   },
   "contract": {
@@ -72,6 +82,10 @@
           "phoneNumber": {
             "type": "string",
             "description": "Call.Ani as Genesys reports it, e.g. tel:+971501234567. Any tel:/+971/971 form is accepted."
+          },
+          "conversationId": {
+            "type": "string",
+            "description": "Optional. The current Genesys conversation id (Call.ConversationId / Message.ConversationId). When supplied, the latestPreviousTicket* outputs describe the customer's newest ticket EXCLUDING the ticket this conversation created. Omit it for the plain call-pickup lookup."
           }
         }
       }
@@ -168,6 +182,26 @@
           },
           "openTicketCount": {
             "type": "integer"
+          },
+          "noPreviousTicketFound": {
+            "type": "boolean",
+            "description": "True only when conversationId was supplied and the customer has no ticket other than the current conversation's. False when no conversationId was sent."
+          },
+          "latestPreviousTicketNumber": {
+            "type": "string",
+            "description": "Number of the customer's latest ticket excluding the current conversation's own (manual or Genesys-created, newest CreatedAt first). Empty when none or when no conversationId was sent."
+          },
+          "latestPreviousTicketStatus": {
+            "type": "string",
+            "description": "Status of that ticket (Open, InProgress, PendingCustomer, Resolved, Closed), or empty."
+          },
+          "latestPreviousTicketSummary": {
+            "type": "string",
+            "description": "One-line summary of that ticket, or empty."
+          },
+          "latestPreviousTicketMessage": {
+            "type": "string",
+            "description": "Ready-to-speak sentence: the previous ticket, or \"No previous ticket was found for this customer.\". Empty when no conversationId was sent."
           }
         }
       }

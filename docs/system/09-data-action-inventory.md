@@ -20,7 +20,7 @@ Common assumptions: header `Authorization: ${authResponse.token_type} ${authResp
 | # | File | Method + URL in file | Real TigerCS route (code) | Result |
 |---|---|---|---|---|
 | 00 | custom-auth-request-config | `POST {TG}/api/genesys/oauth/token` | **not in TigerCS** (proxy `[ext]`) | cannot verify |
-| 01 | customer-lookup | `GET /api/genesys/customers/lookup?phoneNumber=` | `GenesysController.cs:342` | matches |
+| 01 | customer-lookup | `GET /api/genesys/customers/lookup?phoneNumber=[&conversationId=]` | `GenesysController.cs:342` | matches |
 | 02 | create-reuse-ticket | `POST /api/genesys/tickets` | `:100` | matches; limited field set |
 | 03 | update-routing | `PATCH /api/genesys/tickets/${ticketId}` | `:207` | matches |
 | 04 | end-conversation | same PATCH | `:207` | matches; **no transcript** |
@@ -47,7 +47,7 @@ Not covered by any action (routes exist in code): `agent-context`, `screen-pop`,
 * Sample TigerCS service login: `curl -X POST {TCS}/api/auth/login -H 'Content-Type: application/json' -d '{"username":"svc","password":"..."}'`.
 
 ### 01 Customer Lookup
-* Request: GET, `phoneNumber` URL-escaped, `Accept` - matches. `requestTemplate: ${input.rawRequest}` on a GET is meaningless but harmless.
+* Request: GET, `phoneNumber` URL-escaped, optional `conversationId` (`$!esc.url`, empty when unset), `Accept` - matches. Additive outputs: `noPreviousTicketFound`, `latestPreviousTicket{Number,Status,Summary,Message}`. `requestTemplate: ${input.rawRequest}` on a GET is meaningless but harmless.
 * Response mapping vs `GenesysCustomerLookupResultDto`: `$.found, $.phoneNumber, $.crmStatus, $.openTicketCount, $.screenPop.{customerName,customerEmail,verificationSource,externalCustomerId,matchedCustomerCount,units,unitsText,selectableUnits[*].{label,unitCode,paymentLookupReady,sourcesText,customersText},recentTicketNumbers,openTicketNumbers,recentTicketsText}` all exist (camelCase). Success 200 only.
 * Gaps: output omits the CRM `customerId`/PACT tenant distinction (use `verificationSource`), omits `crmBuyers[]`, `externalSources[]`, `tickets[]`; there is no `customerKey`, so the flow must assemble `ext:Pact:{externalCustomerId}`. `units`/`unitsText`/`selectableUnits` exclude expired PACT contracts (F-11 fixed; Dubai-date rule, ending today stays, missing end date stays). `selectableUnits[].unitCode` is empty and `paymentLookupReady` false when the code cannot be resolved (`paymentLookupReady` means "code resolved", never "owner/caller verified"); each unit keeps `customers[]` (source + id) so people sharing a phone number are not merged. The Data Action maps only flat, index-aligned primitive arrays (`selectableUnitLabels/Codes/PaymentReady/Sources/Customers`; per-unit `Source:Id` pairs joined with `;`) because Architect outputs cannot hold nested arrays; a shared phone number is not verified identity.
 * Sample: `curl -H "Authorization: Bearer $T" "{TCS}/api/genesys/customers/lookup?phoneNumber=tel%3A%2B971501234567"` -> `200 {"phoneNumber":"+971501234567","found":true,"crmStatus":"Found",...,"screenPop":{...}}`.

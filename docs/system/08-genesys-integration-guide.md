@@ -57,7 +57,7 @@ sequenceDiagram
 `GET https://tigergroup.ae/api/genesys/customers/lookup?phoneNumber=...` `[ext]` -> `GET {TigerCS}/api/genesys/customers/lookup?phoneNumber=...` (`GenesysController.cs:342`). Data action `01`.
 
 * Auth: bearer, `CustomerVerification`. No idempotency header (read-only, no writes).
-* Request: `phoneNumber` (any `tel:` / `+971` / `971` form, normalised by `FromTelephonyAddress`). Blank -> 400 validation problem.
+* Request: `phoneNumber` (any `tel:` / `+971` / `971` form, normalised by `FromTelephonyAddress`). Blank -> 400 validation problem. Optional `conversationId`: adds `latestPreviousTicket`, `noPreviousTicketFound` and `screenPop.latestPreviousTicket{Number,Status,Summary,Message}` - the newest ticket of the caller excluding the one that conversation created (see `Genesys-API-Contracts.md` s2).
 * Response 200 `GenesysCustomerLookupResultDto`: `phoneNumber`, `found`, `crmStatus` (`Found|NotFound|AmbiguousMatch|Failed|NotSearched`), `crmBuyers[]`, `externalSources[]` (Pact/Tasleeh with `status`), `tickets[]` (max 10, open first), `openTicketCount`, `screenPop{customerName, customerEmail, verificationSource, externalCustomerId, matchedCustomerCount, units[], unitsText, selectableUnits[{label, unitCode, paymentLookupReady, sources[], customers[{source, externalCustomerId}], sourcesText, customersText}], recentTicketNumbers[], openTicketNumbers[], recentTicketsText}`.
 * Errors: 400, 401, 503 (disabled). A source being down is **not** an error (see [05](05-customer-identity-and-reconciliation.md) for the one exception, F-07).
 * `tickets` are looked up by intake phone across **all departments** (service-account scope, `GenesysCustomerLookupAppService.cs:81-100`).

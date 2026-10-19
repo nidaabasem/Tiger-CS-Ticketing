@@ -6,7 +6,7 @@ surface: **there is nothing else on `api/genesys`.**
 | # | Capability | Route |
 |---|---|---|
 | 1 | Create Ticket, any channel | `POST /api/genesys/tickets` |
-| 2 | Customer lookup on call pickup | `GET /api/genesys/customers/lookup?phoneNumber=` |
+| 2 | Customer lookup on call pickup | `GET /api/genesys/customers/lookup?phoneNumber=[&conversationId=]` |
 | 3 | Update Ticket | `PATCH /api/genesys/tickets/{ticketId}` |
 | 4 | Agent context (agent identity mapping) | `POST /api/genesys/agent-context` |
 
@@ -257,6 +257,37 @@ script: plain strings (never null, empty when there is nothing) and string
 lists. It is a projection of the arrays above, never a second lookup. Its
 order is CRM, then PACT, then Tasleeh. When `matchedCustomerCount` is more
 than 1, the agent must confirm who is calling; nothing is auto-selected.
+
+### Latest previous ticket (`conversationId`)
+
+`GET /api/genesys/customers/lookup?phoneNumber=%2B971501234567&conversationId=conv-123`
+
+`conversationId` is **optional**. When supplied, the lookup resolves the ticket
+that conversation created and returns the customer's newest *other* ticket
+(`CreatedAt` descending, manual or Genesys-created; only the current
+conversation's ticket is excluded). Nothing is created or modified, and the
+`tickets` / `recentTicket*` call-pickup values are unchanged.
+
+```json
+{
+  "latestPreviousTicket": { "ticketId": 10310, "ticketNumber": "TG-CS-20260901-0044", "ticketStatus": "InProgress",
+                            "isOpen": true, "requestSummary": "NOC for resale", "currentDepartmentId": 3,
+                            "createdAtUtc": "2026-09-01T08:12:00Z" },
+  "noPreviousTicketFound": false,
+  "screenPop": {
+    "latestPreviousTicketNumber": "TG-CS-20260901-0044",
+    "latestPreviousTicketStatus": "InProgress",
+    "latestPreviousTicketSummary": "NOC for resale",
+    "latestPreviousTicketMessage": "Your latest previous ticket is TG-CS-20260901-0044 (InProgress)."
+  }
+}
+```
+
+With no other ticket: `latestPreviousTicket` is `null`, `noPreviousTicketFound` is
+`true` and `latestPreviousTicketMessage` is "No previous ticket was found for this
+customer." Without `conversationId`: `latestPreviousTicket` is `null`,
+`noPreviousTicketFound` is `false` and the `latestPreviousTicket*` strings are empty.
+(Fields shown are only the additions; the rest of the response is as above.)
 
 ### Response — `200 OK`, nobody found
 
