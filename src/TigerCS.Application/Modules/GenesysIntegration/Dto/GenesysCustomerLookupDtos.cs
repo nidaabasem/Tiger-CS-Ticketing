@@ -57,7 +57,18 @@ public sealed record GenesysCustomerLookupResultDto(
     IReadOnlyList<CustomerLookupSourceResultDto> ExternalSources,
     IReadOnlyList<GenesysCustomerTicketDto> Tickets,
     int OpenTicketCount,
-    GenesysScreenPopDto ScreenPop);
+    GenesysScreenPopDto ScreenPop)
+{
+    /// <summary>
+    /// Additive. Only meaningful when the lookup was given the current Genesys <c>conversationId</c>:
+    /// the customer's most recent ticket <i>other than</i> the one this conversation created
+    /// (newest <c>CreatedAt</c> first, manual or Genesys-created alike). Null when there is none.
+    /// </summary>
+    public GenesysCustomerTicketDto? LatestPreviousTicket { get; init; }
+
+    /// <summary>Additive. True when a <c>conversationId</c> was supplied and the customer has no ticket besides the current conversation's.</summary>
+    public bool NoPreviousTicketFound { get; init; }
+}
 
 /// <summary>
 /// The lookup reduced to flat, display-ready values — what a Genesys Data
@@ -107,6 +118,18 @@ public sealed record GenesysScreenPopDto(
 {
     /// <summary>Never null on the wire: an absent list is an empty one.</summary>
     public IReadOnlyList<GenesysSelectableUnitDto> SelectableUnits { get; init; } = SelectableUnits ?? [];
+
+    /// <summary>Additive. Number of the customer's latest ticket excluding the current conversation's own, or empty (also empty when no conversationId was supplied).</summary>
+    public string LatestPreviousTicketNumber { get; init; } = string.Empty;
+
+    /// <summary>Additive. Status of that ticket, or empty.</summary>
+    public string LatestPreviousTicketStatus { get; init; } = string.Empty;
+
+    /// <summary>Additive. One-line summary of that ticket, or empty.</summary>
+    public string LatestPreviousTicketSummary { get; init; } = string.Empty;
+
+    /// <summary>Additive. A ready-to-speak sentence: the previous ticket, or "no previous ticket was found". Empty when no conversationId was supplied.</summary>
+    public string LatestPreviousTicketMessage { get; init; } = string.Empty;
 }
 
 /// <summary>

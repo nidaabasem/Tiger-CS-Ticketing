@@ -381,6 +381,7 @@ public class GenesysController(
     /// </para>
     /// </remarks>
     /// <param name="phoneNumber">Required. The caller's number.</param>
+    /// <param name="conversationId">Optional. The current Genesys conversation. When supplied, the answer also carries <c>latestPreviousTicket</c> (and <c>screenPop.latestPreviousTicket*</c>): the customer's newest ticket excluding the one this conversation created, or <c>noPreviousTicketFound: true</c> when there is none.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <response code="200">What each source found — possibly nothing, which is a normal answer.</response>
     /// <response code="400">phoneNumber was missing or blank.</response>
@@ -390,7 +391,7 @@ public class GenesysController(
     [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status503ServiceUnavailable)]
     public async Task<IActionResult> LookUpCustomer(
-        [FromQuery] string phoneNumber, CancellationToken cancellationToken)
+        [FromQuery] string phoneNumber, [FromQuery] string? conversationId, CancellationToken cancellationToken)
     {
         if (GetEmployeeId() is null)
         {
@@ -403,7 +404,7 @@ public class GenesysController(
             return ValidationProblem(ModelState);
         }
 
-        var result = await customerLookupAppService.LookUpAsync(phoneNumber, cancellationToken);
+        var result = await customerLookupAppService.LookUpAsync(phoneNumber, conversationId, cancellationToken);
 
         return result is null
             ? Problem(

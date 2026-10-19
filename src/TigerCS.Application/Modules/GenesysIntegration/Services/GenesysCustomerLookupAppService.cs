@@ -1,5 +1,6 @@
 using System.Globalization;
 using TigerCS.Application.Modules.CustomerVerification.Dto;
+using TigerCS.Application.Modules.GenesysIntegration.Abstractions;
 using TigerCS.Application.Modules.GenesysIntegration.Dto;
 using TigerCS.Application.Modules.Ticketing.Abstractions;
 using TigerCS.Application.Modules.Ticketing.Dto;
@@ -47,14 +48,21 @@ public sealed class GenesysCustomerLookupAppService(
     GenesysOptions options,
     CustomerSearchAppService customerSearchAppService,
     IIntakeRecordRepository intakeRecordRepository,
-    ITicketRepository ticketRepository)
+    ITicketRepository ticketRepository,
+    IGenesysConversationRepository conversationRepository)
 {
     /// <summary>How many of the caller's recent tickets are returned. Bounded so a frequent caller cannot make a call-pickup lookup slow.</summary>
     private const int TicketLimit = 10;
 
-    /// <summary>Null when the Genesys integration is switched off — the caller is answered 503, exactly as every other Genesys endpoint is.</summary>
+    /// <summary>
+    /// Null when the Genesys integration is switched off — the caller is answered 503, exactly as every other Genesys endpoint is.
+    /// When <paramref name="conversationId"/> is supplied the answer also carries the customer's latest
+    /// <i>previous</i> ticket: the ticket that conversation created is excluded (and only that one), so a
+    /// customer asking "what is my latest ticket?" is not told about the ticket Genesys just opened for the chat.
+    /// The ticket list and the current ticket are never modified.
+    /// </summary>
     public async Task<GenesysCustomerLookupResultDto?> LookUpAsync(
-        string phoneNumber, CancellationToken cancellationToken = default)
+        string phoneNumber, string? conversationId = null, CancellationToken cancellationToken = default)
     {
         if (!options.Enabled)
         {
@@ -106,6 +114,25 @@ public sealed class GenesysCustomerLookupAppService(
 
         var ticketDtos = tickets.Select(ToDto).ToList();
 
+        var screenPop = ToScreenPop(search.CrmBuyers, externalSources, ticketDtos);
+        GenesysCustomerTicketDto? previous = null;
+        var noPrevious = false;
+
+        if (!string.IsNullOrWhiteSpace(conversationId))
+        {
+            previous = await FindLatestPreviousTicketAsync(linkedTicketIds, conversationId.Trim(), cancellationToken);
+            noPrevious = previous is null;
+            screenPop = screenPop with
+            {
+                LatestPreviousTicketNumber = previous?.TicketNumber ?? string.Empty,
+                LatestPreviousTicketStatus = previous?.TicketStatus ?? string.Empty,
+                LatestPreviousTicketSummary = previous?.RequestSummary ?? string.Empty,
+                LatestPreviousTicketMessage = previous is null
+                    ? NoPreviousTicketMessage
+                    : $"Your latest previous ticket is {previous.TicketNumber} ({previous.TicketStatus})."
+            };
+        }
+
         return new GenesysCustomerLookupResultDto(
             searched,
             found,
@@ -114,7 +141,41 @@ public sealed class GenesysCustomerLookupAppService(
             externalSources,
             ticketDtos,
             tickets.Count(IsOpen),
-            ToScreenPop(search.CrmBuyers, externalSources, ticketDtos));
+            screenPop)
+        {
+            LatestPreviousTicket = previous,
+            NoPreviousTicketFound = noPrevious
+        };
+    }
+
+    private const string NoPreviousTicketMessage = "No previous ticket was found for this customer.";
+
+    /// <summary>
+    /// The customer's newest ticket (CreatedAt DESC, manual or Genesys-created) excluding the one the current
+    /// conversation created. Same customer identity as the rest of the lookup (tickets linked to the caller's
+    /// number); only the conversation's own ticket is excluded — never "all Genesys tickets".
+    /// </summary>
+    private async Task<GenesysCustomerTicketDto?> FindLatestPreviousTicketAsync(
+        IReadOnlyCollection<long> linkedTicketIds, string conversationId, CancellationToken cancellationToken)
+    {
+        if (linkedTicketIds.Count == 0)
+        {
+            return null;
+        }
+
+        var interaction = await conversationRepository.GetByConversationIdAsync(conversationId, cancellationToken);
+
+        var result = await ticketRepository.SearchCustomerHistoryAsync(
+            new CustomerHistoryQuery(
+                VisibleDepartmentIds: null,
+                CrmBuyerCustomerId: null,
+                TicketIds: linkedTicketIds,
+                ExcludeTicketId: interaction?.TicketId,
+                Limit: 1,
+                OrderActiveFirst: false),
+            cancellationToken);
+
+        return result.Tickets.Count == 0 ? null : ToDto(result.Tickets[0]);
     }
 
     /// <summary>

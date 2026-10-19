@@ -174,7 +174,7 @@ public sealed class GenesysServiceFixture
         // Contract #2: the call-pickup lookup, composed over exactly the same
         // customer search the ingestion path uses — no second CRM path.
         CustomerLookup = new GenesysCustomerLookupAppService(
-            Options, customerSearch, IntakeRecords, Tickets);
+            Options, customerSearch, IntakeRecords, Tickets, Conversations);
 
         AgentResolution = new GenesysAgentResolutionAppService(AgentMappings, UserRoles, DepartmentAssignments);
 
