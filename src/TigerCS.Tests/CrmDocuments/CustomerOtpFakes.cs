@@ -147,6 +147,17 @@ public sealed class OtpServiceFixture
     public CustomerOtpAppService Service { get; private set; }
     public CustomerNotificationPolicy EmailPolicy { get; set; } = CustomerNotificationPolicy.EnabledDefault;
 
+    /// <summary>Verification test mode; off (the production default) unless a test calls <see cref="UseTestMode"/>.</summary>
+    public Microsoft.Extensions.Logging.ILogger<CustomerOtpAppService> Logger { get; set; } = NullLogger<CustomerOtpAppService>.Instance;
+
+    public VerificationTestingPolicy Testing { get; private set; } = new(new VerificationTestingOptions(), "Production");
+
+    public void UseTestMode(VerificationTestingOptions options, string environment = "UAT")
+    {
+        Testing = new VerificationTestingPolicy(options, environment);
+        Service = Build();
+    }
+
     public OtpServiceFixture(
         string? email = "ahmed.ali@example.com", string? mobile = Phone, bool twoUnits = true, CrmBuyerLookupResult? lookup = null)
     {
@@ -185,7 +196,7 @@ public sealed class OtpServiceFixture
         var cache = new CrmBuyerVerificationCache(Units, Contacts, UnitOfWork, Clock);
         return new CustomerOtpAppService(
             Options, new CrmBuyerLookupAppService(Buyers, NullLogger<CrmBuyerLookupAppService>.Instance), cache, Store, Units, Contacts,
-            sessionService, Codes, new ForwardingEmail(this), _smsSender ?? Sms, EmailPolicy, UnitOfWork, Audit, Clock, NullLogger<CustomerOtpAppService>.Instance);
+            sessionService, Codes, new ForwardingEmail(this), _smsSender ?? Sms, EmailPolicy, Testing, UnitOfWork, Audit, Clock, Logger);
     }
 
     // The policy is read at construction; rebuild when a test changes it.

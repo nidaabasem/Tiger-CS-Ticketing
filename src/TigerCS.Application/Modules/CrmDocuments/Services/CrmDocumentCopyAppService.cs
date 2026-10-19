@@ -133,6 +133,11 @@ public sealed partial class CrmDocumentCopyAppService(
                 documentType: type.ToString(), channel: channel.ToString(), retryable: false);
         }
 
+        if (BlockedReason(channel) is { } blocked)
+        {
+            return TestModeBlocked(type, channel, blocked);
+        }
+
         var requestedRecordId = string.IsNullOrWhiteSpace(request.RecordId) ? null : request.RecordId.Trim();
         var requestedUnitId = string.IsNullOrWhiteSpace(request.CrmUnitId) ? null : request.CrmUnitId.Trim();
         var now = timeProvider.GetUtcNow().UtcDateTime;
@@ -288,6 +293,11 @@ public sealed partial class CrmDocumentCopyAppService(
             return Fail(CrmDocumentCopyStatus.DeliveryFailed, CrmDocumentCodes.EmailTransportNotReal,
                 "This environment's mail provider only records messages in memory (EmailNotifications:Provider = Recording); nothing can be sent to a customer from here.",
                 documentType: type.ToString(), channel: channel.ToString(), retryable: false);
+        }
+
+        if (BlockedReason(channel) is { } blocked)
+        {
+            return TestModeBlocked(type, channel, blocked);
         }
 
         var key = idempotencyKey.Trim();
@@ -537,7 +547,7 @@ public sealed partial class CrmDocumentCopyAppService(
         await auditWriter.WriteAsync(
             callerEmployeeId, "CrmDocumentCopySent", AuditEntityType, claim.CrmDocumentDeliveryRequestId.ToString(),
             beforeValue: null,
-            afterValue: $"DocumentType={type};CrmCustomerId={target.CustomerId};CrmLeadId={target.LeadId};RecordId={selected.RecordId};Channel={channel};Destination={masked};{target.AuditContext}",
+            afterValue: $"DocumentType={type};CrmCustomerId={target.CustomerId};CrmLeadId={target.LeadId};RecordId={selected.RecordId};Channel={channel};Destination={masked}" + (delivery.TestRedirected ? ";TestRedirect=true" : string.Empty) + $";{target.AuditContext}",
             Guid.NewGuid(), cancellationToken);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
@@ -630,6 +640,13 @@ public sealed partial class CrmDocumentCopyAppService(
         CrmDocumentSourceFailure.InvalidResponse or CrmDocumentSourceFailure.ReferenceRejected => CrmDocumentCodes.CrmInvalidResponse,
         _ => CrmDocumentCodes.DocumentSourceUnavailable
     };
+
+    private string? BlockedReason(DocumentDeliveryChannel channel) => channelSenders.First(x => x.Channel == channel).BlockedReason;
+
+    private static CrmDocumentCopyResult TestModeBlocked(CrmDocumentType type, DocumentDeliveryChannel channel, string reason) =>
+        Fail(CrmDocumentCopyStatus.DeliveryFailed, CrmDocumentCodes.TestModeMisconfigured,
+            "Verification test mode is enabled but invalid, so document delivery is blocked. Nothing was sent. " + reason,
+            documentType: type.ToString(), channel: channel.ToString(), retryable: false);
 
     private static CrmDocumentCopyResult Mismatch(CrmDocumentType type, string message, CrmDocumentDeliveryRequest? claim = null) => Fail(
         CrmDocumentCopyStatus.OwnershipMismatch, CrmDocumentCodes.RecordOwnershipMismatch, message,

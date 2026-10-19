@@ -182,6 +182,24 @@ using (var documentsStartupScope = app.Services.CreateScope())
     }
 }
 
+// Verification test mode redirects OTP/document messages for REAL CRM customers to test inboxes. It may only run in
+// Local/Development/UAT/Testing, and only fully configured; anything else stops the host rather than risk a real send.
+using (var verificationTestingScope = app.Services.CreateScope())
+{
+    var testingPolicy = verificationTestingScope.ServiceProvider.GetRequiredService<TigerCS.Application.Modules.CrmDocuments.VerificationTestingPolicy>();
+    if (testingPolicy.IsBlocked)
+    {
+        throw new InvalidOperationException(testingPolicy.ConfigurationError);
+    }
+
+    if (testingPolicy.Enabled)
+    {
+        app.Logger.LogWarning(
+            "VerificationTesting is ON in {Environment}: OTP and document messages are redirected to the configured test inboxes; no real customer is contacted.",
+            app.Environment.EnvironmentName);
+    }
+}
+
 // Fail fast if fixture Collections balances would be served outside
 // Development/Testing — a sample balance shown to an agent, or read by the
 // voice bot, as if it were a customer's real debt is the one failure this
