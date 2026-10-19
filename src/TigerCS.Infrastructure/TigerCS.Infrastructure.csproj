@@ -10,6 +10,7 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" />
+    <PackageReference Include="System.Security.Cryptography.Pkcs" />
     <!-- ADR-0015: Hangfire is the approved background-job mechanism for SLA
          deadline checks and the safety sweep. Versions are pinned centrally
          in Directory.Packages.props, which already reserved them. -->

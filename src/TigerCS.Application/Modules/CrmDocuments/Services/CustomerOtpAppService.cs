@@ -70,6 +70,7 @@ public sealed class CustomerOtpAppService(
     IEmailSender emailSender,
     ISmsSender smsSender,
     CustomerNotificationPolicy emailPolicy,
+    VerificationTestingPolicy testing,
     ICustomerVerificationUnitOfWork unitOfWork,
     IAuditEntryWriter auditWriter,
     TimeProvider timeProvider,
@@ -128,7 +129,7 @@ public sealed class CustomerOtpAppService(
         Guid callerEmployeeId, string? phoneNumber, string? crmUnitId, string? channel = null, string? language = null,
         CancellationToken cancellationToken = default)
     {
-        if (Gate() is { } gated)
+        if ((Gate() ?? DeliveryGate()) is { } gated)
         {
             return gated;
         }
@@ -253,7 +254,8 @@ public sealed class CustomerOtpAppService(
         await auditWriter.WriteAsync(
             callerEmployeeId, "CustomerOtpSent", AuditEntityType, challengeId.ToString(), beforeValue: null,
             afterValue: $"CrmCustomerId={customerId};CrmLeadId={selected.LeadId};Destination={masked};Send=1"
-                + (otpChannel == OtpChannel.Sms ? ";Channel=Sms" : string.Empty),
+                + (otpChannel == OtpChannel.Sms ? ";Channel=Sms" : string.Empty)
+                + (testing.Enabled ? ";TestRedirect=true" : string.Empty),
             Guid.NewGuid(), cancellationToken);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
@@ -270,7 +272,7 @@ public sealed class CustomerOtpAppService(
 
     public async Task<CustomerOtpResult> ResendAsync(Guid callerEmployeeId, Guid? challengeId, CancellationToken cancellationToken = default)
     {
-        if (Gate() is { } gated)
+        if ((Gate() ?? DeliveryGate()) is { } gated)
         {
             return gated;
         }
@@ -370,7 +372,8 @@ public sealed class CustomerOtpAppService(
         challenge.RecordResend(salt, HashCode(challenge.CustomerOtpChallengeId, salt, code), now, Lifetime);
         await auditWriter.WriteAsync(
             challenge.CallerEmployeeId, "CustomerOtpResent", AuditEntityType, challenge.CustomerOtpChallengeId.ToString(),
-            beforeValue: null, afterValue: $"Send={challenge.SendCount}", Guid.NewGuid(), cancellationToken);
+            beforeValue: null, afterValue: $"Send={challenge.SendCount}" + (testing.Enabled ? ";TestRedirect=true" : string.Empty),
+            Guid.NewGuid(), cancellationToken);
 
         try
         {
@@ -484,6 +487,13 @@ public sealed class CustomerOtpAppService(
             ? null
             : Result(CustomerOtpStatus.Disabled, CustomerOtpCodes.Disabled, "Customer document verification is switched off (CrmDocuments:Enabled).");
 
+    /// <summary>Send/resend only: refuses (before any challenge is created or code generated) when test mode is on but unusable.</summary>
+    private CustomerOtpResult? DeliveryGate() =>
+        testing.IsBlocked
+            ? Result(CustomerOtpStatus.TestModeMisconfigured, CustomerOtpCodes.TestModeMisconfigured,
+                "Verification test mode is enabled but invalid, so delivery is blocked. Nothing was sent. " + testing.ConfigurationError)
+            : null;
+
     private static CustomerOtpResult Invalid(string message) => Result(CustomerOtpStatus.InvalidRequest, CustomerOtpCodes.InvalidRequest, message);
 
     private static CustomerOtpResult NotFound() =>
@@ -516,7 +526,19 @@ public sealed class CustomerOtpAppService(
             return await DeliverSmsAsync(destination, code, challenge, cancellationToken);
         }
 
-        var email = destination;
+        // The customer's own address stays on the challenge/session; only the outbound message is redirected in test mode.
+        var route = testing.RouteEmail(destination);
+        if (!route.Allowed)
+        {
+            return TestModeBlocked();
+        }
+
+        var email = route.Destination;
+        if (route.Redirected)
+        {
+            logger.LogWarning("TEST MODE: OTP email for challenge {ChallengeId} redirected to the configured test mailbox.", challenge.CustomerOtpChallengeId);
+        }
+
         if (!emailPolicy.Enabled)
         {
             return Result(CustomerOtpStatus.DeliveryFailed, CustomerOtpCodes.DeliveryFailed,
@@ -552,6 +574,17 @@ public sealed class CustomerOtpAppService(
     /// </summary>
     private async Task<CustomerOtpResult?> DeliverSmsAsync(string mobile, string code, CustomerOtpChallenge challenge, CancellationToken cancellationToken)
     {
+        var route = testing.RouteSms(mobile);
+        if (!route.Allowed)
+        {
+            return TestModeBlocked();
+        }
+
+        if (route.Redirected)
+        {
+            logger.LogWarning("TEST MODE: OTP SMS for challenge {ChallengeId} redirected to the configured test number.", challenge.CustomerOtpChallengeId);
+        }
+
         var minutes = (int)Lifetime.TotalMinutes;
         var template = challenge.Language == "ar" ? options.OtpSmsMessageAr : options.OtpSmsMessageEn;
         var text = template
@@ -561,7 +594,7 @@ public sealed class CustomerOtpAppService(
         SmsSendResult sent;
         try
         {
-            sent = await smsSender.SendAsync(new SmsMessage(mobile, text, challenge.Language), cancellationToken);
+            sent = await smsSender.SendAsync(new SmsMessage(route.Destination, text, challenge.Language), cancellationToken);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -581,7 +614,7 @@ public sealed class CustomerOtpAppService(
         challenge.RecordDelivery(state);
         await auditWriter.WriteAsync(
             challenge.CallerEmployeeId, "CustomerOtpSmsDelivery", AuditEntityType, challenge.CustomerOtpChallengeId.ToString(), beforeValue: null,
-            afterValue: $"Channel=Sms;Delivery={state};Send={challenge.SendCount}", Guid.NewGuid(), cancellationToken);
+            afterValue: $"Channel=Sms;Delivery={state};Send={challenge.SendCount}" + (route.Redirected ? ";TestRedirect=true" : string.Empty), Guid.NewGuid(), cancellationToken);
         try
         {
             await unitOfWork.SaveChangesAsync(cancellationToken);
@@ -607,6 +640,10 @@ public sealed class CustomerOtpAppService(
                 Channel: challenge.Channel.ToString())
         };
     }
+
+    private CustomerOtpResult TestModeBlocked() =>
+        Result(CustomerOtpStatus.TestModeMisconfigured, CustomerOtpCodes.TestModeMisconfigured,
+            "Verification test mode is enabled but invalid, so delivery is blocked. Nothing was sent.");
 
     private bool SmsAvailable => options.OtpSmsEnabled && smsSender.IsConfigured;
 

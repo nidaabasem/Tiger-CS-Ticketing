@@ -14,6 +14,12 @@ public interface IDocumentDeliveryChannelSender
     /// </summary>
     bool SendsRealMail => true;
 
+    /// <summary>
+    /// Non-null when this channel must refuse every delivery right now (e.g. verification test mode is enabled but invalid).
+    /// Checked before a request is claimed or a document fetched, so a blocked environment creates no delivery row and downloads nothing.
+    /// </summary>
+    string? BlockedReason => null;
+
     Task<DocumentDeliveryResult> SendAsync(DocumentDeliveryMessage message, CancellationToken cancellationToken = default);
 }
 
@@ -30,7 +36,10 @@ public enum DocumentDeliveryOutcome
     PermanentFailure
 }
 
-public sealed record DocumentDeliveryResult(DocumentDeliveryOutcome Outcome, string? Code = null);
+/// <param name="Outcome">How the attempt ended.</param>
+/// <param name="Code">Machine-readable reason for a failure.</param>
+/// <param name="TestRedirected">True when verification test mode sent the message to the test mailbox instead of the customer's address.</param>
+public sealed record DocumentDeliveryResult(DocumentDeliveryOutcome Outcome, string? Code = null, bool TestRedirected = false);
 
 /// <summary>The repository over <see cref="CrmDocumentDeliveryRequest"/>.</summary>
 public interface ICrmDocumentDeliveryRepository

@@ -172,6 +172,11 @@ public static class InfrastructureServiceCollectionExtensions
         // sender. CrmDocuments:Enabled gates the endpoint.
         services.Configure<CrmDocumentOptions>(configuration.GetSection(CrmDocumentOptions.SectionName));
         services.AddSingleton(sp => sp.GetRequiredService<IOptions<CrmDocumentOptions>>().Value);
+        // Local/UAT-only redirection of OTP + document messages to test inboxes; off by default, refused elsewhere.
+        services.Configure<VerificationTestingOptions>(configuration.GetSection(VerificationTestingOptions.SectionName));
+        services.AddSingleton(sp => new VerificationTestingPolicy(
+            sp.GetRequiredService<IOptions<VerificationTestingOptions>>().Value,
+            sp.GetRequiredService<Microsoft.Extensions.Hosting.IHostEnvironment>().EnvironmentName));
         services.AddScoped<ICrmDocumentDeliveryRepository, CrmDocumentDeliveryRepository>();
         services.AddScoped<CrmDocumentCopyAppService>();
         services.AddScoped<CustomerDocumentsAppService>();

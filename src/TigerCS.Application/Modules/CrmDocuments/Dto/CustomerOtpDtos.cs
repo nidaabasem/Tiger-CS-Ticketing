@@ -70,7 +70,10 @@ public enum CustomerOtpStatus
     /// The SMS provider gave no verifiable answer (timeout / unreadable response). The SMS may have been sent, the
     /// challenge stays valid, and nothing is resent automatically.
     /// </summary>
-    DeliveryUnconfirmed
+    DeliveryUnconfirmed,
+
+    /// <summary>VerificationTesting is enabled but invalid / not allowed here. Nothing was sent to anyone.</summary>
+    TestModeMisconfigured
 }
 
 /// <summary>
@@ -104,6 +107,7 @@ public static class CustomerOtpCodes
     public const string NoMobileOnRecord = "NO_MOBILE_ON_RECORD";
     public const string SmsNotConfigured = "OTP_SMS_NOT_CONFIGURED";
     public const string DeliveryUnconfirmed = "OTP_DELIVERY_UNCONFIRMED";
+    public const string TestModeMisconfigured = "OTP_TEST_MODE_MISCONFIGURED";
     public const string UnitNotOwned = "UNIT_NOT_OWNED";
     public const string UnitSelectionRequired = "UNIT_SELECTION_REQUIRED";
     public const string OtpInvalid = "OTP_INVALID";
