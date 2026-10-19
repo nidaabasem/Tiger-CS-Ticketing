@@ -40,5 +40,13 @@ public enum DocumentDeliveryStatus : byte
     Sent = 2,
 
     /// <summary>The attempt failed. A retry with the same key may try again.</summary>
-    Failed = 3
+    Failed = 3,
+
+    /// <summary>
+    /// Written (and saved) <b>before</b> the document is handed to the delivery channel. A row left here means the message may
+    /// already have been accepted by the provider while the outcome was never recorded (database timeout, crash, cancelled
+    /// request). Unlike <see cref="InProgress"/> it is never retaken automatically: a retry answers "unconfirmed" and sends nothing.
+    /// Stored as a plain byte — no schema change.
+    /// </summary>
+    Dispatching = 4
 }

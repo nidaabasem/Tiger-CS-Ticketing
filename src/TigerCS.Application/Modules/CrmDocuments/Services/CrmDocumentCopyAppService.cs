@@ -440,7 +440,8 @@ public sealed partial class CrmDocumentCopyAppService(
                 target.Scope.SessionId!.Value, type, selected.RecordId, channel, since, cancellationToken);
         if (recent is not null)
         {
-            return SentResult(recent, duplicate: true);
+            // Sent, or handed to the channel with the outcome never recorded: either way the document may already be there.
+            return recent.Status == DocumentDeliveryStatus.Sent ? SentResult(recent, duplicate: true) : Unconfirmed(recent);
         }
 
         // ---- 7. Claim the send (unique index on caller + key) ----
@@ -514,6 +515,23 @@ public sealed partial class CrmDocumentCopyAppService(
                 retryable: false, deliveryRequestId: claim.CrmDocumentDeliveryRequestId);
         }
 
+        // ---- 8b. Write-ahead. Once the email provider accepts a message it cannot be taken back, so the fact that a send is
+        // starting is saved BEFORE the provider is called. If this save fails nothing has been sent (the row is still InProgress and a
+        // retry may take it over). If a later save fails, the saved row says Dispatching and nothing is ever sent for it again. ----
+        claim.MarkDispatching(timeProvider.GetUtcNow().UtcDateTime);
+        try
+        {
+            await unitOfWork.SaveChangesAsync(cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogError(ex, "Could not record that document delivery request {DeliveryRequestId} was starting; nothing was sent.", claim.CrmDocumentDeliveryRequestId);
+            return Fail(CrmDocumentCopyStatus.DeliveryFailed, CrmDocumentCodes.DeliveryStateUnavailable,
+                "The delivery could not be started because its state could not be saved. Nothing was sent. Retry with the same Idempotency-Key.",
+                documentType: type.ToString(), recordId: selected.RecordId, channel: channel.ToString(),
+                maskedDestination: masked, retryable: true, deliveryRequestId: claim.CrmDocumentDeliveryRequestId);
+        }
+
         var sender = channelSenders.First(s => s.Channel == channel);
         DocumentDeliveryResult delivery;
         try
@@ -526,14 +544,24 @@ public sealed partial class CrmDocumentCopyAppService(
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            logger.LogError(ex, "Document delivery threw for a {DocumentType}.", type);
-            delivery = new DocumentDeliveryResult(DocumentDeliveryOutcome.TransientFailure, "DELIVERY_EXCEPTION");
+            // The sender threw: whether the provider had already accepted the message is unknown. Not retried automatically.
+            logger.LogError(ex, "Document delivery threw for request {DeliveryRequestId}; the outcome is unknown, so it is left unconfirmed and will not be resent.", claim.CrmDocumentDeliveryRequestId);
+            return Unconfirmed(claim, masked);
         }
 
         if (delivery.Outcome != DocumentDeliveryOutcome.Sent)
         {
             var retryable = delivery.Outcome == DocumentDeliveryOutcome.TransientFailure;
-            await FinishFailedAsync(claim, delivery.Code ?? CrmDocumentCodes.DeliveryFailed, cancellationToken);
+            try
+            {
+                await FinishFailedAsync(claim, delivery.Code ?? CrmDocumentCodes.DeliveryFailed, CancellationToken.None);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                // The provider refused it, but the row stays Dispatching: a retry will answer "unconfirmed" rather than risk a double send.
+                logger.LogError(ex, "Could not record the failed delivery of request {DeliveryRequestId}; it stays Dispatching and will not be resent automatically.", claim.CrmDocumentDeliveryRequestId);
+            }
+
             return Fail(CrmDocumentCopyStatus.DeliveryFailed, CrmDocumentCodes.DeliveryFailed,
                 retryable
                     ? "The document could not be delivered right now. Retry with the same Idempotency-Key."
@@ -542,14 +570,13 @@ public sealed partial class CrmDocumentCopyAppService(
                 maskedDestination: masked, retryable: retryable, deliveryRequestId: claim.CrmDocumentDeliveryRequestId);
         }
 
-        // ---- 9. Done: record and audit ----
-        claim.MarkSent(timeProvider.GetUtcNow().UtcDateTime);
-        await auditWriter.WriteAsync(
-            callerEmployeeId, "CrmDocumentCopySent", AuditEntityType, claim.CrmDocumentDeliveryRequestId.ToString(),
-            beforeValue: null,
-            afterValue: $"DocumentType={type};CrmCustomerId={target.CustomerId};CrmLeadId={target.LeadId};RecordId={selected.RecordId};Channel={channel};Destination={masked}" + (delivery.TestRedirected ? ";TestRedirect=true" : string.Empty) + $";{target.AuditContext}",
-            Guid.NewGuid(), cancellationToken);
-        await unitOfWork.SaveChangesAsync(cancellationToken);
+        // ---- 9. The provider accepted the message: record and audit. The email is gone, so this is retried, never abandoned, and is
+        // not cancelled by the caller hanging up. If it still cannot be saved the request answers "unconfirmed" — never a 500 a retry would act on. ----
+        var auditAfter = $"DocumentType={type};CrmCustomerId={target.CustomerId};CrmLeadId={target.LeadId};RecordId={selected.RecordId};Channel={channel};Destination={masked}" + (delivery.TestRedirected ? ";TestRedirect=true" : string.Empty) + $";{target.AuditContext}";
+        if (!await RecordSentAsync(claim, callerEmployeeId, auditAfter))
+        {
+            return Unconfirmed(claim, masked);
+        }
 
         return SentResult(claim, duplicate: false);
     }
@@ -578,6 +605,9 @@ public sealed partial class CrmDocumentCopyAppService(
         return existing.Status switch
         {
             DocumentDeliveryStatus.Sent => SentResult(existing, duplicate: true),
+            // Handed to the channel: while that attempt can still be running an identical request is just "queued" (as for InProgress);
+            // once the stale window has passed with no outcome recorded the document may already be there — never retaken, never resent.
+            DocumentDeliveryStatus.Dispatching => DispatchingAnswer(existing, now, staleAfter),
             DocumentDeliveryStatus.InProgress when !existing.IsStale(now, staleAfter) =>
                 Queued(type, existing.CrmRecordId, channel, existing.MaskedDestination, existing.CrmDocumentDeliveryRequestId),
             _ => null
@@ -590,7 +620,52 @@ public sealed partial class CrmDocumentCopyAppService(
                 "This Idempotency-Key was already used for a different request. Use a new key for a new request.")
             : winner.Status == DocumentDeliveryStatus.Sent
                 ? SentResult(winner, duplicate: true)
-                : Queued(winner.DocumentType, winner.CrmRecordId, winner.Channel, winner.MaskedDestination, winner.CrmDocumentDeliveryRequestId);
+                : winner.Status == DocumentDeliveryStatus.Dispatching
+                    ? DispatchingAnswer(winner, timeProvider.GetUtcNow().UtcDateTime, TimeSpan.FromMinutes(Math.Max(1, options.InProgressStaleAfterMinutes)))
+                    : Queued(winner.DocumentType, winner.CrmRecordId, winner.Channel, winner.MaskedDestination, winner.CrmDocumentDeliveryRequestId);
+
+    /// <summary>Marks the request Sent, writes its audit entry and saves — retried a bounded number of times. False when it could not be saved.</summary>
+    private async Task<bool> RecordSentAsync(CrmDocumentDeliveryRequest claim, Guid callerEmployeeId, string auditAfter)
+    {
+        var attempts = Math.Max(1, options.PostSendSaveAttempts);
+        try
+        {
+            claim.MarkSent(timeProvider.GetUtcNow().UtcDateTime);
+            await auditWriter.WriteAsync(
+                callerEmployeeId, "CrmDocumentCopySent", AuditEntityType, claim.CrmDocumentDeliveryRequestId.ToString(),
+                beforeValue: null, afterValue: auditAfter, Guid.NewGuid(), CancellationToken.None);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogError(ex, "Document delivery request {DeliveryRequestId} was accepted by the email provider but its audit entry could not be prepared.", claim.CrmDocumentDeliveryRequestId);
+            return false;
+        }
+
+        for (var attempt = 1; attempt <= attempts; attempt++)
+        {
+            try
+            {
+                await unitOfWork.SaveChangesAsync(CancellationToken.None);
+                return true;
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                logger.LogError(
+                    ex, "Document delivery request {DeliveryRequestId} was accepted by the email provider but saving 'Sent' failed (attempt {Attempt} of {Attempts}).",
+                    claim.CrmDocumentDeliveryRequestId, attempt, attempts);
+                if (attempt < attempts && options.PostSendSaveRetryDelayMilliseconds > 0)
+                {
+                    await Task.Delay(TimeSpan.FromMilliseconds(options.PostSendSaveRetryDelayMilliseconds * attempt), CancellationToken.None);
+                }
+            }
+        }
+
+        logger.LogCritical(
+            "Document delivery request {DeliveryRequestId} was ACCEPTED by the email provider but 'Sent' could not be saved after {Attempts} attempts. "
+            + "The saved row is Dispatching, so it will not be sent again; reconcile it by hand if needed.",
+            claim.CrmDocumentDeliveryRequestId, attempts);
+        return false;
+    }
 
     private async Task FinishFailedAsync(CrmDocumentDeliveryRequest claim, string code, CancellationToken cancellationToken)
     {
@@ -604,6 +679,19 @@ public sealed partial class CrmDocumentCopyAppService(
             : "The document was sent to the customer's email on record.",
         DocumentType: r.DocumentType.ToString(), RecordId: r.CrmRecordId, DeliveryChannel: r.Channel.ToString(),
         MaskedDestination: r.MaskedDestination, DeliveryRequestId: r.CrmDocumentDeliveryRequestId, Duplicate: duplicate);
+
+    private static CrmDocumentCopyResult DispatchingAnswer(CrmDocumentDeliveryRequest r, DateTime now, TimeSpan staleAfter) =>
+        now - r.UpdatedAtUtc > staleAfter
+            ? Unconfirmed(r)
+            : Queued(r.DocumentType, r.CrmRecordId, r.Channel, r.MaskedDestination, r.CrmDocumentDeliveryRequestId);
+
+    private static CrmDocumentCopyResult Unconfirmed(CrmDocumentDeliveryRequest r, string? maskedDestination = null) => new(
+        CrmDocumentCopyStatus.DeliveryUnconfirmed, CrmDocumentCodes.DeliveryUnconfirmed,
+        "The document was handed to the email provider but the result could not be recorded, so it may already be in the customer's mailbox. "
+        + "Nothing was sent again. Ask the customer to check their inbox before requesting it once more.",
+        DocumentType: r.DocumentType.ToString(), RecordId: r.CrmRecordId, DeliveryChannel: r.Channel.ToString(),
+        MaskedDestination: maskedDestination ?? r.MaskedDestination, DeliveryRequestId: r.CrmDocumentDeliveryRequestId,
+        Duplicate: true, Retryable: false);
 
     private static CrmDocumentCopyResult Queued(
         CrmDocumentType type, string recordId, DocumentDeliveryChannel channel, string? masked, long? id) => new(

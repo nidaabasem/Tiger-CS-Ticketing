@@ -87,6 +87,12 @@ public enum CrmDocumentCopyStatus
     /// <summary>An identical request is already being processed; nothing new was sent. Ask again with the same key.</summary>
     Queued,
 
+    /// <summary>
+    /// The document was handed to the email provider (or may have been) but TigerCS could not record the outcome. It may already be in the
+    /// customer's mailbox: nothing is sent again, under this key or a new one inside the duplicate window. Not an error to retry.
+    /// </summary>
+    DeliveryUnconfirmed,
+
     /// <summary>More than one record matches; <c>choices</c> lists them. Nothing was sent.</summary>
     SelectionRequired,
 
@@ -134,6 +140,12 @@ public sealed record CrmDocumentCopyResult(
 /// <summary>Machine-readable codes carried in <see cref="CrmDocumentCopyResult.Code"/>.</summary>
 public static class CrmDocumentCodes
 {
+    /// <summary>The document may have been delivered but the outcome was not recorded (see <see cref="CrmDocumentCopyStatus.DeliveryUnconfirmed"/>).</summary>
+    public const string DeliveryUnconfirmed = "DELIVERY_UNCONFIRMED";
+
+    /// <summary>The database could not record that the send was starting, so nothing was sent.</summary>
+    public const string DeliveryStateUnavailable = "DELIVERY_STATE_UNAVAILABLE";
+
     public const string InvalidRequest = "INVALID_REQUEST";
     public const string DocumentCopyDisabled = "DOCUMENT_COPY_DISABLED";
     public const string VerificationFailed = "VERIFICATION_FAILED";

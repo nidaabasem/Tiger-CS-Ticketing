@@ -114,20 +114,51 @@ public sealed class FakeCrmDocumentDeliveryRepository : ICrmDocumentDeliveryRepo
         Task.FromResult(All.FirstOrDefault(r => r.CrmDocumentDeliveryRequestId != 0
             && r.Origin == DocumentDeliveryOrigin.GenesysVerifiedSession
             && r.VerificationSessionId == verificationSessionId && r.DocumentType == type && r.CrmRecordId == crmRecordId
-            && r.Channel == channel && r.Status == DocumentDeliveryStatus.Sent && r.SentAtUtc >= sinceUtc));
+            && r.Channel == channel && Recent(r, sinceUtc)));
 
     public Task<CrmDocumentDeliveryRequest?> FindRecentSentForAgentAsync(
         int crmCustomerId, int crmLeadId, CrmDocumentType type, string crmRecordId, DocumentDeliveryChannel channel, DateTime sinceUtc,
         CancellationToken cancellationToken = default) =>
         Task.FromResult(All.FirstOrDefault(r => r.CrmDocumentDeliveryRequestId != 0
             && r.IsAgentScope(crmCustomerId, crmLeadId) && r.DocumentType == type && r.CrmRecordId == crmRecordId
-            && r.Channel == channel && r.Status == DocumentDeliveryStatus.Sent && r.SentAtUtc >= sinceUtc));
+            && r.Channel == channel && Recent(r, sinceUtc)));
+
+    /// <summary>Mirrors the SQL repository: Sent in the window, or handed to the channel (Dispatching) in the window.</summary>
+    private static bool Recent(CrmDocumentDeliveryRequest r, DateTime sinceUtc) =>
+        (r.Status == DocumentDeliveryStatus.Sent && r.SentAtUtc >= sinceUtc)
+        || (r.Status == DocumentDeliveryStatus.Dispatching && r.UpdatedAtUtc >= sinceUtc);
 
     public Task AddAsync(CrmDocumentDeliveryRequest request, CancellationToken cancellationToken = default)
     {
         All.Add(request);
         return Task.CompletedTask;
     }
+
+    // What SQL Server actually holds, as opposed to what the (request-scoped) entities in memory say. A save that fails
+    // leaves the in-memory entity ahead of the database, exactly like a tracked EF entity after a timeout.
+    private readonly Dictionary<long, (DocumentDeliveryStatus Status, string? FailureCode, int Attempts, DateTime UpdatedAt, DateTime? SentAt)> _persisted = [];
+
+    /// <summary>The status SQL Server holds for a row (not the in-memory one).</summary>
+    public DocumentDeliveryStatus PersistedStatus(CrmDocumentDeliveryRequest row) => _persisted[row.CrmDocumentDeliveryRequestId].Status;
+
+    /// <summary>A new HTTP request gets a fresh DbContext: every row is reloaded from what the database holds, discarding unsaved changes.</summary>
+    public void BeginNewRequestScope()
+    {
+        foreach (var row in All.Where(r => _persisted.ContainsKey(r.CrmDocumentDeliveryRequestId)))
+        {
+            var (status, failure, attempts, updated, sent) = _persisted[row.CrmDocumentDeliveryRequestId];
+            Set(row, nameof(CrmDocumentDeliveryRequest.Status), status);
+            Set(row, nameof(CrmDocumentDeliveryRequest.FailureCode), failure);
+            Set(row, nameof(CrmDocumentDeliveryRequest.AttemptCount), attempts);
+            Set(row, nameof(CrmDocumentDeliveryRequest.UpdatedAtUtc), updated);
+            Set(row, nameof(CrmDocumentDeliveryRequest.SentAtUtc), sent);
+        }
+
+        All.RemoveAll(r => r.CrmDocumentDeliveryRequestId == 0);
+    }
+
+    private static void Set(CrmDocumentDeliveryRequest row, string property, object? value) =>
+        typeof(CrmDocumentDeliveryRequest).GetProperty(property)!.SetValue(row, value);
 
     /// <summary>Called by the unit of work on save: assigns ids and enforces uniqueness the way SQL Server would.</summary>
     public void Commit()
@@ -144,12 +175,22 @@ public sealed class FakeCrmDocumentDeliveryRepository : ICrmDocumentDeliveryRepo
             typeof(CrmDocumentDeliveryRequest).GetProperty(nameof(CrmDocumentDeliveryRequest.CrmDocumentDeliveryRequestId))!
                 .SetValue(pending, _nextId++);
         }
+
+        foreach (var row in All.Where(r => r.CrmDocumentDeliveryRequestId != 0))
+        {
+            _persisted[row.CrmDocumentDeliveryRequestId] = (row.Status, row.FailureCode, row.AttemptCount, row.UpdatedAtUtc, row.SentAtUtc);
+        }
     }
 }
 
 public sealed class CommittingUnitOfWork(FakeCrmDocumentDeliveryRepository deliveries) : ICustomerVerificationUnitOfWork
 {
     public Func<Task>? BeforeSave { get; set; }
+
+    /// <summary>Decides, per save (1-based), whether SQL Server times out. A failed save changes nothing in the database.</summary>
+    public Func<int, bool>? FailSave { get; set; }
+
+    public int SaveCalls { get; private set; }
 
     public void DiscardPendingChanges()
     {
@@ -161,6 +202,12 @@ public sealed class CommittingUnitOfWork(FakeCrmDocumentDeliveryRepository deliv
         {
             BeforeSave = null;
             await hook();
+        }
+
+        SaveCalls++;
+        if (FailSave?.Invoke(SaveCalls) == true)
+        {
+            throw new TimeoutException("Execution Timeout Expired / SQL Server error 10060 (simulated).");
         }
 
         deliveries.Commit();
