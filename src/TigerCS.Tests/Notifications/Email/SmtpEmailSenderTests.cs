@@ -18,6 +18,7 @@ public class SmtpEmailSenderTests
     private sealed class FakeSmtpTransport : ISmtpTransport
     {
         public List<MailMessage> Sent { get; } = [];
+        public List<(string Name, string ContentType, byte[] Bytes)> Attachments { get; } = [];
         public Exception? ThrowNext { get; set; }
 
         public Task SendAsync(MailMessage message, CancellationToken cancellationToken = default)
@@ -33,6 +34,13 @@ public class SmtpEmailSenderTests
             {
                 From = message.From
             });
+            foreach (var attachment in message.Attachments)
+            {
+                using var copy = new MemoryStream();
+                attachment.ContentStream.CopyTo(copy);
+                Attachments.Add((attachment.Name!, attachment.ContentType.MediaType, copy.ToArray()));
+            }
+
             foreach (var view in message.AlternateViews)
             {
                 Sent[^1].AlternateViews.Add(view);
@@ -62,6 +70,20 @@ public class SmtpEmailSenderTests
 
     private static EmailMessage Message(string? html = "<p>Hello</p>") =>
         new("customer@example.com", "Subject", "Hello", Guid.NewGuid(), html);
+
+    [Fact]
+    public async Task Send_AttachesTheDocumentBytesUnchanged_WithItsNameAndType()
+    {
+        var (sender, transport, _) = Create();
+        byte[] pdf = [.. "%PDF-1.7\n"u8, 0x00, 0xFF, 0x80, 0x0D, 0x0A, .. "\n%%EOF\n"u8];   // binary, including bytes that are not text
+
+        var result = await sender.SendAsync(Message() with { Attachments = [new EmailAttachment("Contract.pdf", "application/pdf", pdf)] });
+
+        Assert.Equal(EmailSendOutcome.Sent, result.Outcome);
+        var attached = Assert.Single(transport.Attachments);
+        Assert.Equal(("Contract.pdf", "application/pdf"), (attached.Name, attached.ContentType));
+        Assert.Equal(pdf, attached.Bytes);
+    }
 
     [Fact]
     public async Task Send_BuildsAMultipartMessageFromTheConfiguredSender()

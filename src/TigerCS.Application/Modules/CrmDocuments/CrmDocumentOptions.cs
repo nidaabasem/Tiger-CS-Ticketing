@@ -45,6 +45,15 @@ public sealed class CrmDocumentOptions
     /// <summary>An unfinished send older than this is treated as abandoned and may be retaken by a retry.</summary>
     public int InProgressStaleAfterMinutes { get; set; } = 5;
 
+    /// <summary>
+    /// How many times the "Sent" record is saved after the provider has accepted the email. The email cannot be taken back, so the save
+    /// is retried rather than abandoned; if every attempt fails the request is left <c>Dispatching</c> and answers "unconfirmed".
+    /// </summary>
+    public int PostSendSaveAttempts { get; set; } = 3;
+
+    /// <summary>Pause before the n-th retry of that save is n × this many milliseconds.</summary>
+    public int PostSendSaveRetryDelayMilliseconds { get; set; } = 250;
+
     /// <summary>The same document, session and channel is not sent again within this window even under a new idempotency key.</summary>
     public int DuplicateSuppressionMinutes { get; set; } = 15;
 

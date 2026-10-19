@@ -212,7 +212,7 @@ public class CrmDocumentHttpGatewayTests
     {
         var handler = File(PdfBytes);
 
-        var content = await Gateway(handler).DownloadAsync(new CrmDocumentRecord("5001", "Contract", reference));
+        var content = await Gateway(handler).DownloadAsync(CrmDocumentType.UnitLayout, 9001, 12345, new CrmDocumentRecord("5001", "Contract", reference));
 
         Assert.Equal(expectedUrl, handler.LastRequest!.RequestUri!.ToString());
         Assert.Equal(HttpMethod.Get, handler.LastRequest.Method);
@@ -235,7 +235,7 @@ public class CrmDocumentHttpGatewayTests
         var handler = File([1]);
 
         var ex = await Assert.ThrowsAsync<CrmDocumentSourceException>(
-            () => Gateway(handler).DownloadAsync(new CrmDocumentRecord("5001", "Contract", reference)));
+            () => Gateway(handler).DownloadAsync(CrmDocumentType.UnitLayout, 9001, 12345, new CrmDocumentRecord("5001", "Contract", reference)));
 
         Assert.Equal(CrmDocumentSourceFailure.ReferenceRejected, ex.Failure);
         Assert.Equal(0, handler.CallCount); // the secret never left
@@ -247,7 +247,7 @@ public class CrmDocumentHttpGatewayTests
         var handler = File(PdfBytes);
 
         var content = await Gateway(handler, configure: o => o.DocumentFileHosts.Add("files.example.test"))
-            .DownloadAsync(new CrmDocumentRecord("5001", "Contract", "https://files.example.test/a.pdf"));
+            .DownloadAsync(CrmDocumentType.UnitLayout, 9001, 12345, new CrmDocumentRecord("5001", "Contract", "https://files.example.test/a.pdf"));
 
         Assert.Equal("https://files.example.test/a.pdf", handler.LastRequest!.RequestUri!.ToString());
         Assert.False(handler.LastRequest.Headers.Contains("X-SECRET-KEY"), "the CRM secret must never reach a non-CRM host");
@@ -258,20 +258,20 @@ public class CrmDocumentHttpGatewayTests
     public async Task TheSecretIsSentOnlyToTheCrmOrigin_NeverToAnythingElse()
     {
         var crm = File(PdfBytes);
-        await Gateway(crm).DownloadAsync(new CrmDocumentRecord("1", "x", "/Uploads/a.pdf"));
+        await Gateway(crm).DownloadAsync(CrmDocumentType.UnitLayout, 9001, 12345, new CrmDocumentRecord("1", "x", "/Uploads/a.pdf"));
         Assert.Equal(Secret, crm.LastRequest!.Headers.GetValues("X-SECRET-KEY").Single());
 
         // An unlisted external host is refused outright — not even requested.
         var external = File(PdfBytes);
         await Assert.ThrowsAsync<CrmDocumentSourceException>(
-            () => Gateway(external).DownloadAsync(new CrmDocumentRecord("1", "x", "https://files.example.test/a.pdf")));
+            () => Gateway(external).DownloadAsync(CrmDocumentType.UnitLayout, 9001, 12345, new CrmDocumentRecord("1", "x", "https://files.example.test/a.pdf")));
         Assert.Equal(0, external.CallCount);
 
         // A listed host that is only http is also refused.
         var plain = File(PdfBytes);
         await Assert.ThrowsAsync<CrmDocumentSourceException>(
             () => Gateway(plain, configure: o => o.DocumentFileHosts.Add("files.example.test"))
-                .DownloadAsync(new CrmDocumentRecord("1", "x", "http://files.example.test/a.pdf")));
+                .DownloadAsync(CrmDocumentType.UnitLayout, 9001, 12345, new CrmDocumentRecord("1", "x", "http://files.example.test/a.pdf")));
         Assert.Equal(0, plain.CallCount);
     }
 
@@ -286,12 +286,12 @@ public class CrmDocumentHttpGatewayTests
         });
         Assert.Equal(CrmDocumentSourceFailure.ReferenceRejected,
             (await Assert.ThrowsAsync<CrmDocumentSourceException>(
-                () => Gateway(redirect).DownloadAsync(new CrmDocumentRecord("1", "x", "/a.pdf")))).Failure);
+                () => Gateway(redirect).DownloadAsync(CrmDocumentType.UnitLayout, 9001, 12345, new CrmDocumentRecord("1", "x", "/a.pdf")))).Failure);
 
         var login = File(Encoding.UTF8.GetBytes("<html>Login</html>"), "text/html");
         Assert.Equal(CrmDocumentSourceFailure.InvalidResponse,
             (await Assert.ThrowsAsync<CrmDocumentSourceException>(
-                () => Gateway(login).DownloadAsync(new CrmDocumentRecord("1", "x", "/a.pdf")))).Failure);
+                () => Gateway(login).DownloadAsync(CrmDocumentType.UnitLayout, 9001, 12345, new CrmDocumentRecord("1", "x", "/a.pdf")))).Failure);
     }
 
     [Theory]
@@ -303,7 +303,7 @@ public class CrmDocumentHttpGatewayTests
     public async Task DownloadErrorStatuses_MapToTheirFailure(HttpStatusCode status, CrmDocumentSourceFailure expected)
     {
         var ex = await Assert.ThrowsAsync<CrmDocumentSourceException>(
-            () => Gateway(File([], status: status)).DownloadAsync(new CrmDocumentRecord("1", "x", "/a.pdf")));
+            () => Gateway(File([], status: status)).DownloadAsync(CrmDocumentType.UnitLayout, 9001, 12345, new CrmDocumentRecord("1", "x", "/a.pdf")));
 
         Assert.Equal(expected, ex.Failure);
     }
@@ -311,7 +311,7 @@ public class CrmDocumentHttpGatewayTests
     [Fact]
     public async Task AMissingFile_IsNull()
     {
-        Assert.Null(await Gateway(File([], status: HttpStatusCode.NotFound)).DownloadAsync(new CrmDocumentRecord("1", "x", "/a.pdf")));
+        Assert.Null(await Gateway(File([], status: HttpStatusCode.NotFound)).DownloadAsync(CrmDocumentType.UnitLayout, 9001, 12345, new CrmDocumentRecord("1", "x", "/a.pdf")));
     }
 
     [Fact]
@@ -320,7 +320,7 @@ public class CrmDocumentHttpGatewayTests
         var big = new byte[5000];
         PdfBytes.CopyTo(big, 0);
         var content = await Gateway(File(big), configure: o => o.MaxDocumentBytes = 100)
-            .DownloadAsync(new CrmDocumentRecord("1", "x", "/a.pdf"));
+            .DownloadAsync(CrmDocumentType.UnitLayout, 9001, 12345, new CrmDocumentRecord("1", "x", "/a.pdf"));
 
         Assert.Equal(101, content!.Bytes.Length); // enough for the service to see "too large"
     }
@@ -346,7 +346,7 @@ public class CrmDocumentHttpGatewayTests
             return Task.FromResult(response);
         });
 
-        return (await Gateway(handler).DownloadAsync(new CrmDocumentRecord("L1", label, url)))!;
+        return (await Gateway(handler).DownloadAsync(CrmDocumentType.UnitLayout, 9001, 12345, new CrmDocumentRecord("L1", label, url)))!;
     }
 
     [Fact]

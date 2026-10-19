@@ -61,6 +61,21 @@ internal static class CrmDocumentFileType
     }
 
     /// <summary>The attachment file name: the label without a stale extension, plus the true one.</summary>
+    /// <summary>
+    /// A PDF that is not cut off: it starts with <c>%PDF-</c> and ends (allowing trailing whitespace/padding) with a <c>%%EOF</c> marker.
+    /// A truncated transfer or a stored placeholder fails this.
+    /// </summary>
+    internal static bool IsCompletePdf(byte[] bytes, Detected detected)
+    {
+        if (!ReferenceEquals(detected, Pdf) || bytes.Length < 16)
+        {
+            return false;
+        }
+
+        var tail = bytes.AsSpan(Math.Max(0, bytes.Length - 2048));
+        return tail.IndexOf("%%EOF"u8) >= 0;
+    }
+
     internal static string FileName(string label, Detected type)
     {
         var name = label.Replace('\\', '/');

@@ -46,7 +46,11 @@ public interface ICrmDocumentDeliveryRepository
 {
     Task<CrmDocumentDeliveryRequest?> GetByKeyAsync(Guid callerEmployeeId, string idempotencyKey, CancellationToken cancellationToken = default);
 
-    /// <summary>A request that already SENT this same record for this session and channel since <paramref name="sinceUtc"/> — the second line of duplicate defence, for a retry that arrives under a new idempotency key.</summary>
+    /// <summary>
+    /// A request that already SENT this same record for this session and channel since <paramref name="sinceUtc"/> — or that was
+    /// handed to the channel (<see cref="DocumentDeliveryStatus.Dispatching"/>) in that window and never recorded as failed: either
+    /// way the document may be in the mailbox. The second line of duplicate defence, for a retry under a new idempotency key.
+    /// </summary>
     Task<CrmDocumentDeliveryRequest?> FindRecentSentAsync(
         Guid verificationSessionId, CrmDocumentType type, string crmRecordId, DocumentDeliveryChannel channel,
         DateTime sinceUtc, CancellationToken cancellationToken = default);

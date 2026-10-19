@@ -21,9 +21,9 @@ public sealed class CrmDocumentDeliveryRepository(TigerCsDbContext dbContext) : 
                 && r.DocumentType == type
                 && r.CrmRecordId == crmRecordId
                 && r.Channel == channel
-                && r.Status == DocumentDeliveryStatus.Sent
-                && r.SentAtUtc != null && r.SentAtUtc >= sinceUtc)
-            .OrderByDescending(r => r.SentAtUtc)
+                && ((r.Status == DocumentDeliveryStatus.Sent && r.SentAtUtc != null && r.SentAtUtc >= sinceUtc)
+                    || (r.Status == DocumentDeliveryStatus.Dispatching && r.UpdatedAtUtc >= sinceUtc)))
+            .OrderByDescending(r => r.UpdatedAtUtc)
             .FirstOrDefaultAsync(cancellationToken);
 
     public Task<CrmDocumentDeliveryRequest?> FindRecentSentForAgentAsync(
@@ -36,9 +36,9 @@ public sealed class CrmDocumentDeliveryRepository(TigerCsDbContext dbContext) : 
                 && r.DocumentType == type
                 && r.CrmRecordId == crmRecordId
                 && r.Channel == channel
-                && r.Status == DocumentDeliveryStatus.Sent
-                && r.SentAtUtc != null && r.SentAtUtc >= sinceUtc)
-            .OrderByDescending(r => r.SentAtUtc)
+                && ((r.Status == DocumentDeliveryStatus.Sent && r.SentAtUtc != null && r.SentAtUtc >= sinceUtc)
+                    || (r.Status == DocumentDeliveryStatus.Dispatching && r.UpdatedAtUtc >= sinceUtc)))
+            .OrderByDescending(r => r.UpdatedAtUtc)
             .FirstOrDefaultAsync(cancellationToken);
 
     public async Task AddAsync(CrmDocumentDeliveryRequest request, CancellationToken cancellationToken = default) =>

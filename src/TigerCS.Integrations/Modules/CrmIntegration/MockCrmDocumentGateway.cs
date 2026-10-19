@@ -43,9 +43,10 @@ public sealed class MockCrmDocumentGateway : ICrmDocumentGateway
             rows.Select(d => new CrmDocumentRecord(d.RecordId, d.Name, $"mock://documents/{d.RecordId}")).ToList()));
     }
 
-    public Task<CrmDocumentContent?> DownloadAsync(CrmDocumentRecord record, CancellationToken cancellationToken = default)
+    public Task<CrmDocumentContent?> DownloadAsync(
+        CrmDocumentType type, int customerId, int leadId, CrmDocumentRecord record, CancellationToken cancellationToken = default)
     {
-        var doc = Docs.FirstOrDefault(d => d.RecordId == record.RecordId);
+        var doc = Docs.FirstOrDefault(d => d.RecordId == record.RecordId && d.CustomerId == customerId && d.LeadId == leadId && d.Type == type);
         if (doc is null)
         {
             return Task.FromResult<CrmDocumentContent?>(null);

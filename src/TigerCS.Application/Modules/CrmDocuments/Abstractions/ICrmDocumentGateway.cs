@@ -27,7 +27,8 @@ public interface ICrmDocumentGateway
     /// reference, not a public URL — or null when the file is gone.
     /// </summary>
     /// <exception cref="CrmDocumentSourceException">CRM refused, failed, or the reference is not one the gateway may fetch.</exception>
-    Task<CrmDocumentContent?> DownloadAsync(CrmDocumentRecord record, CancellationToken cancellationToken = default);
+    Task<CrmDocumentContent?> DownloadAsync(
+        CrmDocumentType type, int customerId, int leadId, CrmDocumentRecord record, CancellationToken cancellationToken = default);
 }
 
 /// <param name="RecordId">The attachment id CRM gave (Layout has none: <c>LAYOUT-{leadId}</c>). The id the chatbot passes back as <c>recordId</c>.</param>

@@ -42,7 +42,7 @@ public sealed class GenesysSmsOtpEndpointTests : IDisposable
     private const string CrmMobile = "+971 50 999 8888";
     private const string BuyerEmail = "ahmed.ali@example.test";
 
-    private static readonly byte[] PdfBytes = [.. "%PDF-1.7\n"u8, 1, 2, 3];
+    private static readonly byte[] PdfBytes = [.. "%PDF-1.7\n"u8, 1, 2, 3, .. "\n%%EOF\n"u8];
 
     /// <summary>An in-process Tiger CRM: records requests, answers as scripted.</summary>
     private sealed class StubCrm

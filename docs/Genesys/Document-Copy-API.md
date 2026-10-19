@@ -162,6 +162,7 @@ customer's email on record in CRM.
 |---|---|---|
 | `Sent` | 200 | The email was accepted for delivery. `duplicate: true` means this was a replay and nothing was sent again. |
 | `Queued` | 202 | An identical request is still being processed. Nothing new was sent. Repeat the call with the same key to get the result. |
+| `DeliveryUnconfirmed` | 202 | `DELIVERY_UNCONFIRMED`. The document was handed to the email provider (or may have been) but the result could not be recorded, so it **may already be in the customer's mailbox**. Nothing was sent again, under this key or a new one inside the duplicate window. `retryable: false` — do not tell the customer it was sent *or* that it failed; ask them to check their inbox. |
 | `SelectionRequired` | 200 | More than one record matches. `choices` lists them. **Nothing was sent.** |
 | `DocumentUnavailable` | 404 / 502 / 503 | `DOCUMENT_NOT_FOUND`; `CRM_REQUEST_REJECTED` / `CRM_AUTHENTICATION_FAILED` / `CRM_ACCESS_DENIED` / `CRM_INVALID_RESPONSE` (502); `DOCUMENT_SOURCE_UNAVAILABLE` (503, retryable). |
 | `DeliveryFailed` | 502 / 501 / 422 | Found but not delivered: `DELIVERY_FAILED`, `DOCUMENT_TOO_LARGE`, `DELIVERY_CHANNEL_NOT_INTEGRATED`, `DELIVERY_DESTINATION_UNAVAILABLE`. `retryable` says whether to retry with the same key. |
@@ -308,6 +309,13 @@ Also: `422 DELIVERY_DESTINATION_UNAVAILABLE` (CRM has no valid email for the cus
   replays answer from it; a concurrent replay answers `Queued`; the same document/session/channel is
   not re-sent within 15 minutes even under a new key (`CrmDocuments:DuplicateSuppressionMinutes`); an
   abandoned in-progress claim can be retaken after 5 minutes.
+* **Provider-accepted but not recorded** — the email cannot be taken back, so the send is written ahead: the row is saved as
+  `Dispatching` *before* the provider is called. If that save fails, nothing was sent (retry is safe). After the provider
+  accepts, `Sent` is saved with up to `CrmDocuments:PostSendSaveAttempts` (3) attempts, not cancelled by the caller hanging up. If
+  every attempt fails, or the sender throws, the row stays `Dispatching`: the request answers `DeliveryUnconfirmed`, and a
+  `Dispatching` row is **never** retaken automatically (unlike an abandoned `InProgress` one) and also suppresses the same
+  document under a new key for the duplicate window. A row left `Dispatching` is a log line at *Critical* level to reconcile by
+  hand. No schema change: `Status` is a plain byte (`4 = Dispatching`).
 * **Privacy** — the document is attached to an email to the CRM-held address. No link is created, so
   none can leak or need to expire. Nothing is stored beyond ids, status and a masked address
   (`CrmDocumentDeliveryRequests`). Audit action `CrmDocumentCopySent`.
