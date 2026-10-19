@@ -16,6 +16,8 @@ internal static class CrmDocumentCopyResponses
         {
             CrmDocumentCopyStatus.Sent or CrmDocumentCopyStatus.SelectionRequired => controller.Ok(result),
             CrmDocumentCopyStatus.Queued => controller.Accepted(result),
+            // 202, never 2xx "Sent": the body's status/code say the document may already be with the customer and was not sent again.
+            CrmDocumentCopyStatus.DeliveryUnconfirmed => controller.Accepted(result),
 
             CrmDocumentCopyStatus.InvalidRequest => Coded(controller, result, StatusCodes.Status400BadRequest, "Invalid document request"),
             CrmDocumentCopyStatus.VerificationFailed => Coded(controller, result, StatusCodes.Status403Forbidden, "Customer verification failed"),

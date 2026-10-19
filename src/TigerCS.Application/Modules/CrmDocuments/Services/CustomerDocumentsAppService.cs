@@ -154,7 +154,7 @@ public sealed class CustomerDocumentsAppService(
 
         try
         {
-            var content = await documentGateway.DownloadAsync(selected.Record!, cancellationToken);
+            var content = await documentGateway.DownloadAsync(type, selected.CustomerId, crmLeadId, selected.Record!, cancellationToken);
             if (content is null)
             {
                 return CustomerDocumentsResult<CrmDocumentContent>.Fail(
@@ -264,7 +264,7 @@ public sealed class CustomerDocumentsAppService(
 
     private sealed record ResolveOutcome(ResolvedCustomer? Customer, CustomerDocumentsResult<CustomerDocumentsDto>? Early);
 
-    private sealed record SelectOutcome(CrmDocumentRecord? Record, CustomerDocumentsResult<CrmDocumentRecord>? Early);
+    private sealed record SelectOutcome(CrmDocumentRecord? Record, CustomerDocumentsResult<CrmDocumentRecord>? Early, int CustomerId = 0);
 
     private async Task<ResolveOutcome> ResolveCustomerAsync(
         Guid callerEmployeeId, IReadOnlyCollection<string> callerRoles, string customerKey, CancellationToken cancellationToken)
@@ -356,7 +356,7 @@ public sealed class CustomerDocumentsAppService(
                 ? new SelectOutcome(null, CustomerDocumentsResult<CrmDocumentRecord>.Fail(
                     CustomerDocumentsOutcome.OwnershipMismatch, CrmDocumentCodes.RecordOwnershipMismatch,
                     "That record is not one CRM lists for this customer and unit."))
-                : new SelectOutcome(record, null);
+                : new SelectOutcome(record, null, resolved.Customer.CustomerId);
         }
         catch (CrmDocumentSourceException ex)
         {

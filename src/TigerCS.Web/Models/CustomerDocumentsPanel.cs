@@ -67,6 +67,9 @@ public sealed class CustomerDocumentsPanel
                 case CrmDocumentCopyStatus.Sent:
                     return ($"Accepted for sending: “{documentName}” was handed to the mail server{to} as an attachment. "
                             + "Accepted is not delivered — TigerCS receives no delivery or read receipt, so confirm with the customer that it arrived.", false);
+                case CrmDocumentCopyStatus.DeliveryUnconfirmed:
+                    return ($"“{documentName}” may already have been sent{to}: the mail server was handed the document but TigerCS could not record the result. "
+                            + "Nothing was sent again. Ask the customer to check their inbox (and spam) before trying once more.", true);
                 case CrmDocumentCopyStatus.Queued:
                     return ($"“{documentName}” is already being sent by an identical request. Nothing new was sent; check again shortly.", false);
                 default:

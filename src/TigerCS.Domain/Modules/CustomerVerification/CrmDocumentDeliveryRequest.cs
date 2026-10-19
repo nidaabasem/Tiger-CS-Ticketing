@@ -133,12 +133,33 @@ public class CrmDocumentDeliveryRequest
     public bool IsStale(DateTime nowUtc, TimeSpan staleAfter) =>
         Status == DocumentDeliveryStatus.InProgress && nowUtc - UpdatedAtUtc > staleAfter;
 
-    /// <summary>Claims a retry of a failed (or abandoned) attempt. Refused for a Sent request — that one is final.</summary>
+    /// <summary>
+    /// True when the document may already be in the customer's mailbox: it was accepted (<see cref="DocumentDeliveryStatus.Sent"/>) or
+    /// it was handed to the channel and the outcome was never recorded (<see cref="DocumentDeliveryStatus.Dispatching"/>).
+    /// </summary>
+    public bool MayHaveBeenDelivered => Status is DocumentDeliveryStatus.Sent or DocumentDeliveryStatus.Dispatching;
+
+    /// <summary>
+    /// Records — and the caller must SAVE this before calling the delivery channel — that the document is about to be handed over.
+    /// From here a crash or a failed save can no longer make the request look like it never reached the provider.
+    /// </summary>
+    public void MarkDispatching(DateTime nowUtc)
+    {
+        if (Status != DocumentDeliveryStatus.InProgress)
+        {
+            throw new InvalidOperationException("Only a claimed (in-progress) request can start dispatching.");
+        }
+
+        Status = DocumentDeliveryStatus.Dispatching;
+        UpdatedAtUtc = nowUtc;
+    }
+
+    /// <summary>Claims a retry of a failed (or abandoned) attempt. Refused for a Sent or Dispatching request — those may already have been delivered.</summary>
     public void Restart(DateTime nowUtc)
     {
-        if (Status == DocumentDeliveryStatus.Sent)
+        if (MayHaveBeenDelivered)
         {
-            throw new InvalidOperationException("A request that was sent is final and is never retried.");
+            throw new InvalidOperationException("A request that was sent, or handed to the delivery channel, is never retried.");
         }
 
         Status = DocumentDeliveryStatus.InProgress;

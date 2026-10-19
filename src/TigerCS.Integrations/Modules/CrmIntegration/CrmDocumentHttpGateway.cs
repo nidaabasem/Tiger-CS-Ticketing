@@ -31,7 +31,19 @@ namespace TigerCS.Integrations.Modules.CrmIntegration;
 /// </para>
 ///
 /// <para>
-/// <b><c>fileUrl</c> is a storage reference, not a public URL.</b> It is
+/// <b>Attachment documents (ReservationForm, TigerContract, RegistrationReceipt) are never fetched from their <c>fileUrl</c></b> —
+/// those objects are private storage. They are downloaded through CRM's authenticated
+/// <c>POST {Crm:BaseUrl}/TicketingSystem/GetCustomerDocumentFile</c> with
+/// <c>{ "CustomerID", "LeadID", "DocumentType", "AttachmentId" }</c>: CRM re-checks that the attachment belongs to that customer,
+/// lead and type, then streams the bytes from its private store. TigerCS only ever asks for an <c>attachmentId</c> that
+/// <c>GetCustomerDocuments</c> just listed for the verified customer and lead, and checks the answer is a complete PDF
+/// (<c>%PDF-</c> header, <c>%%EOF</c> trailer, size cap, and CRM's <c>X-Content-SHA256</c> when sent). No AWS URL or credential
+/// is ever seen by TigerCS.
+/// </para>
+///
+/// <para>
+/// <b>Only the unit layout still uses <c>fileUrl</c></b> (it is the unit's <c>unitplan</c> field, not an attachment). It is
+/// a storage reference, not a public URL, and is
 /// fetched only by this server, with the CRM credential, and only when it
 /// resolves to the configured CRM origin (a relative or <c>~/</c> path is
 /// resolved against <c>Crm:BaseUrl</c>) or to a host listed in
@@ -81,9 +93,56 @@ public sealed class CrmDocumentHttpGateway(
         }
     }
 
-    public async Task<CrmDocumentContent?> DownloadAsync(CrmDocumentRecord record, CancellationToken cancellationToken = default)
+    private const string FilePath = "TicketingSystem/GetCustomerDocumentFile";
+
+    private sealed record FileRequest(
+        [property: JsonPropertyName("CustomerID")] int CustomerId,
+        [property: JsonPropertyName("LeadID")] int LeadId,
+        [property: JsonPropertyName("DocumentType")] string DocumentType,
+        [property: JsonPropertyName("AttachmentId")] object AttachmentId);
+
+    public async Task<CrmDocumentContent?> DownloadAsync(
+        CrmDocumentType type, int customerId, int leadId, CrmDocumentRecord record, CancellationToken cancellationToken = default)
     {
         var secretKey = RequireSecretKey();
+
+        if (type == CrmDocumentType.UnitLayout)
+        {
+            return await DownloadByFileUrlAsync(record, secretKey, cancellationToken);
+        }
+
+        // The id is what GetCustomerDocuments listed. CRM's attachmentId is numeric; anything else could not be one of its own.
+        object attachmentId = long.TryParse(record.RecordId, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var numeric)
+            ? numeric
+            : throw Invalid("The attachment id is not a CRM attachment id.");
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, FilePath)
+        {
+            Content = JsonContent.Create(new FileRequest(customerId, leadId, CrmDocumentTypeMapping.ToCrmName(type), attachmentId))
+        };
+        request.Headers.TryAddWithoutValidation(SecretHeaderName, secretKey);
+
+        using var response = await SendAsync(request, "GetCustomerDocumentFile", cancellationToken, HttpCompletionOption.ResponseHeadersRead);
+
+        // CRM answers 404 for "no such attachment" AND for "not this customer's / lead's / type": the two are indistinguishable by design.
+        if (response.StatusCode == HttpStatusCode.NotFound)
+        {
+            return null;
+        }
+
+        if (response.StatusCode != HttpStatusCode.OK)
+        {
+            throw FailureFor(response.StatusCode, "GetCustomerDocumentFile");
+        }
+
+        var content = await ReadFileAsync(response, record, requirePdf: true, request.RequestUri!.AbsolutePath, cancellationToken);
+        VerifyChecksum(response, content.Bytes, record);
+        return content;
+    }
+
+    /// <summary>The unit layout only: its <c>unitplan</c> reference, fetched from the CRM origin (or an allow-listed host) under the rules in the class remarks.</summary>
+    private async Task<CrmDocumentContent?> DownloadByFileUrlAsync(CrmDocumentRecord record, string secretKey, CancellationToken cancellationToken)
+    {
         var (target, isCrmOrigin) = ResolveFileReference(record.FileReference);
 
         using var request = new HttpRequestMessage(HttpMethod.Get, target);
@@ -99,11 +158,29 @@ public sealed class CrmDocumentHttpGateway(
             return null;
         }
 
+        if ((int)response.StatusCode is >= 300 and < 400)
+        {
+            // Often a login redirect: the file route is not accepting X-SECRET-KEY. Where it points is useful; its query is not logged.
+            logger.LogWarning(
+                "CRM document download for record {RecordId} was redirected ({Status}) to {Location}; redirects are never followed with the CRM credential.",
+                record.RecordId, (int)response.StatusCode, RedactLocation(response.Headers.Location));
+        }
+
         if (response.StatusCode != HttpStatusCode.OK)
         {
             throw FailureFor(response.StatusCode, "document download");
         }
 
+        return await ReadFileAsync(response, record, requirePdf: false, target.AbsolutePath, cancellationToken);
+    }
+
+    /// <summary>
+    /// Reads the body under the size cap and establishes what it is from its bytes. An HTML body is a login/error page, not a
+    /// document; an attachment document must be a complete PDF.
+    /// </summary>
+    private async Task<CrmDocumentContent> ReadFileAsync(
+        HttpResponseMessage response, CrmDocumentRecord record, bool requirePdf, string pathHint, CancellationToken cancellationToken)
+    {
         var declared = response.Content.Headers.ContentType?.MediaType;
         if (string.Equals(declared, "text/html", StringComparison.OrdinalIgnoreCase))
         {
@@ -118,7 +195,7 @@ public sealed class CrmDocumentHttpGateway(
         // metadata CRM gave us (Content-Disposition, storage path, attachment name). Never assumed to be a PDF.
         var disposition = response.Content.Headers.ContentDisposition;
         var detected = CrmDocumentFileType.Resolve(
-            bytes, declared, disposition?.FileNameStar ?? disposition?.FileName, target.AbsolutePath, record.Label);
+            bytes, declared, disposition?.FileNameStar ?? disposition?.FileName, pathHint, record.Label);
         if (detected is null)
         {
             logger.LogWarning(
@@ -128,7 +205,32 @@ public sealed class CrmDocumentHttpGateway(
                 CrmDocumentSourceFailure.InvalidResponse, "The file's type could not be established as an allowed document type.");
         }
 
+        if (requirePdf && !CrmDocumentFileType.IsCompletePdf(bytes, detected))
+        {
+            logger.LogWarning(
+                "CRM document for record {RecordId} is not a complete PDF (detected {MediaType}, {Length} bytes); it was not sent.",
+                record.RecordId, detected.MediaType, bytes.Length);
+            throw new CrmDocumentSourceException(CrmDocumentSourceFailure.InvalidResponse, "CRM returned a file that is not a complete PDF.");
+        }
+
         return new CrmDocumentContent(record.RecordId, bytes, detected.MediaType, CrmDocumentFileType.FileName(record.Label, detected));
+    }
+
+    /// <summary>When CRM sends <c>X-Content-SHA256</c> (hex), the bytes received must hash to it — a truncated or altered transfer is not sent.</summary>
+    private void VerifyChecksum(HttpResponseMessage response, byte[] bytes, CrmDocumentRecord record)
+    {
+        if (!response.Headers.TryGetValues("X-Content-SHA256", out var values))
+        {
+            return;
+        }
+
+        var expected = values.FirstOrDefault()?.Trim();
+        var actual = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes));
+        if (!string.Equals(expected, actual, StringComparison.OrdinalIgnoreCase))
+        {
+            logger.LogWarning("CRM document for record {RecordId} does not match the checksum CRM sent; it was not sent.", record.RecordId);
+            throw new CrmDocumentSourceException(CrmDocumentSourceFailure.InvalidResponse, "The document does not match the checksum CRM sent.");
+        }
     }
 
     // ---- listing ----
@@ -177,7 +279,7 @@ public sealed class CrmDocumentHttpGateway(
                 foreach (var item in attachments.EnumerateArray())
                 {
                     var fileUrl = GetString(item, "fileUrl");
-                    if (string.IsNullOrWhiteSpace(fileUrl))
+                    if (type == CrmDocumentType.UnitLayout && string.IsNullOrWhiteSpace(fileUrl))
                     {
                         logger.LogWarning("CRM returned an attachment without a fileUrl for a {DocumentType}; it was skipped.", type);
                         continue;
@@ -198,7 +300,7 @@ public sealed class CrmDocumentHttpGateway(
                             ?? throw Invalid("An attachment has no attachmentId.");
                     }
 
-                    records.Add(new CrmDocumentRecord(recordId.Trim(), string.IsNullOrWhiteSpace(name) ? DefaultLabel(type) : name.Trim(), fileUrl.Trim()));
+                    records.Add(new CrmDocumentRecord(recordId.Trim(), string.IsNullOrWhiteSpace(name) ? DefaultLabel(type) : name.Trim(), fileUrl?.Trim() ?? string.Empty));
                 }
             }
 
@@ -231,7 +333,13 @@ public sealed class CrmDocumentHttpGateway(
         }
         else
         {
-            throw Rejected();
+            throw Rejected(reference, "NotAnHttpUrl", baseAddress);
+        }
+
+        if (target.Scheme != Uri.UriSchemeHttp && target.Scheme != Uri.UriSchemeHttps)
+        {
+            // e.g. a Windows physical path ("C:\\…") that parses as a URI with a one-letter scheme.
+            throw Rejected(reference, "NotAnHttpUrl", baseAddress);
         }
 
         var sameOrigin = string.Equals(target.Host, baseAddress.Host, StringComparison.OrdinalIgnoreCase)
@@ -241,17 +349,57 @@ public sealed class CrmDocumentHttpGateway(
 
         if (!sameOrigin && !allowedHost)
         {
-            logger.LogWarning("CRM document reference points at host {Host}, which is not the configured CRM origin or an allowed file host; nothing was fetched.", target.Host);
-            throw Rejected();
+            throw Rejected(reference, RejectionReason(target, baseAddress), baseAddress);
         }
 
         // The CRM secret goes to the CRM origin and nowhere else. An allow-listed storage host is fetched
         // WITHOUT it: that host is not CRM, and the secret is not ours to hand it.
         return (target, sameOrigin);
 
-        static CrmDocumentSourceException Rejected() =>
-            new(CrmDocumentSourceFailure.ReferenceRejected, "The document reference is not on the configured CRM origin.");
+        CrmDocumentSourceException Rejected(string rawReference, string reason, Uri crmOrigin)
+        {
+            // Which rule failed and where the reference points — never the query string, fragment or user info, which can carry tokens.
+            logger.LogWarning(
+                "CRM document reference refused ({Reason}): {Reference}. Configured CRM origin is {Origin}; nothing was fetched and the CRM secret was not sent.",
+                reason, Redact(rawReference), $"{crmOrigin.Scheme}://{crmOrigin.Host}:{crmOrigin.Port}");
+            return new CrmDocumentSourceException(CrmDocumentSourceFailure.ReferenceRejected, "The document reference is not on the configured CRM origin.");
+        }
     }
+
+    private static string RejectionReason(Uri target, Uri crmOrigin)
+    {
+        if (target.Scheme == Uri.UriSchemeHttps && !string.Equals(target.Host, crmOrigin.Host, StringComparison.OrdinalIgnoreCase))
+        {
+            return "HostNotOnCrmOriginOrAllowList";
+        }
+
+        if (!string.Equals(target.Host, crmOrigin.Host, StringComparison.OrdinalIgnoreCase))
+        {
+            return "HostNotOnCrmOrigin_NotHttps";
+        }
+
+        return target.Scheme != crmOrigin.Scheme ? "SchemeDiffersFromCrmOrigin" : "PortDiffersFromCrmOrigin";
+    }
+
+    /// <summary>
+    /// A reference safe to log: scheme, host, port and path of a URL (user info, query and fragment dropped), or the first
+    /// characters of a non-URL value (a physical path, say) with any query dropped.
+    /// </summary>
+    internal static string Redact(string reference)
+    {
+        const int Max = 200;
+        if (Uri.TryCreate(reference, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https")
+        {
+            var text = $"{uri.Scheme}://{uri.Host}:{uri.Port}{uri.AbsolutePath}";
+            return text.Length > Max ? text[..Max] + "…" : text;
+        }
+
+        var cut = reference.IndexOfAny(['?', '#']);
+        var bare = cut >= 0 ? reference[..cut] : reference;
+        return bare.Length > Max ? bare[..Max] + "…" : bare;
+    }
+
+    private static string? RedactLocation(Uri? location) => location is null ? null : Redact(location.IsAbsoluteUri ? location.ToString() : location.OriginalString);
 
     // ---- plumbing ----
 
