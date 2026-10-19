@@ -164,6 +164,9 @@ public static class CrmDocumentCodes
     /// <summary>The configured mail provider only records messages (no real SMTP); nothing was sent.</summary>
     public const string EmailTransportNotReal = "EMAIL_TRANSPORT_NOT_REAL";
 
+    /// <summary>VerificationTesting is enabled but invalid / not allowed here; nothing was sent.</summary>
+    public const string TestModeMisconfigured = "DOCUMENT_TEST_MODE_MISCONFIGURED";
+
     /// <summary>The agent has no document-send permission.</summary>
     public const string DocumentSendNotPermitted = "DOCUMENT_SEND_NOT_PERMITTED";
     public const string IdempotencyKeyReused = "IDEMPOTENCY_KEY_REUSED";

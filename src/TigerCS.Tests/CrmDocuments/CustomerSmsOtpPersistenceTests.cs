@@ -69,7 +69,8 @@ public sealed class CustomerSmsOtpPersistenceTests : IDisposable
             options, new CrmBuyerLookupAppService(_buyers, NullLogger<CrmBuyerLookupAppService>.Instance),
             new CrmBuyerVerificationCache(units, contacts, uow, time), new CustomerOtpChallengeRepository(context), units, contacts,
             new VerificationSessionAppService(new VerificationSessionRepository(context), units, contacts, uow, audit, time),
-            new FixedCodes(codes), new FakeEmailSender(), _sms, CustomerNotificationPolicy.EnabledDefault, uow, audit, time,
+            new FixedCodes(codes), new FakeEmailSender(), _sms, CustomerNotificationPolicy.EnabledDefault,
+            new TigerCS.Application.Modules.CrmDocuments.VerificationTestingPolicy(new TigerCS.Application.Modules.CrmDocuments.VerificationTestingOptions(), "Production"), uow, audit, time,
             NullLogger<CustomerOtpAppService>.Instance);
     }
 

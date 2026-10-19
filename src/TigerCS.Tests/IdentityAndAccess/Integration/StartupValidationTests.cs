@@ -184,6 +184,42 @@ public class StartupValidationTests
     /// adapter that ends up wired is still <c>RecordingEmailSender</c>, which
     /// contacts no provider — nothing is delivered.
     /// </summary>
+    /// <summary>
+    /// VerificationTesting redirects OTP/document messages for REAL CRM customers to test inboxes, so it must never be
+    /// switchable on in Production (or any non-Local/UAT environment) — nor half-configured anywhere.
+    /// </summary>
+    [Theory]
+    [InlineData("Production", "971564114806", "nidaa.basim@tigergroup.ae")]
+    [InlineData("UAT", "", "nidaa.basim@tigergroup.ae")]
+    [InlineData("UAT", "971564114806", "")]
+    public void VerificationTesting_EnabledInProductionOrIncomplete_FailsAtStartup(string environment, string sms, string email)
+    {
+        var config = ValidConfig();
+        config["Crm:Provider"] = "InternalCrmGateway";
+        config["VerificationTesting:Enabled"] = "true";
+        config["VerificationTesting:BlockRealCustomerDelivery"] = "true";
+        config["VerificationTesting:SmsOverride"] = sms;
+        config["VerificationTesting:EmailOverride"] = email;
+
+        using var factory = new ConfiguredFactory(environment, config);
+
+        var ex = Assert.ThrowsAny<Exception>(() => factory.Server);
+        Assert.Contains("VerificationTesting", ex.ToString());
+    }
+
+    [Fact]
+    public void VerificationTesting_DisabledInProduction_StartsNormally()
+    {
+        var config = ValidConfig();
+        config["Crm:Provider"] = "InternalCrmGateway";
+        config["VerificationTesting:Enabled"] = "false";
+
+        using var factory = new ConfiguredFactory("Production", config);
+
+        Assert.NotNull(factory.Server);
+        Assert.False(factory.Services.GetRequiredService<TigerCS.Application.Modules.CrmDocuments.VerificationTestingPolicy>().Enabled);
+    }
+
     [Fact]
     public void UatEnvironment_WithRecordingEmailProviderAndEmailDisabled_StartsSuccessfully()
     {
