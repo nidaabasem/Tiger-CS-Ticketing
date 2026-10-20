@@ -178,6 +178,8 @@ public static class InfrastructureServiceCollectionExtensions
             sp.GetRequiredService<IOptions<VerificationTestingOptions>>().Value,
             sp.GetRequiredService<Microsoft.Extensions.Hosting.IHostEnvironment>().EnvironmentName));
         services.AddScoped<ICrmDocumentDeliveryRepository, CrmDocumentDeliveryRepository>();
+        services.AddScoped<DocumentDeliveryTicketService>();
+        services.AddScoped<IDocumentDeliveryTicketHandler>(sp => sp.GetRequiredService<DocumentDeliveryTicketService>());
         services.AddScoped<CrmDocumentCopyAppService>();
         services.AddScoped<CustomerDocumentsAppService>();
         services.AddScoped<ICustomerOtpChallengeRepository, CustomerOtpChallengeRepository>();

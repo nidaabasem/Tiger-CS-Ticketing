@@ -2667,6 +2667,13 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                     b.Property<bool>("IsOriginatingInteraction")
                         .HasColumnType("bit");
 
+                    b.Property<DateTime?>("LastCustomerInteractionAtUtc")
+                        .IsConcurrencyToken()
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid?>("LastCustomerInteractionReportedByEmployeeId")
+                        .HasColumnType("uniqueidentifier");
+
                     b.Property<byte>("Source")
                         .HasColumnType("tinyint");
 
@@ -2681,6 +2688,9 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                         .HasFilter("[AwaitingCustomerReplySinceUtc] IS NOT NULL");
 
                     b.HasIndex(new[] { "HandledByUserId" }, "IX_TicketInteractions_HandledByUserId");
+
+                    b.HasIndex(new[] { "LastCustomerInteractionAtUtc" }, "IX_TicketInteractions_LastCustomerInteractionAtUtc")
+                        .HasFilter("[LastCustomerInteractionAtUtc] IS NOT NULL");
 
                     b.HasIndex(new[] { "TicketId" }, "IX_TicketInteractions_TicketId");
 

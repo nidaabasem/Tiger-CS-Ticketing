@@ -41,6 +41,16 @@ public sealed class CrmDocumentDeliveryRepository(TigerCsDbContext dbContext) : 
             .OrderByDescending(r => r.UpdatedAtUtc)
             .FirstOrDefaultAsync(cancellationToken);
 
+    public Task<int> CountInFlightForSessionAsync(
+        Guid verificationSessionId, long excludingRequestId, DateTime activeSinceUtc, CancellationToken cancellationToken = default) =>
+        dbContext.CrmDocumentDeliveryRequests.CountAsync(
+            r => r.Origin == DocumentDeliveryOrigin.GenesysVerifiedSession
+                && r.VerificationSessionId == verificationSessionId
+                && r.CrmDocumentDeliveryRequestId != excludingRequestId
+                && (r.Status == DocumentDeliveryStatus.InProgress || r.Status == DocumentDeliveryStatus.Dispatching)
+                && r.UpdatedAtUtc >= activeSinceUtc,
+            cancellationToken);
+
     public async Task AddAsync(CrmDocumentDeliveryRequest request, CancellationToken cancellationToken = default) =>
         await dbContext.CrmDocumentDeliveryRequests.AddAsync(request, cancellationToken);
 }

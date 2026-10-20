@@ -42,6 +42,12 @@ public interface IGenesysConversationRepository
     /// </summary>
     Task<IReadOnlyList<long>> ListAwaitingReplyOlderThanAsync(DateTime cutoffUtc, int batchSize, CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Ids of live, not-yet-inactivity-closed interactions whose last tracked customer interaction is older than <paramref name="cutoffUtc"/>,
+    /// oldest first, at most <paramref name="batchSize"/>. Candidates only — the closing service re-checks each one.
+    /// </summary>
+    Task<IReadOnlyList<long>> ListCustomerInactiveOlderThanAsync(DateTime cutoffUtc, int batchSize, CancellationToken cancellationToken = default);
+
     /// <summary>Every transcript message of one interaction, in <c>Sequence</c> order.</summary>
     Task<IReadOnlyList<TicketInteractionMessage>> ListMessagesAsync(long ticketInteractionId, CancellationToken cancellationToken = default);
 

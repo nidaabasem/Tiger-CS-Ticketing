@@ -150,6 +150,7 @@ endpoint and no document download endpoint. The same service account must own th
 | `documentType` | **yes** | `Contract`, `ReservationForm`, `UnitLayout` or `RegistrationReceipt` (case-insensitive; `Reservation Form`, `unit-layout` are accepted). |
 | `crmUnitId` | no | If sent it must equal the verified unit, otherwise 403 `RECORD_OWNERSHIP_MISMATCH`. Never used to look up another unit. |
 | `crmLeadId` | no | Accepted only when it equals the lead the session was verified for; anything else — another customer's lead or the same customer's other unit — is 403 `RECORD_OWNERSHIP_MISMATCH` with no CRM call. Normally omit it. |
+| `conversationId` | no | The Genesys conversation the ticket was created under. Names the ticket whose document workflow this request ends (see *Ticket closure* below). Omitted: the ticket that consumed the verification session is used, if any; with neither, no ticket is touched. |
 | `recordId` | no | The document the customer chose after a `choiceKind: "Document"` answer (CRM's `attachmentId`). Must be one CRM just listed for that customer and lead, otherwise 403 `RECORD_OWNERSHIP_MISMATCH`. |
 | `deliveryChannel` | no | `Email` (default) — documents are delivered by email only. `WhatsApp`/`Sms` → 501 (see above). (The one-time *code* can additionally be sent by SMS: `Sms-Verification-Channel.md`.) |
 
@@ -350,3 +351,19 @@ Email delivery needs `EmailNotifications:Enabled = true` with the `Smtp` provide
 Without it the answers are `OTP_DELIVERY_FAILED` / `DELIVERY_FAILED` — nothing pretends to be sent.
 
 Migrations: `AddChatbotInactivityAndCrmDocumentCopies`, `AddCustomerOtpVerification` (`AddCustomerOtpVerification.sql` at the repo root).
+
+## Ticket closure
+
+The outcome of a request closes the ticket named by `conversationId` (or the one that consumed the session) through the normal
+lifecycle (Resolved → Closed, status history, audit, notification). Only a ticket that is still open, was started from the verified
+contact's phone number and is not bound to another CRM customer is ever touched.
+
+| Outcome | Ticket |
+| --- | --- |
+| `Sent` | Closed as **Resolved**: `Requested document successfully sent via email.` |
+| Delivery failure (`DeliveryFailed`, `DocumentUnavailable`) | Closed as **Cancelled**: `Document delivery failed — [actual reason]`; the code, document type and time are in the status history/audit. Never transferred to the Call Center. |
+| `DeliveryUnconfirmed` | Not closed. The uncertain outcome is recorded on the ticket; the document is never resent. |
+| `SelectionRequired`, `Queued`, refusals before delivery | Nothing happens; the workflow stays open. |
+
+While another request of the same verification session is still being processed, the ticket is not closed; the request that finishes
+last closes it. A failure that is not the last is recorded on the ticket and does not close it.

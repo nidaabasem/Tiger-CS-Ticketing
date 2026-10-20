@@ -60,5 +60,13 @@ public interface ICrmDocumentDeliveryRepository
         int crmCustomerId, int crmLeadId, CrmDocumentType type, string crmRecordId, DocumentDeliveryChannel channel,
         DateTime sinceUtc, CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// How many OTHER requests of this verification session are still being processed — claimed or handed to the channel
+    /// with their last update at or after <paramref name="activeSinceUtc"/> (older ones are abandoned, not in flight). Decides whether
+    /// the conversation's document workflow is complete.
+    /// </summary>
+    Task<int> CountInFlightForSessionAsync(
+        Guid verificationSessionId, long excludingRequestId, DateTime activeSinceUtc, CancellationToken cancellationToken = default);
+
     Task AddAsync(CrmDocumentDeliveryRequest request, CancellationToken cancellationToken = default);
 }

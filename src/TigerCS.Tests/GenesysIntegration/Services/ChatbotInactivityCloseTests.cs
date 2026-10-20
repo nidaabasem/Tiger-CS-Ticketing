@@ -6,6 +6,12 @@ using TigerCS.Tests.GenesysIntegration.Fakes;
 namespace TigerCS.Tests.GenesysIntegration.Services;
 
 /// <summary>
+/// <para>
+/// <b>Scope of this class:</b> the ORIGINAL bot-prompt rule (<c>awaitingCustomerReply</c>, 5 minutes). Its tickets are created in the Call
+/// Center department, which the Website/Chatbot "customer inactive" rule excludes — so they are governed by this rule only. The
+/// Website/Chatbot rule is covered in <see cref="WebsiteChatbotInactivityTests"/>.
+/// </para>
+///
 /// Chatbot customer-inactivity closure: the timer's lifecycle (start, repeat,
 /// cancel, restart), the timeout job's re-checks (human assignment, requested
 /// handoff, bot connection failure, ended conversation), the reply/timeout
@@ -28,7 +34,7 @@ public class ChatbotInactivityCloseTests
         string conversationId = "conv-bot", int? timeoutMinutes = null)
     {
         var f = new GenesysServiceFixture(inactivityTimeoutMinutes: timeoutMinutes);
-        var (department, _) = f.SeedGenesysDepartment("Customer Service", "CS");
+        var (department, _) = f.SeedGenesysDepartment("Call Center", "CC");
         var result = await f.Ingestion.IngestAsync(
             ServiceAccount,
             new GenesysInquiryDto(
@@ -199,7 +205,7 @@ public class ChatbotInactivityCloseTests
 
         // A brand-new closer over the same stores — as after an API restart or deploy.
         var restarted = new ChatbotInactivityCloseAppService(
-            f.Options, f.Conversations, f.Tickets, f.Handoffs, f.Lifecycle, f.UnitOfWork, f.Clock);
+            f.Options, f.Conversations, f.Tickets, f.Handoffs, f.Departments, f.Lifecycle, f.UnitOfWork, f.Clock);
 
         var due = await restarted.ListDueAsync();
         Assert.Equal(ChatbotInactivityCloseOutcome.Closed, await restarted.TryCloseAsync(Assert.Single(due)));
@@ -338,8 +344,7 @@ public class ChatbotInactivityCloseTests
         await SetAwaitingAsync(f, ticketId, conv, true);
 
         var ticket = f.Tickets.All.Single();
-        ticket.AssignTo(Guid.NewGuid());
-        ticket.ChangeStatus(TicketStatus.InProgress);
+        ticket.AssignTo(Guid.NewGuid()); // a Call Center ticket already started InProgress
         ticket.Resolve(ResolutionOutcome.Resolved, null);
         ticket.Close();
         f.Clock.Advance(TimeSpan.FromMinutes(30));

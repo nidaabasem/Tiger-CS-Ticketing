@@ -164,13 +164,20 @@ public sealed record GenesysConversationEndResponse(
 /// <param name="Routing">Set when the conversation moved to another queue, or an agent connected / it was transferred. Same ticket, always.</param>
 /// <param name="CustomerConfirmation">Set when the customer explicitly confirmed the issue is resolved. <b>Record-only — never resolves or closes the ticket.</b></param>
 /// <param name="RequestType">Set when the bot has identified the request type (initially missing, or later in the conversation). Validated; then the request type's department routing, automatic assignment and SLA policy are applied without restarting the SLA clock. Repeating the same one changes nothing; a different one than the ticket already has is refused with 409.</param>
+/// <param name="CustomerActive">
+/// <c>true</c> = the customer just did something in the conversation (sent a message, answered the bot). It restarts the Website/Chatbot
+/// inactivity clock: such a ticket closes automatically once the customer has done nothing for more than
+/// <c>Genesys:CustomerInactivityTimeoutMinutes</c> (default 10), counted from the LAST interaction, not from ticket creation. Send it on
+/// every inbound customer message — TigerCS cannot see messages Genesys does not report. <c>awaitingCustomerReply: false</c> also counts.
+/// <b>Omit it</b> (or send false) to change nothing.
+/// </param>
 /// <param name="AwaitingCustomerReply">
 /// Chatbot inactivity timer. <c>true</c> = the chatbot just asked the customer
 /// something and is waiting for the reply: TigerCS starts a persistent timer
 /// (server clock). Repeating <c>true</c> while the timer runs changes nothing — a retried
 /// webhook never restarts it. <c>false</c> = the customer replied: the timer is cancelled.
 /// Send <c>true</c> again with the chatbot's next question to start a new one. If the customer
-/// stays silent for more than <c>Genesys:CustomerInactivityTimeoutMinutes</c> (default 5), a
+/// stays silent for more than <c>Genesys:AwaitingReplyTimeoutMinutes</c> (default 5) — on tickets the Website/Chatbot "customer inactive" rule does not track (voice, Call Center) — a
 /// background job closes the ticket as a customer-inactivity closure — unless a human has been
 /// requested or assigned, or the conversation ended, in which case no timer runs.
 /// <b>Omit it</b> to leave the timer as it is.
@@ -185,7 +192,8 @@ public sealed record GenesysTicketUpdateRequest(
     GenesysRoutingPart? Routing = null,
     GenesysCustomerConfirmationPart? CustomerConfirmation = null,
     bool? AwaitingCustomerReply = null,
-    GenesysRequestTypePart? RequestType = null);
+    GenesysRequestTypePart? RequestType = null,
+    bool? CustomerActive = null);
 
 /// <summary>
 /// The customer explicitly confirmed, during the interaction, that the issue
@@ -496,7 +504,8 @@ internal static class GenesysContractMapper
                 request.CustomerConfirmation.ConfirmedAtUtc,
                 Absent(request.CustomerConfirmation.Note)),
         request.AwaitingCustomerReply,
-        Map(request.RequestType));
+        Map(request.RequestType),
+        request.CustomerActive);
 
     private static GenesysRequestTypeDto? Map(GenesysRequestTypePart? part) =>
         part is null ? null : new GenesysRequestTypeDto(part.RequestTypeId, Absent(part.Name));

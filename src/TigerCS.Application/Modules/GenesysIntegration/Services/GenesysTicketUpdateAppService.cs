@@ -1,6 +1,7 @@
 using TigerCS.Application.Abstractions;
 using TigerCS.Application.Modules.GenesysIntegration.Abstractions;
 using TigerCS.Application.Modules.GenesysIntegration.Dto;
+using TigerCS.Application.Modules.IdentityAndAccess.Abstractions;
 using TigerCS.Application.Modules.Ticketing.Abstractions;
 using TigerCS.Domain.Modules.Ticketing;
 
@@ -53,6 +54,7 @@ public sealed class GenesysTicketUpdateAppService(
     GenesysOptions options,
     IGenesysConversationRepository conversationRepository,
     ITicketRepository ticketRepository,
+    IDepartmentRepository departmentRepository,
     ITicketAgentHandoffRepository handoffRepository,
     ITicketingUnitOfWork unitOfWork,
     GenesysConversationEndAppService conversationEndAppService,
@@ -297,6 +299,8 @@ public sealed class GenesysTicketUpdateAppService(
             await RecordCustomerConfirmationAsync(callerEmployeeId, ticket, conversationId, confirmation, cancellationToken);
         }
 
+        await ApplyCustomerActivityAsync(callerEmployeeId, ticket, interaction, request, cancellationToken);
+
         var timerNote = await ApplyAwaitingCustomerReplyAsync(callerEmployeeId, ticket, interaction, request, cancellationToken);
 
         // The handoff state is reported on EVERY update, not only on one that
@@ -328,10 +332,47 @@ public sealed class GenesysTicketUpdateAppService(
             Classification: classification);
     }
 
-    private DateTime? InactivityDeadline(TicketInteraction interaction) =>
-        interaction.AwaitingCustomerReplySinceUtc is { } since && options.CustomerInactivityTimeout is { } timeout
-            ? since + timeout
-            : null;
+    private DateTime? InactivityDeadline(TicketInteraction interaction)
+    {
+        var deadlines = new List<DateTime>(2);
+        if (interaction.LastCustomerInteractionAtUtc is { } last && options.CustomerInactivityTimeout is { } timeout)
+        {
+            deadlines.Add(last + timeout);
+        }
+        else if (interaction.AwaitingCustomerReplySinceUtc is { } since && options.AwaitingReplyTimeout is { } awaitingTimeout)
+        {
+            deadlines.Add(since + awaitingTimeout);
+        }
+
+        return deadlines.Count == 0 ? null : deadlines.Min();
+    }
+
+    /// <summary>
+    /// The customer did something (<c>customerActive: true</c>, or <c>awaitingCustomerReply: false</c> — "the customer replied"): restart
+    /// the Website/Chatbot inactivity clock from now. Recorded only for a live Website/Chatbot conversation whose ticket is still open
+    /// and not human-managed; otherwise it is a no-op. A repeat inside the same instant changes nothing.
+    /// </summary>
+    private async Task ApplyCustomerActivityAsync(
+        Guid callerEmployeeId, Ticket ticket, TicketInteraction interaction, GenesysTicketUpdateDto request, CancellationToken cancellationToken)
+    {
+        if (request.CustomerActive != true && request.AwaitingCustomerReply != false)
+        {
+            return;
+        }
+
+        if (!interaction.IsWebsiteOrChatbotConversation
+            || ticket.TicketStatus is TicketStatus.Closed or TicketStatus.Resolved
+            || ticket.CurrentOwnerEmployeeId is not null
+            || await CustomerInactivityScope.IsCallCenterTicketAsync(ticket, departmentRepository, cancellationToken))
+        {
+            return;
+        }
+
+        if (interaction.RecordCustomerInteraction(timeProvider.GetUtcNow().UtcDateTime, callerEmployeeId))
+        {
+            await unitOfWork.SaveChangesAsync(cancellationToken);
+        }
+    }
 
     /// <summary>
     /// The chatbot inactivity timer's only writer on the request path.
@@ -363,6 +404,12 @@ public sealed class GenesysTicketUpdateAppService(
 
         string? note = null;
         var start = false;
+
+        if (humanFollowUp && interaction.StopTrackingCustomerInteraction())
+        {
+            // A human is requested or pending: the conversation is no longer the bot's to close for silence.
+            await unitOfWork.SaveChangesAsync(cancellationToken);
+        }
 
         if (humanFollowUp)
         {
