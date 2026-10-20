@@ -28,6 +28,13 @@ public sealed record CrmDocumentCopyRequestDto(
     /// </summary>
     [JsonConverter(typeof(LenientNullableIntConverter))]
     public int? CrmLeadId { get; init; }
+
+    /// <summary>
+    /// Optional. The Genesys conversation this request belongs to. When sent it names the ticket whose document workflow the
+    /// outcome closes (<c>Sent</c> → closed as resolved; a delivery failure → closed with the failure reason). Omitted, the ticket
+    /// that consumed the verification session is used, if any; with neither, no ticket is touched.
+    /// </summary>
+    public string? ConversationId { get; init; }
 }
 
 /// <summary>

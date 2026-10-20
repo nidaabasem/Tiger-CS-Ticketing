@@ -4,6 +4,7 @@ using TigerCS.Application.Modules.IdentityAndAccess.Abstractions;
 using TigerCS.Application.Modules.Ticketing.Abstractions;
 using TigerCS.Application.Modules.Notifications;
 using TigerCS.Application.Modules.Notifications.Dto;
+using TigerCS.Application.Modules.Reporting.Services;
 using TigerCS.Application.Modules.SlaAndEscalation.Services;
 using TigerCS.Application.Modules.Ticketing.Dto;
 using TigerCS.Application.Modules.WorkflowConfiguration.Abstractions;
@@ -260,6 +261,13 @@ public sealed class TicketCreationAppService(
                     ticketNumber, category.DepartmentId, category.CategoryId, priority!.PriorityId, request.RequestSummary, now,
                     request.ManualProjectName, request.ManualUnitNumber)
             };
+
+            // Call Center tickets are worked from the start. Keyed off the department the ticket originates in (the same
+            // department it is created in, so OriginatingDepartmentId is untouched); every other department keeps Open.
+            if (string.Equals(department.Code, TeamPerformanceAppService.CallCenterDepartmentCode, StringComparison.OrdinalIgnoreCase))
+            {
+                ticket.StartInProgressAtCreation();
+            }
 
             if (requestType is not null && workflowVersion is not null)
             {

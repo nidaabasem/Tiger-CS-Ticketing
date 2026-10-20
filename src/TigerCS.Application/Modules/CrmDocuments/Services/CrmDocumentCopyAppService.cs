@@ -82,7 +82,8 @@ public sealed partial class CrmDocumentCopyAppService(
     ICustomerVerificationUnitOfWork unitOfWork,
     IAuditEntryWriter auditWriter,
     TimeProvider timeProvider,
-    ILogger<CrmDocumentCopyAppService> logger)
+    ILogger<CrmDocumentCopyAppService> logger,
+    IDocumentDeliveryTicketHandler? ticketHandler = null)
 {
     public const string AuditEntityType = "CrmDocumentDelivery";
 
@@ -240,7 +241,9 @@ public sealed partial class CrmDocumentCopyAppService(
             callerEmployeeId, key, type, requestedRecordId, channel, existing, now,
             new DeliveryTarget(
                 DeliveryScope.ForSession(sessionId), customerId, lead.LeadId, lead.UnitNumber, buyer.Customer.Email,
-                buyer.Customer.FullNameEnglish ?? contact.DisplayName ?? string.Empty, $"VerificationSessionId={sessionId}"),
+                buyer.Customer.FullNameEnglish ?? contact.DisplayName ?? string.Empty, $"VerificationSessionId={sessionId}",
+                Ticket: new DocumentDeliveryTicketContext(
+                    callerEmployeeId, sessionId, request.ConversationId, session.ConsumedByTicketId, customerId, contact.ContactChannel)),
             cancellationToken);
     }
 
@@ -355,7 +358,10 @@ public sealed partial class CrmDocumentCopyAppService(
     /// <param name="DisplayName">The greeting name.</param>
     /// <param name="Email">CRM's email for this customer — never anything the caller supplied.</param>
     /// <param name="AuditContext">Written into the audit entry: which proof the send rode on.</param>
-    private sealed record DeliveryTarget(DeliveryScope Scope, int CustomerId, int LeadId, string? UnitNumber, string? Email, string DisplayName, string AuditContext);
+    /// <param name="Ticket">Genesys only: how to find the ticket this request's outcome closes. Null for the agent desk, which never touches tickets.</param>
+    private sealed record DeliveryTarget(
+        DeliveryScope Scope, int CustomerId, int LeadId, string? UnitNumber, string? Email, string DisplayName, string AuditContext,
+        DocumentDeliveryTicketContext? Ticket = null);
 
     /// <summary>
     /// Steps shared by every door: only a record CRM lists for this customer and lead is selected; the send is claimed
@@ -363,6 +369,54 @@ public sealed partial class CrmDocumentCopyAppService(
     /// credential; exactly one email goes out; the outcome is recorded and audited.
     /// </summary>
     private async Task<CrmDocumentCopyResult> DeliverAsync(
+        Guid callerEmployeeId, string key, CrmDocumentType type, string? requestedRecordId,
+        DocumentDeliveryChannel channel, CrmDocumentDeliveryRequest? existing, DateTime now, DeliveryTarget target,
+        CancellationToken cancellationToken)
+    {
+        var result = await DeliverCoreAsync(callerEmployeeId, key, type, requestedRecordId, channel, existing, now, target, cancellationToken);
+        await ApplyToTicketAsync(target, result, cancellationToken);
+        return result;
+    }
+
+    /// <summary>
+    /// Tells the request's ticket how the document workflow ended. Sent and a real failure may close it; selection, queueing,
+    /// conflicts, ownership refusals and a "nothing was started, retry" answer never do. (An unconfirmed outcome is reported where it
+    /// is first decided, so a later replay of it cannot add a second entry.)
+    /// </summary>
+    private async Task ApplyToTicketAsync(DeliveryTarget target, CrmDocumentCopyResult result, CancellationToken cancellationToken)
+    {
+        if (ticketHandler is null || target.Ticket is null)
+        {
+            return;
+        }
+
+        DocumentDeliveryTicketEvent? kind = result.Status switch
+        {
+            CrmDocumentCopyStatus.Sent => DocumentDeliveryTicketEvent.Sent,
+            CrmDocumentCopyStatus.DeliveryFailed or CrmDocumentCopyStatus.DocumentUnavailable
+                when result.Code != CrmDocumentCodes.DeliveryStateUnavailable => DocumentDeliveryTicketEvent.Failed,
+            _ => null
+        };
+
+        if (kind is { } value)
+        {
+            await ticketHandler.HandleAsync(
+                target.Ticket,
+                new DocumentDeliveryTicketUpdate(value, result.DocumentType, result.RecordId, result.Code, result.Message, result.DeliveryRequestId),
+                cancellationToken);
+        }
+    }
+
+    private Task NotifyUnconfirmedAsync(DeliveryTarget target, CrmDocumentCopyResult result, CancellationToken cancellationToken) =>
+        ticketHandler is null || target.Ticket is null
+            ? Task.CompletedTask
+            : ticketHandler.HandleAsync(
+                target.Ticket,
+                new DocumentDeliveryTicketUpdate(
+                    DocumentDeliveryTicketEvent.Unconfirmed, result.DocumentType, result.RecordId, result.Code, result.Message, result.DeliveryRequestId),
+                cancellationToken);
+
+    private async Task<CrmDocumentCopyResult> DeliverCoreAsync(
         Guid callerEmployeeId, string key, CrmDocumentType type, string? requestedRecordId,
         DocumentDeliveryChannel channel, CrmDocumentDeliveryRequest? existing, DateTime now, DeliveryTarget target,
         CancellationToken cancellationToken)
@@ -546,11 +600,18 @@ public sealed partial class CrmDocumentCopyAppService(
         {
             // The sender threw: whether the provider had already accepted the message is unknown. Not retried automatically.
             logger.LogError(ex, "Document delivery threw for request {DeliveryRequestId}; the outcome is unknown, so it is left unconfirmed and will not be resent.", claim.CrmDocumentDeliveryRequestId);
-            return Unconfirmed(claim, masked);
+            var thrown = Unconfirmed(claim, masked);
+            await NotifyUnconfirmedAsync(target, thrown, CancellationToken.None);
+            return thrown;
         }
 
         if (delivery.Outcome != DocumentDeliveryOutcome.Sent)
         {
+            if (target.Ticket is not null)
+            {
+                target.Ticket.ProviderFailureCode = delivery.Code;
+            }
+
             var retryable = delivery.Outcome == DocumentDeliveryOutcome.TransientFailure;
             try
             {
@@ -575,7 +636,9 @@ public sealed partial class CrmDocumentCopyAppService(
         var auditAfter = $"DocumentType={type};CrmCustomerId={target.CustomerId};CrmLeadId={target.LeadId};RecordId={selected.RecordId};Channel={channel};Destination={masked}" + (delivery.TestRedirected ? ";TestRedirect=true" : string.Empty) + $";{target.AuditContext}";
         if (!await RecordSentAsync(claim, callerEmployeeId, auditAfter))
         {
-            return Unconfirmed(claim, masked);
+            var unrecorded = Unconfirmed(claim, masked);
+            await NotifyUnconfirmedAsync(target, unrecorded, CancellationToken.None);
+            return unrecorded;
         }
 
         return SentResult(claim, duplicate: false);

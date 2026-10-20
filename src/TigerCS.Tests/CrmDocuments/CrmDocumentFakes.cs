@@ -83,8 +83,16 @@ public sealed class FakeDocumentChannelSender(DocumentDeliveryChannel channel = 
     /// <summary>Runs inside the send — lets a test fire a second request while the first is still in flight.</summary>
     public Func<Task>? DuringSend { get; set; }
 
+    /// <summary>When set the provider call throws: whether it accepted the message is then unknown.</summary>
+    public Exception? ThrowOnSend { get; set; }
+
     public async Task<DocumentDeliveryResult> SendAsync(DocumentDeliveryMessage message, CancellationToken cancellationToken = default)
     {
+        if (ThrowOnSend is not null)
+        {
+            throw ThrowOnSend;
+        }
+
         if (DuringSend is not null)
         {
             await DuringSend();
@@ -127,6 +135,14 @@ public sealed class FakeCrmDocumentDeliveryRepository : ICrmDocumentDeliveryRepo
     private static bool Recent(CrmDocumentDeliveryRequest r, DateTime sinceUtc) =>
         (r.Status == DocumentDeliveryStatus.Sent && r.SentAtUtc >= sinceUtc)
         || (r.Status == DocumentDeliveryStatus.Dispatching && r.UpdatedAtUtc >= sinceUtc);
+
+    public Task<int> CountInFlightForSessionAsync(
+        Guid verificationSessionId, long excludingRequestId, DateTime activeSinceUtc, CancellationToken cancellationToken = default) =>
+        Task.FromResult(All.Count(r => r.CrmDocumentDeliveryRequestId != 0
+            && r.Origin == DocumentDeliveryOrigin.GenesysVerifiedSession && r.VerificationSessionId == verificationSessionId
+            && r.CrmDocumentDeliveryRequestId != excludingRequestId
+            && r.Status is DocumentDeliveryStatus.InProgress or DocumentDeliveryStatus.Dispatching
+            && r.UpdatedAtUtc >= activeSinceUtc));
 
     public Task AddAsync(CrmDocumentDeliveryRequest request, CancellationToken cancellationToken = default)
     {
@@ -243,7 +259,8 @@ public sealed class DocumentServiceFixture
 
     public DocumentServiceFixture(
         VerificationMethod method = VerificationMethod.Otp, bool confirm = true, Guid? owner = null,
-        string contactChannel = VerifiedPhone, string? customerEmail = "customer@example.com", bool serverProof = true)
+        string contactChannel = VerifiedPhone, string? customerEmail = "customer@example.com", bool serverProof = true,
+        IDocumentDeliveryTicketHandler? ticketHandler = null)
     {
         UnitOfWork = new CommittingUnitOfWork(Deliveries);
         Unit = Units.Seed("CRM-UNIT-1001", "1204", "Tiger Tower A");
@@ -261,7 +278,7 @@ public sealed class DocumentServiceFixture
         Service = new CrmDocumentCopyAppService(
             Options, Sessions, Units, Contacts, Gateway,
             new CrmBuyerLookupAppService(Buyers, NullLogger<CrmBuyerLookupAppService>.Instance),
-            Deliveries, [Email], UnitOfWork, Audit, Clock, NullLogger<CrmDocumentCopyAppService>.Instance);
+            Deliveries, [Email], UnitOfWork, Audit, Clock, NullLogger<CrmDocumentCopyAppService>.Instance, ticketHandler);
     }
 
     public static CrmBuyerUnitDto BuyerUnit(int leadId, int unitId, string unitNumber, string project) =>
