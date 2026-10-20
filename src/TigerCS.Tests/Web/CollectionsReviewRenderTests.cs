@@ -104,12 +104,83 @@ public sealed class CollectionsReviewRenderTests
         Assert.Contains("372d81d7-6d2d-4b9e-8f09-cf2262aecfdf", html);
     }
 
+    [Fact]
+    public async Task TheDispatchPageShowsEachBatchsStage_CampaignName_Id_AndWhetherItWasReused()
+    {
+        using var factory = Factory(new Api()); using var client = factory.CreateClient();
+        var html = await (await client.GetAsync($"/Collections/Review?dispatch={Api.DispatchId}")).Content.ReadAsStringAsync();
+        Assert.Contains("data-campaign-id>cmp-123<", html);
+        Assert.Contains("data-campaign-action>Reused existing<", html);
+        Assert.Contains("Current month reminder - day 14", html);
+        Assert.Contains("Legal notice - days 12 and 14", html);                       // a batch whose campaign could not be resolved still names its stage
+        Assert.Contains("The request timed out.", html);                                // and shows why
+    }
+
+    [Fact]
+    public async Task TheSendHistory_ListsStage_CampaignName_Id_CreatedOrReused_AndDispatchStatus()
+    {
+        using var factory = Factory(new Api()); using var client = factory.CreateClient();
+        var html = await (await client.GetAsync("/Collections/Review")).Content.ReadAsStringAsync();
+        var history = System.Text.RegularExpressions.Regex.Match(html, "data-send-history.*?</table>", System.Text.RegularExpressions.RegexOptions.Singleline).Value;
+        foreach (var header in new[] { "Stage", "Genesys campaign name", "Genesys campaign ID", "Created / reused", "Dispatch status" }) Assert.Contains(header, history);
+        Assert.Equal(2, System.Text.RegularExpressions.Regex.Matches(history, "data-history-row").Count);
+        Assert.Contains("<code>cmp-123</code>", history); Assert.Contains("Reused existing", history); Assert.Contains("Completed with errors", history);
+    }
+
+    [Fact]
+    public async Task TheFilterBar_OffersDueOverdueBoth_AndKeepsTheChoice()
+    {
+        using var factory = Factory(new Api()); using var client = factory.CreateClient();
+        var html = await (await client.GetAsync("/Collections/Review?dueStatus=Overdue&reminderType=LegalNotice")).Content.ReadAsStringAsync();
+        Assert.Contains("name=\"dueStatus\"", html);
+        Assert.Contains("<option value=\"Overdue\" selected=\"selected\">Overdue</option>", html);
+        Assert.Contains("name=\"DueStatus\" value=\"Overdue\"", html);                 // travels with the selection form that approval re-resolves
+    }
+
+    [Fact]
+    public async Task TheApprovalSummary_ShowsStage_ExactCampaignName_Project_Status_Dates_Count_AndTotal()
+    {
+        using var factory = Factory(new Api()); using var client = factory.CreateClient();
+        var page = await (await client.GetAsync("/Collections/Review")).Content.ReadAsStringAsync();
+        var token = System.Net.WebUtility.HtmlDecode(System.Text.RegularExpressions.Regex.Match(page, "name=\"__RequestVerificationToken\"[^>]*value=\"([^\"]+)\"").Groups[1].Value);
+        var post = await client.PostAsync("/Collections/Review?handler=Summary", new FormUrlEncodedContent(new Dictionary<string, string>
+        {
+            ["__RequestVerificationToken"] = token, ["SelectionMode"] = "AllMatching", ["Project"] = "TP140", ["DueStatus"] = "Overdue",
+            ["DueFrom"] = "2026-09-01", ["DueTo"] = "2026-09-30", ["ReminderType"] = "LegalNotice"
+        }));
+        var html = await post.Content.ReadAsStringAsync();
+        Assert.True(post.IsSuccessStatusCode, $"HTTP {(int)post.StatusCode}");
+        Assert.Contains("data-selection-snapshot", html);
+        var snapshot = System.Text.RegularExpressions.Regex.Match(html, "data-selection-snapshot.*?</dl>", System.Text.RegularExpressions.RegexOptions.Singleline).Value;
+        Assert.Contains("data-snapshot-stage>Legal notice - days 12 and 14<", snapshot);
+        Assert.Contains("data-snapshot-campaign>Legal notice - days 12 and 14<", snapshot);   // the campaign name is the stage name, character for character
+        Assert.Contains("data-snapshot-project>TP140<", snapshot);
+        Assert.Contains("data-snapshot-status>Overdue<", snapshot);
+        Assert.Contains("data-snapshot-dates>2026-09-01 to 2026-09-30<", snapshot);
+        Assert.Contains("data-snapshot-count>2<", snapshot);
+        Assert.Contains("data-snapshot-total>AED 1,234.50<", snapshot);
+    }
+
     private sealed class Api : HttpMessageHandler
     {
         public static readonly Guid DispatchId = Guid.Parse("11111111-2222-3333-4444-555555555555");
         public ReviewRunDto Run { get; set; } = CollectionsReviewRenderTests.Run();
         public string LastRecordsQuery { get; private set; } = "";
         public int Refreshes { get; private set; }
+
+        private static DispatchDto Dispatch()
+        {
+            var batches = new[]
+                {
+                    new DispatchBatchDto(1, "CurrentMonth", "79e5ae74-ea6e-4941-b76d-45ddf487d8d1", 1, 1000, "Uploaded", 1, 200, 1000, null, Read, Read, null, null,
+                        "Current month reminder - day 14", "Current month reminder - day 14", "cmp-123", "ReusedExisting"),
+                    new DispatchBatchDto(2, "LegalNotice", "372d81d7-6d2d-4b9e-8f09-cf2262aecfdf", 2, 20, "UnknownOutcome", 1, null, 0, "The request timed out.", Read, Read, null, null,
+                        "Legal notice - days 12 and 14", null, null, null)
+                };
+                var dispatch = new DispatchDto(DispatchId, "CompletedWithErrors", "Some batches have an unconfirmed outcome.", Guid.NewGuid(), Read, Read, Read, 1020, 1000, 0, 0, 20,
+                    new Dictionary<string, decimal> { ["AED"] = 510000m }, batches, DispatchService.UploadDisclaimer);
+            return dispatch;
+        }
 
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
@@ -128,17 +199,15 @@ public sealed class CollectionsReviewRenderTests
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
                 { Content = JsonContent.Create(new ReviewPageDto(Run, new ReviewCountsDto(3, 1, 1, 0, 1, 1), 1, 25, 3, items, 250m)) });
             }
+            if (path.EndsWith("/selection/summary"))
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = JsonContent.Create(new SelectionSummaryDto(7, 2, "FP", new Dictionary<string, decimal> { ["AED"] = 1234.5m },
+                    new Dictionary<string, int> { ["LegalNotice"] = 2 }, 0, 0, 1, 50,
+                    [new SelectionContactDto("K1", "LegalNotice", "A", "+971500000001", "a@x.test", "TP140-1", 600m, "AED", new DateOnly(2026, 9, 10), false),
+                     new SelectionContactDto("K2", "LegalNotice", "B", "+971500000002", "b@x.test", "TP140-2", 634.5m, "AED", new DateOnly(2026, 9, 11), false)], [])) });
+            if (path.EndsWith("/dispatches") && request.Method == HttpMethod.Get)
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = JsonContent.Create(new[] { Dispatch() }) });
             if (path.Contains("/dispatches/"))
-            {
-                var batches = new[]
-                {
-                    new DispatchBatchDto(1, "CurrentMonth", "79e5ae74-ea6e-4941-b76d-45ddf487d8d1", 1, 1000, "Uploaded", 1, 200, 1000, null, Read, Read, null, null),
-                    new DispatchBatchDto(2, "LegalNotice", "372d81d7-6d2d-4b9e-8f09-cf2262aecfdf", 2, 20, "UnknownOutcome", 1, null, 0, "The request timed out.", Read, Read, null, null)
-                };
-                var dispatch = new DispatchDto(DispatchId, "CompletedWithErrors", "Some batches have an unconfirmed outcome.", Guid.NewGuid(), Read, Read, Read, 1020, 1000, 0, 0, 20,
-                    new Dictionary<string, decimal> { ["AED"] = 510000m }, batches, DispatchService.UploadDisclaimer);
-                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = JsonContent.Create(dispatch) });
-            }
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = JsonContent.Create(Dispatch()) });
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));
         }
     }
@@ -146,9 +215,10 @@ public sealed class CollectionsReviewRenderTests
     private sealed class TestAuth(IOptionsMonitor<AuthenticationSchemeOptions> options, ILoggerFactory logger, UrlEncoder encoder)
         : AuthenticationHandler<AuthenticationSchemeOptions>(options, logger, encoder)
     {
+        private static readonly string UserId = Guid.NewGuid().ToString();
         protected override Task<AuthenticateResult> HandleAuthenticateAsync() => Task.FromResult(
             AuthenticateResult.Success(new AuthenticationTicket(new ClaimsPrincipal(new ClaimsIdentity([
-                new Claim(ClaimTypes.NameIdentifier, Guid.NewGuid().ToString()), new Claim(ClaimTypes.Name, "Manager"),
+                new Claim(ClaimTypes.NameIdentifier, UserId), new Claim(ClaimTypes.Name, "Manager"),   // stable: antiforgery tokens are bound to the user
                 new Claim(ClaimTypes.Role, Roles.CsManager)
             ], "Test")), "Test")));
     }

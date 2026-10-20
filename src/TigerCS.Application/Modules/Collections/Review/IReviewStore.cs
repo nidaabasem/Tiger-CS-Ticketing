@@ -111,7 +111,7 @@ public sealed record GenesysSuppressResult(GenesysUploadOutcome Outcome, int? Ht
 /// <summary>A Genesys outbound campaign as far as this integration cares: its id, exact name, the contact list it dials and its status.</summary>
 public sealed record GenesysCampaignRef(string Id, string Name, string? ContactListId, string? Status);
 
-/// <param name="Matches">Every campaign Genesys returned for the name filter (callers still compare names exactly).</param>
+/// <summary>Every campaign Genesys returned for the name filter in <c>Matches</c>; callers still compare names exactly.</summary>
 public sealed record GenesysCampaignLookupResult(GenesysUploadOutcome Outcome, int? HttpStatus, IReadOnlyList<GenesysCampaignRef> Matches, string? Error);
 
 public sealed record GenesysCampaignCreateResult(GenesysUploadOutcome Outcome, int? HttpStatus, GenesysCampaignRef? Campaign, string? Error);

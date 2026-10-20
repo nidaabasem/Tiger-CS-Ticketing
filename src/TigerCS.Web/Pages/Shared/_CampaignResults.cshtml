@@ -13,6 +13,12 @@ else if (Model.Report is { } report)
     <div class="panel">
         @if (report.Snapshot is { } snapshot) { <partial name="_LoadProblem" model="snapshot" /> }
         <partial name="_CrmContactNotice" model="report.Crm" />
+        <ul class="campaign-totals" data-campaign-totals>
+            <li>Eligible customers: <strong data-eligible-count>@((report.TotalCount - report.NotEligibleCount).ToString("N0"))</strong> of @report.TotalCount.ToString("N0") listed</li>
+            @if (report.EligibleTotalAmount is { } qualifying) { <li>Total qualifying amount: <strong data-eligible-total>@(report.Items.FirstOrDefault()?.Currency ?? "AED") @qualifying.ToString("N2", System.Globalization.CultureInfo.InvariantCulture)</strong></li> }
+            <li>Payment status: <strong>@(report.PaymentStatus == "Both" ? "Due and Overdue" : report.PaymentStatus)</strong></li>
+            @if (Model.CampaignName is { } campaignName) { <li>Genesys campaign name when sent: <strong data-campaign-name>@campaignName</strong></li> }
+        </ul>
         @if (report.Snapshot?.OldestSuccessUtc is { } updated) { <p class="receivables-meta" data-updated>Updated @CollectionsDisplay.DubaiTime(updated)</p> }
         @* Exports stay blocked for incomplete or stale data: the buttons only exist when every company is loaded, fresh and covers the dates (the API refuses anyway). *@
         @if (report.CanExportReview && report.Snapshot is not { IsReady: false })
@@ -25,7 +31,7 @@ else if (Model.Report is { } report)
         }
         <div class="table-scroll">
             <table class="table receivables-table campaigns-table">
-                <thead><tr><th>Customer</th><th>Mobile</th><th>Email</th><th>Tower</th><th>Apartment</th><th class="num">Due</th><th class="num">Overdue</th><th class="num">Total</th></tr></thead>
+                <thead><tr><th>Customer</th><th>Mobile</th><th>Email</th><th>Project / Tower</th><th>Unit</th><th class="num">Due</th><th class="num">Overdue</th><th class="num">Total</th></tr></thead>
                 <tbody>
                 @foreach (var row in report.Items)
                 {

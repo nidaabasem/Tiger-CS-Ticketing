@@ -107,6 +107,18 @@ are both scheduled on day 14). Until decided, such records are blocked; no ackno
    whether campaigns run continuously. Until then, keep campaigns inactive or time uploads close to the dialling window.
 8. Revalidation re-reads the company's PACT window (the procedures cannot filter by customer): about a minute per company, in the background job.
 
+## Campaign filters, approval snapshot and history
+
+* **Campaigns page filters:** Stage, Project / Tower, Payment status (Due / Overdue / Both, default Both), From / To date, the *Last 6 months* shortcut, Minimum Total and Search.
+  Month and Year were removed (an old bookmark that still carries `month` + `year` is read as that whole-month range). All filters are applied by the API before paging; the preview,
+  its counts, the eligible-customer count and total qualifying amount, every page and both CSV exports (`paymentStatus` included) use the same parameters.
+* **Payment status** keeps only that status' instalments in a unit's Due / Overdue / Total (Due = inside the current Dubai month, Overdue = before it), so Minimum Total and the totals follow it.
+  The stage eligibility rule is not affected. A single status is always evaluated by the reference (in-memory) engine, never by a data-store engine that does not know the filter.
+* **Review & approve** has a matching *Due / Overdue* filter (`dueStatus`; it narrows the due-date range and travels inside the stored filter), and the *Review & approve* link on Campaigns carries
+  stage, dates and status. The confirmation shows the selected stage, the Genesys campaign name (identical to the stage name), project, status, date range, eligible customers and total. Approval
+  and dispatch re-resolve that same filter (stored as the dispatch's `FilterJson`) and keep the existing fingerprint check and balance revalidation.
+* **Send history** (Review page): per batch the stage name, Genesys campaign name and id, created / reused existing, and the dispatch status.
+
 ## Genesys campaign per stage
 
 When `Collections:GenesysOutbound:Campaign:Enabled` is `true`, each upload batch first resolves a Genesys campaign whose **name is exactly the stage name**

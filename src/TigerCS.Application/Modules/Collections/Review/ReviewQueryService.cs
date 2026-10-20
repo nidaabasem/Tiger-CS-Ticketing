@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using TigerCS.Application.Modules.Collections.Services;
+using TigerCS.Domain.Modules.Collections;
 using TigerCS.Domain.Modules.Collections.Review;
 
 namespace TigerCS.Application.Modules.Collections.Review;
@@ -217,6 +218,16 @@ public sealed class ReviewQueryService(
             dueFrom = dueFrom is { } a && a > first ? a : first;
             dueTo = dueTo is { } b && b < last ? b : last;
             if (dueFrom > dueTo) return (null, "The custom range does not overlap the selected month.");
+        }
+
+        // Due / Overdue / Both: Due = due inside the current Dubai month, Overdue = due before it (the Campaigns rule, CollectionsDueMonth). It narrows the due-date range only,
+        // so it travels inside the filter that approval and dispatch re-resolve, and it never touches validation or the stage rules.
+        if (!CampaignPaymentFilters.TryParse(f.DueStatus, out var dueStatus)) return (null, "Due status must be Due, Overdue or Both.");
+        if (dueStatus != CampaignPaymentFilter.Both)
+        {
+            var monthStart = new DateOnly(clock.BusinessDate.Year, clock.BusinessDate.Month, 1);
+            if (dueStatus == CampaignPaymentFilter.Due) dueFrom = dueFrom is { } d1 && d1 > monthStart ? d1 : monthStart;
+            else dueTo = dueTo is { } d2 && d2 < monthStart.AddDays(-1) ? d2 : monthStart.AddDays(-1);
         }
 
         IReadOnlyList<ReviewPaymentStatus>? statuses;

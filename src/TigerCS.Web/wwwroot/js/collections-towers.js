@@ -4,13 +4,14 @@
         const select = picker.querySelector('[data-tower-select]');
         if (!select || select.dataset.enhanced) return;
         select.dataset.enhanced = 'true';
+        const allText = picker.dataset.allText || 'All towers';
         const options = Array.from(select.options).map(o => ({ value: o.value, label: o.text.trim() }));
         const id = select.id;
         const input = document.createElement('input');
         input.type = 'text'; input.className = 'field-input tower-picker__input'; input.autocomplete = 'off';
         input.setAttribute('role', 'combobox'); input.setAttribute('aria-autocomplete', 'list');
         input.setAttribute('aria-expanded', 'false'); input.setAttribute('aria-controls', id + '-list');
-        input.setAttribute('aria-label', 'Tower (type a number or name)'); input.placeholder = 'All towers';
+        input.setAttribute('aria-label', 'Tower (type a number or name)'); input.placeholder = allText;
         const list = document.createElement('ul');
         list.id = id + '-list'; list.className = 'tower-picker__list'; list.setAttribute('role', 'listbox'); list.hidden = true;
         select.hidden = true;
@@ -31,7 +32,7 @@
             shown.forEach((o, i) => {
                 const li = document.createElement('li');
                 li.id = id + '-opt-' + i; li.className = 'tower-picker__option'; li.setAttribute('role', 'option');
-                li.setAttribute('aria-selected', i === active ? 'true' : 'false'); li.textContent = o.value ? o.label : 'All towers';
+                li.setAttribute('aria-selected', i === active ? 'true' : 'false'); li.textContent = o.value ? o.label : allText;
                 li.addEventListener('mousedown', e => { e.preventDefault(); choose(o); });
                 list.appendChild(li);
             });

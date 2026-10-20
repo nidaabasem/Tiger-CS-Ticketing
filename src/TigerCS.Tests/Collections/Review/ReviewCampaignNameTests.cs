@@ -200,6 +200,28 @@ public sealed class ReviewCampaignNameTests
     }
 
     [Fact]
+    public void CommittedConfiguration_KeepsCampaignHandlingAndCreationOff_WithNoIdsFilledIn()
+    {
+        var committed = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "TigerCS.Api", "appsettings.json"));
+        using var json = System.Text.Json.JsonDocument.Parse(committed);
+        var campaign = json.RootElement.GetProperty("Collections").GetProperty("GenesysOutbound").GetProperty("Campaign");
+        Assert.False(campaign.GetProperty("Enabled").GetBoolean());
+        Assert.False(campaign.GetProperty("AllowCreate").GetBoolean());
+        foreach (var key in new[] { "QueueId", "DialingMode", "CallerName", "CallerAddress", "ScriptId", "CallAnalysisResponseSetId" })
+            Assert.Equal("", campaign.GetProperty(key).GetString());
+    }
+
+    [Fact]
+    public async Task ACampaignIsNeverSwitchedOn_ByTheSend()
+    {
+        using var h = await SeededAsync();
+        h.Client.Campaigns.Add(new("existing-1", StageName, CurrentMonthList, "off"));
+        await RunAsync(h);
+        Assert.All(h.Client.Campaigns, c => Assert.Equal("off", c.Status));      // reuse and creation both leave it off; there is no activation call on the client at all
+        Assert.DoesNotContain(typeof(IGenesysOutboundClient).GetMethods(), m => m.Name.Contains("Activate", StringComparison.OrdinalIgnoreCase) || m.Name.Contains("Start", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
     public void DefaultConfigurationDoesNotTouchCampaigns()
     {
         var options = new GenesysOutboundOptions();

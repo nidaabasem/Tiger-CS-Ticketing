@@ -15,7 +15,7 @@
             <p class="receivables-eyebrow">Collections</p>
             <h1 class="page-title">Collections Campaigns</h1>
         </div>
-        <div class="page-header__actions"><a class="btn btn-primary" href="/Collections/Review">Review &amp; approve</a> <a class="btn" href="/Collections/Receivables">Due &amp; Overdue Customers</a></div>
+        <div class="page-header__actions"><a class="btn btn-primary" href="@Model.ReviewUrl()" data-review-link>Review &amp; approve</a> <a class="btn" href="/Collections/Receivables">Due &amp; Overdue Customers</a></div>
     </div>
     <form class="filter-bar" method="get" action="/Collections/Campaigns" data-receivables-filter data-results-form>
         <div class="field-group">
@@ -32,19 +32,11 @@
             <label class="field-label" for="campaignDate">Preview date</label>
             <input class="field-input" id="campaignDate" name="businessDate" type="date" data-campaign-date min="2000-01-01" max="2100-12-31" value="@Model.BusinessDate?.ToString("yyyy-MM-dd")" />
         </div>
-        <partial name="_TowerPicker" model="@(new TowerPickerModel("campaignTower", Model.Towers, Model.TowerId, Model.TowersFailed))" />
+        <partial name="_TowerPicker" model="@(new TowerPickerModel("campaignTower", Model.Towers, Model.TowerId, Model.TowersFailed, "Project / Tower", "All projects"))" />
         <div class="field-group">
-            <label class="field-label" for="campaignMonth">Month</label>
-            <select class="field-select" id="campaignMonth" name="month" data-month-select>
-                <option value="">All months</option>
-                @for (var m = 1; m <= 12; m++) { <option value="@m" selected="@(Model.Month == m)">@CampaignsModel.MonthNames[m - 1]</option> }
-            </select>
-        </div>
-        <div class="field-group">
-            <label class="field-label" for="campaignYear">Year</label>
-            <select class="field-select" id="campaignYear" name="year" data-year-select>
-                <option value="">—</option>
-                @foreach (var y in Model.YearOptions()) { <option value="@y" selected="@(Model.Year == y)">@y</option> }
+            <label class="field-label" for="campaignPayment">Payment status</label>
+            <select class="field-select" id="campaignPayment" name="paymentStatus" data-payment-status>
+                @foreach (var choice in CampaignsModel.PaymentStatusChoices) { <option value="@choice" selected="@(Model.PaymentStatus.Equals(choice, StringComparison.OrdinalIgnoreCase))">@(choice == "Both" ? "Due and Overdue (both)" : choice)</option> }
             </select>
         </div>
         <div class="field-group">

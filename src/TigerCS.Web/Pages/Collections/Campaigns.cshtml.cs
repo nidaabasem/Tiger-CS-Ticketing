@@ -17,8 +17,8 @@ public sealed class CampaignsModel(CollectionsApiClient api, Microsoft.Extension
     public DateOnly? BusinessDate { get; private set; }
     public DateOnly? DateFrom { get; private set; }
     public DateOnly? DateTo { get; private set; }
-    public int? Month { get; private set; }
-    public int? Year { get; private set; }
+    /// <summary>Due, Overdue or Both (default). Sent to the API with every preview, page and export so they always agree.</summary>
+    public string PaymentStatus { get; private set; } = "Both";
     public int? TowerId { get; private set; }
     /// <summary>Minimum Total (AED): a unit is listed only when its Due + Overdue is greater than this. Default 100; null (cleared) = every unit that has a Due or Overdue amount.</summary>
     public decimal? MinTotal { get; private set; } = ReceivablesModel.DefaultMinTotal;
@@ -34,21 +34,14 @@ public sealed class CampaignsModel(CollectionsApiClient api, Microsoft.Extension
     public bool RenderFull { get; private set; }
     public CollectionsCampaignPreviewDto? Report { get; private set; }
     public int TotalPages => Report is null ? 1 : Math.Max(1, (int)Math.Ceiling(Report.TotalCount / (double)Report.PageSize));
-    public static readonly string[] MonthNames = ReceivablesModel.MonthNames;
-    public IEnumerable<int> YearOptions()
-    {
-        var current = CollectionsDisplay.DubaiToday().Year;
-        var first = Math.Min(2020, Year ?? 2020);
-        var last = Math.Max(current + 2, Year ?? 0);
-        return Enumerable.Range(first, last - first + 1);
-    }
+    public static readonly string[] PaymentStatusChoices = ["Both", "Due", "Overdue"];
 
     /// <summary>The page (filters + an empty results area) renders at once and never waits for data; results come from <see cref="OnGetResultsAsync"/>.</summary>
     public async Task OnGetAsync(string stage = "OverdueReminder", DateOnly? businessDate = null, int? towerId = null,
         string? search = null, [FromQuery(Name = "page")] int pageNumber = 1, DateOnly? dateFrom = null, DateOnly? dateTo = null,
-        int? month = null, int? year = null, string? render = null, string? load = null, CancellationToken cancellationToken = default)
+        int? month = null, int? year = null, string? render = null, string? load = null, string? paymentStatus = null, CancellationToken cancellationToken = default)
     {
-        SetFilters(stage, businessDate, towerId, search, pageNumber, dateFrom, dateTo, month, year, load);
+        SetFilters(stage, businessDate, towerId, search, pageNumber, dateFrom, dateTo, month, year, load, paymentStatus);
         RenderFull = render == "full";
         var towers = await api.GetTowersAsync(cancellationToken);
         Towers = towers.IsSuccess && towers.Value is { } list ? list : [];
@@ -59,10 +52,10 @@ public sealed class CampaignsModel(CollectionsApiClient api, Microsoft.Extension
     /// <summary>The results area only (HTML fragment): summary, snapshot status, table, pagination and export links.</summary>
     public async Task<IActionResult> OnGetResultsAsync(string stage = "OverdueReminder", DateOnly? businessDate = null, int? towerId = null,
         string? search = null, [FromQuery(Name = "page")] int pageNumber = 1, DateOnly? dateFrom = null, DateOnly? dateTo = null,
-        int? month = null, int? year = null, string? load = null, CancellationToken cancellationToken = default)
+        int? month = null, int? year = null, string? load = null, string? paymentStatus = null, CancellationToken cancellationToken = default)
     {
         var timer = System.Diagnostics.Stopwatch.StartNew();
-        SetFilters(stage, businessDate, towerId, search, pageNumber, dateFrom, dateTo, month, year, load);
+        SetFilters(stage, businessDate, towerId, search, pageNumber, dateFrom, dateTo, month, year, load, paymentStatus);
         await LoadReportAsync(cancellationToken);
         Response.Headers.CacheControl = "no-store";
         var t = Report?.Timings;
@@ -76,7 +69,7 @@ public sealed class CampaignsModel(CollectionsApiClient api, Microsoft.Extension
         if (!ModelState.IsValid) { Outcome = ApiOutcome.ValidationError; Error = "Choose valid filters and retry."; return; }
         // Instalments due from the next month on are neither Due nor Overdue and never listed: a period that starts there has nothing to ask the API for.
         if (DateFrom is { } start && !CollectionsDueMonth.IsInScope(start, CollectionsDisplay.DubaiToday())) { NothingDueYet = true; return; }
-        var result = await api.GetCampaignPreviewAsync(Stage, BusinessDate, null, Search, PageNumber, cancellationToken, DateFrom, DateTo, TowerId, MinTotal);
+        var result = await api.GetCampaignPreviewAsync(Stage, BusinessDate, null, Search, PageNumber, cancellationToken, DateFrom, DateTo, TowerId, MinTotal, PaymentStatus);
         Outcome = result.Outcome;
         Report = result.IsSuccess ? result.Value : null;
         Error = result.Detail;
@@ -85,17 +78,16 @@ public sealed class CampaignsModel(CollectionsApiClient api, Microsoft.Extension
         // eligibility scope is unchanged. Writing the effective 2000-01-01 back into the input would turn the next page / export request into an explicit From
         // and widen the stage eligibility, so it is never done. Unedited To follows stage / preview-date changes in the browser (collections-campaign-dates.js).
         DateTo ??= Report?.DateTo;
-        SyncMonthYear();
     }
 
     public async Task<IActionResult> OnGetExportAsync(string stage = "OverdueReminder", string mode = "review",
         DateOnly? businessDate = null, int? towerId = null, string? search = null, DateOnly? dateFrom = null, DateOnly? dateTo = null,
-        int? month = null, int? year = null, CancellationToken cancellationToken = default)
+        int? month = null, int? year = null, string? paymentStatus = null, CancellationToken cancellationToken = default)
     {
-        SetFilters(stage, businessDate, towerId, search, 1, dateFrom, dateTo, month, year, null);
+        SetFilters(stage, businessDate, towerId, search, 1, dateFrom, dateTo, month, year, null, paymentStatus);
         if (!ModelState.IsValid) { Outcome = ApiOutcome.ValidationError; Error = "Choose valid filters and retry."; return Page(); }
         // Same stage, preview date, tower, dates, minimum amount and search as the preview: the file contains exactly the previewed units.
-        var result = await api.GetCampaignExportAsync(Stage, mode, BusinessDate, null, Search, cancellationToken, DateFrom, DateTo, TowerId, MinTotal);
+        var result = await api.GetCampaignExportAsync(Stage, mode, BusinessDate, null, Search, cancellationToken, DateFrom, DateTo, TowerId, MinTotal, PaymentStatus);
         if (result.IsSuccess && result.Value is { } file)
         {
             var bytes = Encoding.UTF8.GetPreamble().Concat(Encoding.UTF8.GetBytes(file.Csv)).ToArray();
@@ -107,20 +99,15 @@ public sealed class CampaignsModel(CollectionsApiClient api, Microsoft.Extension
         return Page();
     }
 
-    private void SetFilters(string stage, DateOnly? date, int? tower, string? search, int page, DateOnly? from, DateOnly? to, int? month, int? year, string? load)
+    private void SetFilters(string stage, DateOnly? date, int? tower, string? search, int page, DateOnly? from, DateOnly? to, int? month, int? year, string? load, string? paymentStatus)
     {
+        PaymentStatus = CampaignPaymentFilters.TryParse(paymentStatus, out var payment) ? CampaignPaymentFilters.Name(payment) : paymentStatus!.Trim();
         Stage = stage; BusinessDate = date; TowerId = tower; Search = search?.Trim(); PageNumber = Math.Max(1, page);
         MinTotal = ReceivablesModel.ParseMinTotal(Request.Query);
         LoadNotice = CollectionsDisplay.NoticeText(load) is { Length: > 0 } text ? text : null;
+        // Month / Year are no longer controls; an old bookmark that still carries them keeps working as its whole-month range.
         if (month is >= 1 and <= 12 && year is >= 2000 and <= 2100) { (DateFrom, DateTo) = CollectionsDateRanges.Month(year.Value, month.Value); }
         else { DateFrom = from; DateTo = to; }
-        SyncMonthYear();
-    }
-
-    private void SyncMonthYear()
-    {
-        if (DateFrom is { } f && DateTo is { } t && CollectionsDateRanges.TryAsCalendarMonth(f, t, out var y, out var m)) { Year = y; Month = m; }
-        else { Year = null; Month = null; }
     }
 
     public string? LoadNotice { get; private set; }
@@ -156,6 +143,7 @@ public sealed class CampaignsModel(CollectionsApiClient api, Microsoft.Extension
         query["dateTo"] = to.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
         if (TowerId is { } tower) query["towerId"] = tower.ToString(CultureInfo.InvariantCulture);
         query["minTotal"] = MinTotalText;
+        query["paymentStatus"] = PaymentStatus;
         if (!string.IsNullOrWhiteSpace(Search)) query["search"] = Search;
         return $"/Collections/Campaigns?{query}";
     }
@@ -169,11 +157,31 @@ public sealed class CampaignsModel(CollectionsApiClient api, Microsoft.Extension
         if (DateTo is { } to) query["dateTo"] = to.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
         if (TowerId is { } tower) query["towerId"] = tower.ToString(CultureInfo.InvariantCulture);
         query["minTotal"] = MinTotalText;
+        query["paymentStatus"] = PaymentStatus;
         if (!string.IsNullOrWhiteSpace(Search)) query["search"] = Search;
         if (export is null) { query["page"] = page.ToString(CultureInfo.InvariantCulture); query["render"] = "full"; }
         else { query["handler"] = "Export"; query["mode"] = export; }
         return $"/Collections/Campaigns?{query}";
     }
+
+    /// <summary>
+    /// Review &amp; approve for exactly this selection: the stage, the explicit due-date range and the Due / Overdue status travel with the link, so the review list starts from the
+    /// filters the preview used. (The Review page keeps its own project text and amount filters; the tower is not a review filter.)
+    /// </summary>
+    public string ReviewUrl()
+    {
+        var query = HttpUtility.ParseQueryString(string.Empty);
+        if (CollectionsEnums.TryParse<CollectionsCampaignStage>(Stage, out var stage))
+            query["reminderType"] = TigerCS.Domain.Modules.Collections.Review.CampaignReminderTypes.FromStage(stage).ToString();
+        if (DateFrom is { } from) query["dueFrom"] = from.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+        if (DateTo is { } to) query["dueTo"] = to.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+        if (PaymentStatus is not "Both") query["dueStatus"] = PaymentStatus;
+        return query.Count == 0 ? "/Collections/Review" : $"/Collections/Review?{query}";
+    }
+
+    /// <summary>The stage's display name = the Genesys campaign name used when this list is sent.</summary>
+    public string? CampaignName => CollectionsEnums.TryParse<CollectionsCampaignStage>(Stage, out var stage)
+        ? TigerCS.Domain.Modules.Collections.Review.CampaignReminderTypes.StageName(stage) : null;
 
     public string ResultsUrl(int page = 1) => PageUrl(page).Replace("render=full", "handler=Results");
 

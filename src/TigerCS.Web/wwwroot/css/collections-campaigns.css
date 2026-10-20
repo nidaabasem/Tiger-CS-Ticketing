@@ -9,3 +9,9 @@
 .campaign-summary .btn { margin-right: var(--space-2); }
 .campaign-summary [role="status"] { color: var(--color-text-secondary); }
 .receivables-workspace .receivables-table td:last-child { max-width: 340px; }
+
+/* Campaigns preview totals and the Review & approve snapshot */
+.campaign-totals { display: flex; flex-wrap: wrap; gap: 0.25rem 1.5rem; margin: 0 0 0.75rem; padding: 0; list-style: none; }
+.review-snapshot { display: grid; grid-template-columns: max-content 1fr; gap: 0.25rem 1rem; margin: 0.5rem 0 1rem; }
+.review-snapshot dt { font-weight: 600; }
+.review-snapshot dd { margin: 0; }
