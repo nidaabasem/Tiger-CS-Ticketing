@@ -46,6 +46,9 @@ public sealed record DocumentDeliveryTicketUpdate(
 public interface IDocumentDeliveryTicketHandler
 {
     Task HandleAsync(DocumentDeliveryTicketContext context, DocumentDeliveryTicketUpdate update, CancellationToken cancellationToken = default);
+
+    /// <summary>A document request is a customer interaction: restarts the Website/Chatbot inactivity clock, so a ticket whose document is being prepared is never closed for silence.</summary>
+    Task RecordCustomerActivityAsync(DocumentDeliveryTicketContext context, CancellationToken cancellationToken = default);
 }
 
 /// <summary>
@@ -94,6 +97,7 @@ public sealed class DocumentDeliveryTicketService(
             }
 
             var now = timeProvider.GetUtcNow().UtcDateTime;
+            await RecordCustomerActivityAsync(context, cancellationToken);
             var detail = $"DocumentType={update.DocumentType};RecordId={update.RecordId};ErrorCode={update.Code ?? "(none)"};DeliveryRequestId={update.DeliveryRequestId}";
 
             if (update.Event == DocumentDeliveryTicketEvent.Unconfirmed)
@@ -139,6 +143,29 @@ public sealed class DocumentDeliveryTicketService(
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             logger.LogError(ex, "Could not apply the outcome of document request {DeliveryRequestId} to its ticket.", update.DeliveryRequestId);
+        }
+    }
+
+    public async Task RecordCustomerActivityAsync(DocumentDeliveryTicketContext context, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            if (context.ConversationId is not { } conversationId
+                || await conversationRepository.GetByConversationIdAsync(conversationId, cancellationToken) is not { } interaction
+                || interaction.LastCustomerInteractionAtUtc is null // only a conversation the rule already tracks (never Call Center / human-managed)
+                || await FindTicketAsync(context, cancellationToken) is null)
+            {
+                return;
+            }
+
+            if (interaction.RecordCustomerInteraction(timeProvider.GetUtcNow().UtcDateTime, context.CallerEmployeeId))
+            {
+                await unitOfWork.SaveChangesAsync(CancellationToken.None);
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogError(ex, "Could not record the document request as customer activity.");
         }
     }
 

@@ -41,7 +41,7 @@
           "conversationId": { "type": "string", "description": "The conversation id." },
           "awaiting": {
             "type": "boolean",
-            "description": "true right after the chatbot sends a message that needs a reply (starts the 5-minute inactivity timer; repeating it never restarts it). false when the customer replies (cancels it). Call true again with the chatbot's next question."
+            "description": "true right after the chatbot sends a message that needs a reply (starts the bot-prompt timer (5 minutes; only for tickets the Website/Chatbot 10-minute rule does not track); repeating it never restarts it). false when the customer replies (cancels it AND restarts the 10-minute Website/Chatbot inactivity clock - send it on EVERY inbound customer message). Call true again with the chatbot's next question."
           }
         }
       }

@@ -35,6 +35,7 @@ namespace TigerCS.Application.Modules.GenesysIntegration.Dto;
 /// <param name="Routing">Set when Genesys moved the conversation to another queue, or connected / transferred it to an agent. Omit when the routing did not change.</param>
 /// <param name="CustomerConfirmation">Set when the customer explicitly confirmed during the interaction that their issue is resolved. Record-only — never resolves or closes the ticket.</param>
 /// <param name="AwaitingCustomerReply">true starts the chatbot inactivity timer (a repeat never restarts it); false cancels it (the customer replied); null leaves it as it is.</param>
+/// <param name="CustomerActive">true = the customer just did something in the conversation (sent a message, answered the bot): restarts the Website/Chatbot inactivity clock at TigerCS's own time. Send it on EVERY inbound customer message. null/false changes nothing.</param>
 /// <param name="RequestType">Set when the bot has identified the request type: validated, then applied with its department routing, automatic assignment and SLA policy. Repeating the same one changes nothing; a different one is refused.</param>
 public sealed record GenesysTicketUpdateDto(
     string ConversationId,
@@ -46,7 +47,8 @@ public sealed record GenesysTicketUpdateDto(
     GenesysRoutingUpdateDto? Routing = null,
     GenesysCustomerConfirmationUpdateDto? CustomerConfirmation = null,
     bool? AwaitingCustomerReply = null,
-    GenesysRequestTypeDto? RequestType = null);
+    GenesysRequestTypeDto? RequestType = null,
+    bool? CustomerActive = null);
 
 /// <summary>
 /// The customer's own statement, made during the interaction, that the issue

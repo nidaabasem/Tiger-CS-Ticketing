@@ -40,18 +40,30 @@ public sealed class GenesysOptions
     /// </summary>
     public string? ScreenPopWebBaseUrl { get; set; }
 
-    /// <summary>The default for <see cref="CustomerInactivityTimeoutMinutes"/>: the business rule's "more than 5 minutes".</summary>
-    public const int DefaultCustomerInactivityTimeoutMinutes = 5;
+    /// <summary>The default for <see cref="CustomerInactivityTimeoutMinutes"/>: Website/Chatbot tickets close after "more than 10 minutes" without customer interaction.</summary>
+    public const int DefaultCustomerInactivityTimeoutMinutes = 10;
+
+    /// <summary>The default for <see cref="AwaitingReplyTimeoutMinutes"/>: the original bot-prompt rule, unchanged.</summary>
+    public const int DefaultAwaitingReplyTimeoutMinutes = 5;
 
     /// <summary>
-    /// How long a chatbot may wait for the customer's reply before the
-    /// background job closes the ticket as an inactivity closure. Default 5;
-    /// the customer must be silent for <b>more than</b> this long. Zero or a
-    /// negative value switches the automatic closure off (the timer is still
-    /// recorded, nothing is closed). Set it under
-    /// <c>Genesys:CustomerInactivityTimeoutMinutes</c>.
+    /// How long a Website/Chatbot conversation may go without ANY customer interaction (measured from the last one, not from ticket
+    /// creation) before the background job closes its ticket. Default 10; the customer must be silent for <b>more than</b> this long.
+    /// Call Center tickets, human-managed tickets and voice calls are outside this rule. Zero or a negative value switches it off.
+    /// Set it under <c>Genesys:CustomerInactivityTimeoutMinutes</c>.
     /// </summary>
     public int CustomerInactivityTimeoutMinutes { get; set; } = DefaultCustomerInactivityTimeoutMinutes;
+
+    /// <summary>
+    /// The original rule — the chatbot asked something (<c>awaitingCustomerReply: true</c>) and the customer did not answer — which
+    /// still governs every ticket the Website/Chatbot rule does not track (voice, Call Center). Default 5, so those tickets are not
+    /// affected by the 10-minute rule. Zero or a negative value switches it off. <c>Genesys:AwaitingReplyTimeoutMinutes</c>.
+    /// </summary>
+    public int AwaitingReplyTimeoutMinutes { get; set; } = DefaultAwaitingReplyTimeoutMinutes;
+
+    /// <summary>The bot-prompt timeout, or null when that rule is switched off.</summary>
+    public TimeSpan? AwaitingReplyTimeout =>
+        AwaitingReplyTimeoutMinutes > 0 ? TimeSpan.FromMinutes(AwaitingReplyTimeoutMinutes) : null;
 
     /// <summary>The default for <see cref="DefaultTicketPriority"/>: the business tier name used by the SLA document.</summary>
     public const string DefaultDefaultTicketPriority = "Normal";

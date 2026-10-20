@@ -331,6 +331,14 @@ public sealed class TicketCreationAppService(
                 customerName: genesys.CustomerName, customerEmail: genesys.CustomerEmail)
             : TicketInteraction.CreateLocal(
                 ticket.TicketId, intakeRecord.ChannelId, intakeRecord.PhoneNumber, now, isOriginatingInteraction: true);
+        // A Website/Chatbot conversation starts its "customer inactive" clock now: the customer opening it is the first interaction.
+        // Call Center tickets are outside that rule and never tracked.
+        if (originatingInteraction.IsWebsiteOrChatbotConversation
+            && !string.Equals(department.Code, TeamPerformanceAppService.CallCenterDepartmentCode, StringComparison.OrdinalIgnoreCase))
+        {
+            originatingInteraction.StartTrackingCustomerInteraction(now, callerEmployeeId);
+        }
+
         await interactionRepository.AddAsync(originatingInteraction, cancellationToken);
 
         // Workflow/Automation phase 2 — Department + Request Type resolve

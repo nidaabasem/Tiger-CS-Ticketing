@@ -147,11 +147,26 @@ public class TicketInteraction
     /// <summary>The integration account that reported the prompt. The inactivity closure is attributed to it in the audit trail and on the resolution row (which needs a real user) — the closure itself is flagged as a system action.</summary>
     public Guid? AwaitingCustomerReplyReportedByEmployeeId { get; private set; }
 
+    /// <summary>
+    /// The last time the customer actually did something in this conversation (opened it, sent a message, answered the bot, asked for a
+    /// document), as recorded by TigerCS's own clock — never the ticket's creation time. The source of the Website/Chatbot
+    /// "customer inactive" closure. Null = not tracked (a legacy row, a voice call, a Call Center ticket, or tracking stopped because a
+    /// human took over); such a row is never closed by that rule. Also an EF concurrency token, so a customer message that lands while
+    /// the job is closing the ticket makes the job's write lose.
+    /// </summary>
+    public DateTime? LastCustomerInteractionAtUtc { get; private set; }
+
+    /// <summary>The integration account that reported the last customer interaction; the inactivity closure is attributed to it.</summary>
+    public Guid? LastCustomerInteractionReportedByEmployeeId { get; private set; }
+
     /// <summary>When the inactivity timeout closed this interaction's ticket, or null. Write-once: it is what makes a repeated timeout run a no-op.</summary>
     public DateTime? InactivityClosedAtUtc { get; private set; }
 
     /// <summary>When this row was recorded by Ticketing (creation/audit timestamp), as distinct from <see cref="InteractionStartedAtUtc"/> — Genesys' own clock.</summary>
     public DateTime CreatedAtUtc { get; private set; }
+
+    /// <summary>A Genesys conversation on a chat/messaging channel (website chat, WhatsApp, social DM): the Website/Chatbot "customer inactive" rule's scope. Voice calls and locally-created interactions are not.</summary>
+    public bool IsWebsiteOrChatbotConversation => Source == InteractionContextSource.Genesys && ChannelId != WellKnownChannels.Phone;
 
     /// <summary>Whether <see cref="End"/> has been recorded. Derived — the interaction's own lifecycle, independent of the ticket's <see cref="TicketStatus"/>.</summary>
     public bool IsEnded => EndedAtUtc is not null;
@@ -255,6 +270,8 @@ public class TicketInteraction
         // timer must never fire for it.
         AwaitingCustomerReplySinceUtc = null;
         AwaitingCustomerReplyReportedByEmployeeId = null;
+        LastCustomerInteractionAtUtc = null;
+        LastCustomerInteractionReportedByEmployeeId = null;
     }
 
     /// <summary>
@@ -297,6 +314,48 @@ public class TicketInteraction
         return true;
     }
 
+    /// <summary>
+    /// The customer did something: start (or restart) the inactivity clock from <paramref name="nowUtc"/>. Never moves backwards, and
+    /// is refused (false) once the conversation ended or its ticket was closed for inactivity. Starts tracking on a row that had none.
+    /// </summary>
+    public bool RecordCustomerInteraction(DateTime nowUtc, Guid reportedByEmployeeId)
+    {
+        if (reportedByEmployeeId == Guid.Empty)
+        {
+            throw new ArgumentException("ReportedByEmployeeId must be a real integration account.", nameof(reportedByEmployeeId));
+        }
+
+        if (IsEnded || InactivityClosedAtUtc is not null || (LastCustomerInteractionAtUtc is { } last && nowUtc <= last))
+        {
+            return false;
+        }
+
+        LastCustomerInteractionAtUtc = nowUtc;
+        LastCustomerInteractionReportedByEmployeeId = reportedByEmployeeId;
+        return true;
+    }
+
+    /// <summary>Starts tracking at creation without needing a later call: the customer opening the conversation is the first interaction.</summary>
+    public void StartTrackingCustomerInteraction(DateTime nowUtc, Guid reportedByEmployeeId) =>
+        RecordCustomerInteraction(nowUtc, reportedByEmployeeId);
+
+    /// <summary>Stops the "customer inactive" clock (a human took over, the ticket is owned or closed, it left the rule's scope). A later customer interaction starts it again. True when it was running.</summary>
+    public bool StopTrackingCustomerInteraction()
+    {
+        if (LastCustomerInteractionAtUtc is null)
+        {
+            return false;
+        }
+
+        LastCustomerInteractionAtUtc = null;
+        LastCustomerInteractionReportedByEmployeeId = null;
+        return true;
+    }
+
+    /// <summary>True when the customer has been silent for strictly more than <paramref name="timeout"/> since <see cref="LastCustomerInteractionAtUtc"/> and the conversation is still live.</summary>
+    public bool IsCustomerInactive(DateTime nowUtc, TimeSpan timeout) =>
+        LastCustomerInteractionAtUtc is { } last && InactivityClosedAtUtc is null && EndedAtUtc is null && nowUtc - last > timeout;
+
     /// <summary>True when the timer has been running for strictly longer than <paramref name="timeout"/> at <paramref name="nowUtc"/> — "more than 5 minutes", not "5 minutes or more".</summary>
     public bool IsInactivityTimeoutDue(DateTime nowUtc, TimeSpan timeout) =>
         AwaitingCustomerReplySinceUtc is { } since && InactivityClosedAtUtc is null && nowUtc - since > timeout;
@@ -311,6 +370,8 @@ public class TicketInteraction
 
         InactivityClosedAtUtc = nowUtc;
         AwaitingCustomerReplySinceUtc = null;
+        LastCustomerInteractionAtUtc = null;
+        LastCustomerInteractionReportedByEmployeeId = null;
     }
 
     /// <summary>

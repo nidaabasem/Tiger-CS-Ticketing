@@ -27,7 +27,7 @@
 | `Pact:Provider` | `Http` | |
 | `BackgroundJobs:Enabled` | `false` | **Must be `true`** for outbox/e‑mail dispatch, SLA sweeps, chatbot inactivity closure, reminder scheduler |
 | `Genesys:Enabled` | `true` | `false` → every `/api/genesys/*` returns 503 |
-| `Genesys:CustomerInactivityTimeoutMinutes` | `5` | duration unconfirmed (D2) |
+| `Genesys:CustomerInactivityTimeoutMinutes` | `10` | Website/Chatbot "customer inactive" rule (from the last customer interaction); `Genesys:AwaitingReplyTimeoutMinutes` (`5`) keeps the original bot-prompt rule for untracked tickets |
 | `Genesys:DefaultTicketPriority` | `Normal` | name of the priority a new Genesys ticket starts on; "Normal" resolves to the Medium tier. Blank = no default (no priority/SLA until classified) |
 | `Genesys:HumanQueueForUnclassified` | `true` | a Genesys ticket with no request type supplied joins the human follow-up queue ("Awaiting classification"); `false` is a rollout kill switch |
 | `CrmDocuments:Enabled` | `false` | OTP + document copy; Production also needs `AllowInProduction=true` |

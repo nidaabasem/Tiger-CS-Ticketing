@@ -285,6 +285,14 @@ public class DocumentDeliveryTicketTests
     {
         public List<(DocumentDeliveryTicketContext Context, DocumentDeliveryTicketUpdate Update)> Calls { get; } = [];
 
+        public int Activity { get; private set; }
+
+        public Task RecordCustomerActivityAsync(DocumentDeliveryTicketContext context, CancellationToken cancellationToken = default)
+        {
+            Activity++;
+            return Task.CompletedTask;
+        }
+
         public Task HandleAsync(DocumentDeliveryTicketContext context, DocumentDeliveryTicketUpdate update, CancellationToken cancellationToken = default)
         {
             Calls.Add((context, update));

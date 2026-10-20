@@ -373,6 +373,12 @@ public sealed partial class CrmDocumentCopyAppService(
         DocumentDeliveryChannel channel, CrmDocumentDeliveryRequest? existing, DateTime now, DeliveryTarget target,
         CancellationToken cancellationToken)
     {
+        // The customer asked for a document: that is customer activity, so a ticket waiting on it is not closed for silence meanwhile.
+        if (ticketHandler is not null && target.Ticket is not null)
+        {
+            await ticketHandler.RecordCustomerActivityAsync(target.Ticket, cancellationToken);
+        }
+
         var result = await DeliverCoreAsync(callerEmployeeId, key, type, requestedRecordId, channel, existing, now, target, cancellationToken);
         await ApplyToTicketAsync(target, result, cancellationToken);
         return result;

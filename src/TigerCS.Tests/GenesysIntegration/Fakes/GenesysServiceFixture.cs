@@ -133,6 +133,7 @@ public sealed class GenesysServiceFixture
         if (inactivityTimeoutMinutes is { } minutes)
         {
             Options.CustomerInactivityTimeoutMinutes = minutes;
+            Options.AwaitingReplyTimeoutMinutes = minutes;
         }
 
         Conversations = new FakeGenesysConversationRepository(Interactions);
@@ -154,7 +155,7 @@ public sealed class GenesysServiceFixture
             IntakeRecords, new FakeUnitReferenceRepository(), new FakeContactReferenceRepository(),
             Categories, new FakePriorityRepository(), Departments, Tickets,
             new FakeTicketRequesterSnapshotRepository(), StatusHistory, UnitOfWork, Audit, outbox,
-            sla.DueDates, TimeProvider.System, RequestTypes, Interactions,
+            sla.DueDates, Clock, RequestTypes, Interactions,
             autoAssignment,
             WorkflowTemplates);
         ManualTicketCreation = ticketCreationAppService;
@@ -217,7 +218,7 @@ public sealed class GenesysServiceFixture
 
         // Contract #3: the one update facade over the two services above.
         TicketUpdate = new GenesysTicketUpdateAppService(
-            Options, Conversations, Tickets, Handoffs, UnitOfWork, ConversationEnd, AgentHandoff, AgentResolution, Audit,
+            Options, Conversations, Tickets, Departments, Handoffs, UnitOfWork, ConversationEnd, AgentHandoff, AgentResolution, Audit,
             WorkflowEvents, Clock, RequestTypeClassification);
 
         var requestTypes = RequestTypes;
@@ -232,7 +233,7 @@ public sealed class GenesysServiceFixture
             new ReopenEligibilityService(StatusHistory, requestTypes, workflowTemplates, ReopenPolicy.Default));
 
         InactivityClose = new ChatbotInactivityCloseAppService(
-            Options, Conversations, Tickets, Handoffs, Lifecycle, UnitOfWork, Clock);
+            Options, Conversations, Tickets, Handoffs, Departments, Lifecycle, UnitOfWork, Clock);
 
         AgentContext = new GenesysAgentContextAppService(
             Options, AgentResolution, Conversations, Tickets, UnitOfWork, Audit);

@@ -59,6 +59,13 @@ public class TicketInteractionConfiguration : IEntityTypeConfiguration<TicketInt
         builder.Property(i => i.AwaitingCustomerReplySinceUtc).IsConcurrencyToken();
         builder.Property(i => i.AwaitingCustomerReplyReportedByEmployeeId);
         builder.Property(i => i.InactivityClosedAtUtc);
+
+        // Website/Chatbot "customer inactive" clock: the last real customer interaction. Also a concurrency token, so a customer
+        // message that lands while the job closes the ticket makes the job's UPDATE affect zero rows — the customer wins.
+        builder.Property(i => i.LastCustomerInteractionAtUtc).IsConcurrencyToken();
+        builder.Property(i => i.LastCustomerInteractionReportedByEmployeeId);
+        builder.HasIndex(i => i.LastCustomerInteractionAtUtc, "IX_TicketInteractions_LastCustomerInteractionAtUtc")
+            .HasFilter("[LastCustomerInteractionAtUtc] IS NOT NULL");
         builder.HasIndex(i => i.AwaitingCustomerReplySinceUtc, "IX_TicketInteractions_AwaitingCustomerReplySinceUtc")
             .HasFilter("[AwaitingCustomerReplySinceUtc] IS NOT NULL");
 
