@@ -44,12 +44,14 @@
                <a href="/Collections/Review?handler=Contacts&amp;dispatch=@d.DispatchId">Download the contacts as uploaded (CSV)</a></p>
             <p class="review-note">@d.Disclaimer</p>
             <div class="table-scroll"><table class="table">
-                <thead><tr><th>#</th><th>Reminder type</th><th>List</th><th>Contacts</th><th>Status</th><th>Attempts</th><th>Detail</th><th></th></tr></thead>
+                <thead><tr><th>#</th><th>Reminder type</th><th>Genesys campaign</th><th>List</th><th>Contacts</th><th>Status</th><th>Attempts</th><th>Detail</th><th></th></tr></thead>
                 <tbody>
                 @foreach (var b in d.Batches)
                 {
                     <tr>
-                        <td>@b.Sequence</td><td>@ReviewModel.Label(b.ReminderType)</td><td><code>@b.ContactListId</code></td>
+                        <td>@b.Sequence</td><td>@ReviewModel.Label(b.ReminderType)</td>
+                        <td>@(b.GenesysCampaignName ?? b.StageName)@if (!string.IsNullOrEmpty(b.GenesysCampaignId)) { <text><br /><code>@b.GenesysCampaignId</code> (@(b.CampaignAction == "Created" ? "created" : "existing"))</text> }</td>
+                        <td><code>@b.ContactListId</code></td>
                         <td>@b.ContactCount@(b.ReturnedContactCount is { } r ? $" ({r} ids returned)" : "")</td>
                         <td><strong>@ReviewModel.Label(b.Status)</strong></td><td>@b.AttemptCount</td>
                         <td>@b.Error @b.ReconciliationNote</td>
@@ -247,7 +249,7 @@
                 <p><strong data-summary-count>@s.Count</strong> contacts will be uploaded to Genesys.</p>
                 <ul class="review-tally">
                     @foreach (var total in s.TotalsByCurrency) { <li>Total <strong>@total.Key @ReviewModel.Money(total.Value)</strong></li> }
-                    @foreach (var type in s.CountByReminderType) { <li>@ReviewModel.Label(type.Key): <strong>@type.Value</strong> → its own contact list</li> }
+                    @foreach (var type in s.CountByReminderType) { <li>@ReviewModel.Label(type.Key): <strong>@type.Value</strong> → its own contact list@ReviewModel.CampaignSuffix(type.Key)</li> }
                 </ul>
                 @foreach (var n in s.Notices) { <p role="status">@n</p> }
                 <div class="table-scroll"><table class="table">

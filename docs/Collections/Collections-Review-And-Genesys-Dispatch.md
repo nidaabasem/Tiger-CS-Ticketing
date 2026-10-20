@@ -107,6 +107,30 @@ are both scheduled on day 14). Until decided, such records are blocked; no ackno
    whether campaigns run continuously. Until then, keep campaigns inactive or time uploads close to the dialling window.
 8. Revalidation re-reads the company's PACT window (the procedures cannot filter by customer): about a minute per company, in the background job.
 
+## Genesys campaign per stage
+
+When `Collections:GenesysOutbound:Campaign:Enabled` is `true`, each upload batch first resolves a Genesys campaign whose **name is exactly the stage name**
+(`CampaignReminderTypes.StageName`), then uploads its contacts. The stage enum stays the internal id; the eligibility rules and customer filtering are unchanged.
+
+| Stage | Genesys campaign name |
+| --- | --- |
+| Overdue | `Overdue reminder - day 1` |
+| Current Month | `Current month reminder - day 14` |
+| Follow Up | `Follow-up reminder - day 28` |
+| Legal Notice | `Legal notice - days 12 and 14` |
+| Legal Case | `Internal Legal referral - day 30` |
+
+* The same name is shown on the Campaigns stage picker and, per reminder type, in the approval summary.
+* Lookup is `GET /api/v2/outbound/campaigns?name=...`. Exactly one match that dials the stage's contact list is **reused**; nothing is created.
+* Several matches, a name that differs only by letter case (Genesys names are unique case-insensitively), or a match dialling another contact list **fail the batch**
+  before any upload; the records are released. An unreadable or incomplete lookup also fails the batch and never leads to a create.
+* With no match and `AllowCreate`, the campaign is created **off** from `Campaign:QueueId`, `DialingMode`, `CallerName`, `CallerAddress` (required) and
+  `ScriptId`, `CallAnalysisResponseSetId` (optional). An unconfirmed creation uploads nothing; the next send looks the campaign up first and reuses it.
+* Each batch stores `StageName`, `GenesysCampaignName`, `GenesysCampaignId` and `CampaignAction` (`Created` / `ReusedExisting`), returned on the dispatch DTO, shown in the
+  batch table and written to the log (stage name and campaign id only). Migration `AddGenesysCampaignToDispatchBatch`.
+* With `Campaign:Enabled=false` (default) the flow is unchanged: contacts go to the configured lists, and only `StageName` is recorded.
+* Genesys field requirements for campaign creation (and that `name` filters the list) should be verified against the target org in UAT.
+
 ## Configuration
 
 Non-secret keys are in `appsettings.json`; supply secrets by user-secrets/environment only.

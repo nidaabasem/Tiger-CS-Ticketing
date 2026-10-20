@@ -793,6 +793,10 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                     b.Property<int>("ContactCount")
                         .HasColumnType("int");
 
+                    b.Property<string>("CampaignAction")
+                        .HasMaxLength(24)
+                        .HasColumnType("nvarchar(24)");
+
                     b.Property<string>("ContactListId")
                         .IsRequired()
                         .HasMaxLength(36)
@@ -802,6 +806,15 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                     b.Property<string>("Error")
                         .HasMaxLength(500)
                         .HasColumnType("nvarchar(500)");
+
+                    b.Property<string>("GenesysCampaignId")
+                        .HasMaxLength(64)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(64)");
+
+                    b.Property<string>("GenesysCampaignName")
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
 
                     b.Property<int?>("HttpStatus")
                         .HasColumnType("int");
@@ -831,6 +844,10 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
 
                     b.Property<int>("Sequence")
                         .HasColumnType("int");
+
+                    b.Property<string>("StageName")
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
 
                     b.Property<DateTime?>("StartedAtUtc")
                         .HasColumnType("datetime2");

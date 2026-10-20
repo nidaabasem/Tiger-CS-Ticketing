@@ -108,8 +108,22 @@ public sealed record GenesysUploadResult(GenesysUploadOutcome Outcome, int? Http
 /// <param name="ContactMissing">Genesys answered 404: the contact no longer exists, so it cannot be dialled.</param>
 public sealed record GenesysSuppressResult(GenesysUploadOutcome Outcome, int? HttpStatus, bool? CallableAfter, bool ContactMissing, string? Error);
 
+/// <summary>A Genesys outbound campaign as far as this integration cares: its id, exact name, the contact list it dials and its status.</summary>
+public sealed record GenesysCampaignRef(string Id, string Name, string? ContactListId, string? Status);
+
+/// <param name="Matches">Every campaign Genesys returned for the name filter (callers still compare names exactly).</param>
+public sealed record GenesysCampaignLookupResult(GenesysUploadOutcome Outcome, int? HttpStatus, IReadOnlyList<GenesysCampaignRef> Matches, string? Error);
+
+public sealed record GenesysCampaignCreateResult(GenesysUploadOutcome Outcome, int? HttpStatus, GenesysCampaignRef? Campaign, string? Error);
+
 public interface IGenesysOutboundClient
 {
+    /// <summary>GET /api/v2/outbound/campaigns?name=... (read only: an Unknown outcome changed nothing).</summary>
+    Task<GenesysCampaignLookupResult> FindCampaignsByNameAsync(string name, CancellationToken ct);
+
+    /// <summary>POST /api/v2/outbound/campaigns with the exact <paramref name="name"/>, status off, and the template settings.</summary>
+    Task<GenesysCampaignCreateResult> CreateCampaignAsync(string name, string contactListId, GenesysCampaignOptions template, CancellationToken ct);
+
     /// <summary>
     /// PUT /api/v2/outbound/contactlists/{contactListId}/contacts/{contactId} with callable=false and the contact's original data
     /// (the documented "Update a contact" operation; DELETE only removes contacts not in use by a campaign, so it is not relied on).

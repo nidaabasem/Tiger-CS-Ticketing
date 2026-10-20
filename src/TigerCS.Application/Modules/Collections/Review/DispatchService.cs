@@ -319,7 +319,8 @@ public sealed class DispatchService(
                 var batch = new CollectionsGenesysBatch
                 {
                     CollectionsDispatchId = dispatch.CollectionsDispatchId, ReminderType = group.Key, ContactListId = genesys.ContactListIdFor(group.Key),
-                    Sequence = ++sequence, ContactCount = slice.Count, Status = GenesysBatchStatus.Pending
+                    Sequence = ++sequence, ContactCount = slice.Count, Status = GenesysBatchStatus.Pending,
+                    StageName = CampaignReminderTypes.StageName(group.Key)
                 };
                 batches.Add(batch); plan.Add((batch, slice));
             }
@@ -354,6 +355,7 @@ public sealed class DispatchService(
             if (batch.Status != GenesysBatchStatus.Pending) continue;
             if (!await store.TryClaimBatchAsync(batch.CollectionsGenesysBatchId, clock.UtcNow, ct)) continue;
             batch = (await store.GetBatchAsync(batch.CollectionsGenesysBatchId, ct))!;
+            if (!await EnsureCampaignAsync(dispatch, batch, ct)) continue;
             await SubmitAsync(batch, ct);
         }
 
@@ -366,6 +368,84 @@ public sealed class DispatchService(
             : "Some batches failed or have an unconfirmed outcome. Unconfirmed batches must be reconciled in Genesys before anything is re-sent.";
         final.CompletedAtUtc = clock.UtcNow; final.Phase = "Finished"; final.LeaseOwner = null; final.LeaseExpiresAtUtc = null;
         await store.UpdateDispatchAsync(final, ct);
+    }
+
+    /// <summary>
+    /// Resolves the Genesys campaign named exactly like the batch's stage before any contact is uploaded. An existing campaign with that name is
+    /// reused (never duplicated) when it dials this batch's contact list; a missing one is created when allowed. Anything uncertain (several
+    /// matches, a different contact list, an unusable template, a failed or unanswered Genesys call) fails the batch with nothing uploaded; the
+    /// records are released, and a later send looks the campaign up again first, so an unconfirmed creation can never produce a duplicate.
+    /// Returns false when the batch was failed.
+    /// </summary>
+    private async Task<bool> EnsureCampaignAsync(CollectionsDispatch dispatch, CollectionsGenesysBatch batch, CancellationToken ct)
+    {
+        var campaign = genesys.Campaign;
+        var stageName = batch.StageName ??= CampaignReminderTypes.StageName(batch.ReminderType);
+        if (!campaign.Enabled) return true;
+
+        async Task<bool> FailAsync(string reason)
+        {
+            logger.LogWarning("Dispatch {DispatchId} batch {BatchId}: no Genesys campaign for stage {StageName}: {Reason}",
+                dispatch.CollectionsDispatchId, batch.CollectionsGenesysBatchId, stageName, reason);
+            batch.Status = GenesysBatchStatus.Failed; batch.Error = Truncate(reason); batch.CompletedAtUtc = clock.UtcNow;
+            await store.UpdateBatchAsync(batch, ct);
+            await MarkItemsAsync(batch, DispatchItemStatus.Failed, batch.Error, null, ct);
+            return false;
+        }
+
+        GenesysCampaignLookupResult lookup;
+        try { lookup = await client.FindCampaignsByNameAsync(stageName, ct); }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        catch (Exception ex)
+        {
+            logger.LogWarning("Genesys campaign lookup for batch {BatchId} threw {ExceptionType}.", batch.CollectionsGenesysBatchId, ex.GetType().Name);
+            return await FailAsync($"The Genesys campaign \"{stageName}\" could not be looked up; nothing was uploaded.");
+        }
+        if (lookup.Outcome != GenesysUploadOutcome.Accepted)
+            return await FailAsync($"The Genesys campaign \"{stageName}\" could not be looked up ({lookup.Error}); nothing was uploaded.");
+
+        // Genesys treats campaign names case-insensitively for uniqueness, so any case variant counts as the same campaign.
+        var matches = lookup.Matches.Where(c => string.Equals(c.Name?.Trim(), stageName, StringComparison.OrdinalIgnoreCase)).ToList();
+        if (matches.Count > 1)
+            return await FailAsync($"{matches.Count} Genesys campaigns are already named \"{stageName}\"; remove the duplicates or choose one by hand. Nothing was uploaded.");
+        if (matches.Count == 1)
+        {
+            var existing = matches[0];
+            if (!string.Equals(existing.Name?.Trim(), stageName, StringComparison.Ordinal))
+                return await FailAsync($"A Genesys campaign named \"{existing.Name}\" already exists and differs only by letter case from \"{stageName}\". Nothing was uploaded.");
+            if (!string.Equals(existing.ContactListId, batch.ContactListId, StringComparison.OrdinalIgnoreCase))
+                return await FailAsync($"The Genesys campaign \"{stageName}\" already exists but dials a different contact list than this stage's list. Nothing was uploaded.");
+            return await RecordCampaignAsync(batch, existing, "ReusedExisting", ct);
+        }
+
+        if (!campaign.AllowCreate)
+            return await FailAsync($"No Genesys campaign named \"{stageName}\" exists and campaign creation is switched off. Nothing was uploaded.");
+        var missing = campaign.MissingForCreate();
+        if (missing.Count > 0)
+            return await FailAsync($"No Genesys campaign named \"{stageName}\" exists and the campaign template is incomplete ({string.Join(", ", missing)}). Nothing was uploaded.");
+
+        GenesysCampaignCreateResult created;
+        try { created = await client.CreateCampaignAsync(stageName, batch.ContactListId, campaign, ct); }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        catch (Exception ex)
+        {
+            logger.LogWarning("Genesys campaign creation for batch {BatchId} threw {ExceptionType}.", batch.CollectionsGenesysBatchId, ex.GetType().Name);
+            created = new(GenesysUploadOutcome.Unknown, null, null, "The request ended without a usable response.");
+        }
+        if (created.Outcome == GenesysUploadOutcome.Accepted && created.Campaign is { Id.Length: > 0 } made)
+            return await RecordCampaignAsync(batch, made, "Created", ct);
+        return await FailAsync(created.Outcome == GenesysUploadOutcome.Unknown
+            ? $"Genesys did not confirm creating the campaign \"{stageName}\". Nothing was uploaded; check Genesys for it before sending again (a new send reuses it if it exists)."
+            : $"Genesys did not create the campaign \"{stageName}\" ({created.Error}). Nothing was uploaded.");
+    }
+
+    private async Task<bool> RecordCampaignAsync(CollectionsGenesysBatch batch, GenesysCampaignRef campaign, string action, CancellationToken ct)
+    {
+        batch.GenesysCampaignId = campaign.Id; batch.GenesysCampaignName = batch.StageName; batch.CampaignAction = action;
+        await store.UpdateBatchAsync(batch, ct);
+        logger.LogInformation("Dispatch {DispatchId} batch {BatchId}: stage {StageName} uses Genesys campaign {CampaignId} ({Action}).",
+            batch.CollectionsDispatchId, batch.CollectionsGenesysBatchId, batch.StageName, campaign.Id, action);
+        return true;
     }
 
     private async Task SubmitAsync(CollectionsGenesysBatch batch, CancellationToken ct)
@@ -515,7 +595,7 @@ public sealed class DispatchService(
             totals.ToDictionary(p => p.Key, p => decimal.Parse(p.Value, CultureInfo.InvariantCulture)),
             d.Batches.OrderBy(b => b.Sequence).Select(b => new DispatchBatchDto(b.CollectionsGenesysBatchId, b.ReminderType.ToString(), b.ContactListId,
                 b.Sequence, b.ContactCount, b.Status.ToString(), b.AttemptCount, b.HttpStatus, b.ReturnedContactCount, b.Error, b.StartedAtUtc,
-                b.CompletedAtUtc, b.ReconciledAtUtc, b.ReconciliationNote)).ToList(),
+                b.CompletedAtUtc, b.ReconciledAtUtc, b.ReconciliationNote, b.StageName, b.GenesysCampaignName, b.GenesysCampaignId, b.CampaignAction)).ToList(),
             UploadDisclaimer, d.Phase, d.RevalidationMs, Count2(ContactSuppressionStatus.Suppressed), Count2(ContactSuppressionStatus.Failed),
             d.Items.Count(i => i.Status == DispatchItemStatus.UploadedToGenesys && string.IsNullOrEmpty(i.GenesysContactId)));
     }

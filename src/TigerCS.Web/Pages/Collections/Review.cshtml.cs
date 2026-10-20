@@ -167,6 +167,11 @@ public sealed class ReviewModel(CollectionsApiClient api) : PageModel
 
     public static string Money(decimal? amount) => amount?.ToString("N2", CultureInfo.InvariantCulture) ?? "—";
 
+    /// <summary>The Genesys campaign shown next to a reminder type in the approval summary: the stage name, which is the exact campaign name.</summary>
+    public static string CampaignSuffix(string reminderType) =>
+        Enum.TryParse<TigerCS.Domain.Modules.Collections.Review.CampaignReminderType>(reminderType, out var type) && Enum.IsDefined(type)
+            ? $" · Genesys campaign \"{TigerCS.Domain.Modules.Collections.Review.CampaignReminderTypes.StageName(type)}\"" : "";
+
     public static string Label(string value) => value switch
     {
         "CurrentMonth" => "Current Month", "FollowUp" => "Follow Up", "LegalNotice" => "Legal Notice", "LegalCase" => "Legal Case",

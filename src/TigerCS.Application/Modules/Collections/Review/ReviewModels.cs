@@ -58,7 +58,8 @@ public sealed record ConfirmDispatchRequest(
 public sealed record DispatchBatchDto(
     long BatchId, string ReminderType, string ContactListId, int Sequence, int ContactCount, string Status,
     int AttemptCount, int? HttpStatus, int? ReturnedContactCount, string? Error,
-    DateTime? StartedAtUtc, DateTime? CompletedAtUtc, DateTime? ReconciledAtUtc, string? ReconciliationNote);
+    DateTime? StartedAtUtc, DateTime? CompletedAtUtc, DateTime? ReconciledAtUtc, string? ReconciliationNote,
+    string? StageName = null, string? GenesysCampaignName = null, string? GenesysCampaignId = null, string? CampaignAction = null);
 
 public sealed record DispatchDto(
     Guid DispatchId, string Status, string? StatusReason, Guid InitiatedByEmployeeId, DateTime InitiatedAtUtc,

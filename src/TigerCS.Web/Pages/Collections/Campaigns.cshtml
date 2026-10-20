@@ -21,11 +21,11 @@
         <div class="field-group">
             <label class="field-label" for="campaignStage">Stage</label>
             <select class="field-select" id="campaignStage" name="stage" data-campaign-stage>
-                <option value="OverdueReminder" selected="@(Model.Stage.Equals("OverdueReminder", StringComparison.OrdinalIgnoreCase))">Overdue reminder · sent day 1 (overdue more than one month)</option>
-                <option value="CurrentMonthReminder" selected="@(Model.Stage.Equals("CurrentMonthReminder", StringComparison.OrdinalIgnoreCase))">Current month reminder · day 14</option>
-                <option value="FollowUpReminder" selected="@(Model.Stage.Equals("FollowUpReminder", StringComparison.OrdinalIgnoreCase))">Follow-up reminder · day 28</option>
-                <option value="LegalNotice" selected="@(Model.Stage.Equals("LegalNotice", StringComparison.OrdinalIgnoreCase))">Legal notice · days 12 and 14</option>
-                <option value="LegalReferral" selected="@(Model.Stage.Equals("LegalReferral", StringComparison.OrdinalIgnoreCase))">Internal Legal referral · day 30</option>
+                <option value="OverdueReminder" selected="@(Model.Stage.Equals("OverdueReminder", StringComparison.OrdinalIgnoreCase))">@TigerCS.Domain.Modules.Collections.Review.CampaignReminderTypes.StageName(TigerCS.Domain.Modules.Collections.CollectionsCampaignStage.OverdueReminder)</option>
+                <option value="CurrentMonthReminder" selected="@(Model.Stage.Equals("CurrentMonthReminder", StringComparison.OrdinalIgnoreCase))">@TigerCS.Domain.Modules.Collections.Review.CampaignReminderTypes.StageName(TigerCS.Domain.Modules.Collections.CollectionsCampaignStage.CurrentMonthReminder)</option>
+                <option value="FollowUpReminder" selected="@(Model.Stage.Equals("FollowUpReminder", StringComparison.OrdinalIgnoreCase))">@TigerCS.Domain.Modules.Collections.Review.CampaignReminderTypes.StageName(TigerCS.Domain.Modules.Collections.CollectionsCampaignStage.FollowUpReminder)</option>
+                <option value="LegalNotice" selected="@(Model.Stage.Equals("LegalNotice", StringComparison.OrdinalIgnoreCase))">@TigerCS.Domain.Modules.Collections.Review.CampaignReminderTypes.StageName(TigerCS.Domain.Modules.Collections.CollectionsCampaignStage.LegalNotice)</option>
+                <option value="LegalReferral" selected="@(Model.Stage.Equals("LegalReferral", StringComparison.OrdinalIgnoreCase))">@TigerCS.Domain.Modules.Collections.Review.CampaignReminderTypes.StageName(TigerCS.Domain.Modules.Collections.CollectionsCampaignStage.LegalReferral)</option>
             </select>
         </div>
         <div class="field-group">

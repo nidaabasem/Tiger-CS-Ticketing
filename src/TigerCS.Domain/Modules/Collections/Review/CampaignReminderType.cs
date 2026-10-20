@@ -32,6 +32,22 @@ public static class CampaignReminderTypes
         _ => throw new ArgumentOutOfRangeException(nameof(type))
     };
 
+    /// <summary>
+    /// The stage's display name. It is used verbatim as the Genesys campaign name (and as the Campaigns page option text), so it must not be
+    /// reworded or decorated anywhere else. The reminder type / stage enum stays the internal identifier.
+    /// </summary>
+    public static string StageName(CampaignReminderType type) => type switch
+    {
+        CampaignReminderType.CurrentMonth => "Current month reminder - day 14",
+        CampaignReminderType.FollowUp => "Follow-up reminder - day 28",
+        CampaignReminderType.Overdue => "Overdue reminder - day 1",
+        CampaignReminderType.LegalNotice => "Legal notice - days 12 and 14",
+        CampaignReminderType.LegalCase => "Internal Legal referral - day 30",
+        _ => throw new ArgumentOutOfRangeException(nameof(type))
+    };
+
+    public static string StageName(CollectionsCampaignStage stage) => StageName(FromStage(stage));
+
     /// <summary>Default ReminderType label written to Genesys; overridable by configuration after checking the supplied templates.</summary>
     public static string DefaultLabel(CampaignReminderType type) => type switch
     {

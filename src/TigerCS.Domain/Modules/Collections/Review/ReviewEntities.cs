@@ -186,6 +186,13 @@ public class CollectionsGenesysBatch
     public long CollectionsDispatchId { get; set; }
     public CampaignReminderType ReminderType { get; set; }
     public string ContactListId { get; set; } = "";
+    /// <summary>The stage's display name at planning time (the exact Genesys campaign name). <see cref="ReminderType"/> remains the internal stage id.</summary>
+    public string? StageName { get; set; }
+    /// <summary>The campaign name actually matched or created in Genesys; equals <see cref="StageName"/>.</summary>
+    public string? GenesysCampaignName { get; set; }
+    public string? GenesysCampaignId { get; set; }
+    /// <summary>"Created" (this send made the campaign) or "ReusedExisting" (a campaign with that exact name already existed).</summary>
+    public string? CampaignAction { get; set; }
     public int Sequence { get; set; }
     public int ContactCount { get; set; }
     public GenesysBatchStatus Status { get; set; }

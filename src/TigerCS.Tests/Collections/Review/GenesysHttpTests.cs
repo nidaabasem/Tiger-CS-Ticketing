@@ -207,6 +207,81 @@ public sealed class GenesysHttpTests
         Assert.Equal(1000, result.ContactIds.Count);
     }
 
+    // ------------------------------------------------------------ campaigns
+
+    private static GenesysCampaignOptions Template() => new()
+    {
+        Enabled = true, AllowCreate = true, QueueId = "q-1", DialingMode = "agentless", CallerName = "Tiger", CallerAddress = "+971400000000", ScriptId = "s-1"
+    };
+
+    [Fact]
+    public async Task CampaignLookup_IsAReadOnlyGetByEncodedName_AndReturnsTheCampaignsFound()
+    {
+        var (client, _, handler, _, _, _) = Build();
+        handler.Responses.Enqueue(_ => Json(HttpStatusCode.OK,
+            "{\"entities\":[{\"id\":\"cmp-1\",\"name\":\"Legal notice - days 12 and 14\",\"contactList\":{\"id\":\"" + ListId + "\"},\"campaignStatus\":\"off\"}],\"pageCount\":1}"));
+        var result = await client.FindCampaignsByNameAsync("Legal notice - days 12 and 14", CancellationToken.None);
+
+        var (request, body) = Assert.Single(handler.Upload);
+        Assert.Equal(HttpMethod.Get, request.Method);
+        Assert.Equal("", body);
+        Assert.Equal("/api/v2/outbound/campaigns", request.RequestUri!.AbsolutePath);
+        Assert.Contains("name=Legal%20notice%20-%20days%2012%20and%2014", request.RequestUri.Query);
+        Assert.Equal(GenesysUploadOutcome.Accepted, result.Outcome);
+        var found = Assert.Single(result.Matches);
+        Assert.Equal(("cmp-1", "Legal notice - days 12 and 14", ListId, "off"), (found.Id, found.Name, found.ContactListId, found.Status));
+    }
+
+    [Fact]
+    public async Task CampaignLookup_ServerError_IsUnknown_NotAnEmptyAnswer()
+    {
+        var (client, _, handler, _, _, _) = Build();
+        handler.Responses.Enqueue(_ => new HttpResponseMessage(HttpStatusCode.ServiceUnavailable));
+        var result = await client.FindCampaignsByNameAsync("Stage", CancellationToken.None);
+        Assert.Equal(GenesysUploadOutcome.Unknown, result.Outcome);
+        Assert.Empty(result.Matches);
+    }
+
+    [Fact]
+    public async Task CampaignCreate_PostsTheExactName_OffStatus_AndTheTemplate()
+    {
+        var (client, _, handler, _, _, _) = Build();
+        handler.Responses.Enqueue(_ => Json(HttpStatusCode.OK, "{\"id\":\"cmp-9\",\"name\":\"Legal notice - days 12 and 14\",\"campaignStatus\":\"off\"}"));
+        var result = await client.CreateCampaignAsync("Legal notice - days 12 and 14", ListId, Template(), CancellationToken.None);
+
+        var (request, body) = Assert.Single(handler.Upload);
+        Assert.Equal(HttpMethod.Post, request.Method);
+        Assert.Equal("/api/v2/outbound/campaigns", request.RequestUri!.AbsolutePath);
+        using var json = JsonDocument.Parse(body);
+        var root = json.RootElement;
+        Assert.Equal("Legal notice - days 12 and 14", root.GetProperty("name").GetString());
+        Assert.Equal(ListId, root.GetProperty("contactList").GetProperty("id").GetString());
+        Assert.Equal("q-1", root.GetProperty("queue").GetProperty("id").GetString());
+        Assert.Equal("s-1", root.GetProperty("script").GetProperty("id").GetString());
+        Assert.Equal("off", root.GetProperty("campaignStatus").GetString());
+        Assert.False(root.TryGetProperty("callAnalysisResponseSet", out _));
+        Assert.Equal(GenesysUploadOutcome.Accepted, result.Outcome);
+        Assert.Equal("cmp-9", result.Campaign!.Id);
+    }
+
+    [Fact]
+    public async Task CampaignCreate_WithAnIncompleteTemplate_SendsNothing()
+    {
+        var (client, _, handler, _, _, _) = Build();
+        var template = Template(); template.QueueId = " ";
+        var result = await client.CreateCampaignAsync("Stage", ListId, template, CancellationToken.None);
+        Assert.Equal(GenesysUploadOutcome.Rejected, result.Outcome);
+        Assert.Empty(handler.Requests);
+    }
+
+    [Fact]
+    public async Task CampaignCreate_OkWithoutAnId_IsUnknown()
+    {
+        var (client, _, handler, _, _, _) = Build();
+        handler.Responses.Enqueue(_ => Json(HttpStatusCode.OK, "{}"));
+        Assert.Equal(GenesysUploadOutcome.Unknown, (await client.CreateCampaignAsync("Stage", ListId, Template(), CancellationToken.None)).Outcome);
+    }
+
     // ------------------------------------------------------------ outcomes
 
     [Fact]

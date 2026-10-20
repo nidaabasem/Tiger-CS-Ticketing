@@ -121,6 +121,10 @@ public class CollectionsGenesysBatchConfiguration : IEntityTypeConfiguration<Col
         builder.Property(b => b.ReminderType).HasConversion<string>().HasMaxLength(16).IsRequired();
         builder.Property(b => b.ContactListId).HasMaxLength(36).IsUnicode(false).IsRequired();
         builder.Property(b => b.Status).HasConversion<string>().HasMaxLength(24).IsRequired();
+        builder.Property(b => b.StageName).HasMaxLength(200);
+        builder.Property(b => b.GenesysCampaignName).HasMaxLength(200);
+        builder.Property(b => b.GenesysCampaignId).HasMaxLength(64).IsUnicode(false);
+        builder.Property(b => b.CampaignAction).HasMaxLength(24);
         builder.Property(b => b.RequestHash).HasMaxLength(64).IsUnicode(false);
         builder.Property(b => b.Error).HasMaxLength(500);
         builder.Property(b => b.ReconciliationNote).HasMaxLength(500);
@@ -372,6 +376,8 @@ public sealed class ReviewStore(TigerCsDbContext db) : IReviewStore
         tracked.ReturnedContactCount = batch.ReturnedContactCount; tracked.RequestHash = batch.RequestHash;
         tracked.CompletedAtUtc = batch.CompletedAtUtc; tracked.ReconciledByEmployeeId = batch.ReconciledByEmployeeId;
         tracked.ReconciledAtUtc = batch.ReconciledAtUtc; tracked.ReconciliationNote = Cut(batch.ReconciliationNote);
+        tracked.StageName = batch.StageName; tracked.GenesysCampaignName = batch.GenesysCampaignName;
+        tracked.GenesysCampaignId = batch.GenesysCampaignId; tracked.CampaignAction = batch.CampaignAction;
         await db.SaveChangesAsync(ct);
         db.ChangeTracker.Clear();
     }
