@@ -176,6 +176,7 @@ public sealed class CampaignsModel(CollectionsApiClient api, Microsoft.Extension
         if (DateFrom is { } from) query["dueFrom"] = from.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
         if (DateTo is { } to) query["dueTo"] = to.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
         if (PaymentStatus is not "Both") query["dueStatus"] = PaymentStatus;
+        if (TowerId is { } tower) query["towerId"] = tower.ToString(CultureInfo.InvariantCulture);
         return query.Count == 0 ? "/Collections/Review" : $"/Collections/Review?{query}";
     }
 

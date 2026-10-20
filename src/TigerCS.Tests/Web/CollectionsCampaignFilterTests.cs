@@ -89,7 +89,7 @@ public sealed class CollectionsCampaignFilterTests
         var html = await (await client.GetAsync($"/Collections/Campaigns?{Filters}")).Content.ReadAsStringAsync();
         var link = System.Net.WebUtility.HtmlDecode(Regex.Match(html, "href=\"([^\"]*)\"[^>]*data-review-link").Groups[1].Value);
         Assert.StartsWith("/Collections/Review?", link);
-        Assert.Contains("reminderType=LegalNotice", link); Assert.Contains("dueFrom=2026-09-01", link); Assert.Contains("dueTo=2026-10-31", link); Assert.Contains("dueStatus=Overdue", link);
+        Assert.Contains("reminderType=LegalNotice", link); Assert.Contains("towerId=7", link); Assert.Contains("dueFrom=2026-09-01", link); Assert.Contains("dueTo=2026-10-31", link); Assert.Contains("dueStatus=Overdue", link);
     }
 
     [Fact]

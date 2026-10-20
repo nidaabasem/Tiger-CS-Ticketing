@@ -41,6 +41,7 @@ public sealed class CollectionsCampaignAppServiceTests
             var rows = Items.Where(r => DateOnly.FromDateTime(r.DueDate) >= (request.FromDate ?? DateOnly.MinValue)
                 && DateOnly.FromDateTime(r.DueDate) <= request.ThroughDate
                 && (request.CompanyId is null || r.CompanyId == request.CompanyId)
+                && (request.TowerId is null || r.TowerId == request.TowerId)
                 && (!HonourMinAmount || (r.Amount > 0 && r.Amount >= request.MinAmount))).ToList();
             return new PactReceivablesSnapshot(rows, ReadAt, false, Snapshot);
         }

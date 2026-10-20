@@ -41,6 +41,8 @@ public class CollectionsReviewRecordConfiguration : IEntityTypeConfiguration<Col
         builder.Property(r => r.Email).HasMaxLength(320).IsRequired();
         builder.Property(r => r.UnitCode).HasMaxLength(60).IsRequired();
         builder.Property(r => r.ProjectCode).HasMaxLength(60).IsRequired();
+        builder.Property(r => r.TowerNumber).HasMaxLength(20);
+        builder.Property(r => r.TowerName).HasMaxLength(200);
         builder.Property(r => r.PaymentStatus).HasConversion<string>().HasMaxLength(16).IsRequired();
         builder.Property(r => r.SourceStatus).HasMaxLength(100).IsRequired();
         builder.Property(r => r.RemainingAmount).HasPrecision(19, 4);
@@ -214,6 +216,7 @@ public sealed class ReviewStore(TigerCsDbContext db) : IReviewStore
         var q = db.CollectionsReviewRecords.AsNoTracking().Where(r => r.CollectionsReviewRunId == runId);
         if (s.CompanyId is { } company) q = q.Where(r => r.CompanyId == company);
         if (s.Project is { } project) { var p = Like(project); q = q.Where(r => EF.Functions.Like(r.ProjectCode, p, "\\")); }
+        if (s.TowerId is { } tower) q = q.Where(r => r.TowerId == tower);
         if (s.Unit is { } unit) { var p = Like(unit); q = q.Where(r => EF.Functions.Like(r.UnitCode, p, "\\")); }
         if (s.CustomerText is { } text)
         {
@@ -254,6 +257,9 @@ public sealed class ReviewStore(TigerCsDbContext db) : IReviewStore
             .ThenBy(x => x.Record.ReminderType).ThenBy(x => x.Record.CollectionsReviewRecordId).Skip(skip).Take(take).ToListAsync(ct);
         return new StoredPage(await WithHistoryAsync(rows, ct), total);
     }
+
+    public Task<bool> RunHasTowerDataAsync(long runId, CancellationToken ct) =>
+        db.CollectionsReviewRecords.AsNoTracking().AnyAsync(r => r.CollectionsReviewRunId == runId && r.TowerId != null, ct);
 
     public async Task<ReviewCountsDto> CountAsync(long runId, ReviewQuerySpec specWithoutStatus, bool stale, CancellationToken ct)
     {

@@ -71,10 +71,11 @@ public sealed class CampaignPaymentStatusTests
     }
 
     [Theory]
-    // Current-month stage: only units with a current-month instalment qualify (101, 102); unit 103 is listed but NotEligible, so its 600 is not "qualifying".
-    [InlineData("Both", 3, 2, 1200)]
+    // Current-month stage: only units with a current-month instalment qualify (101: stage amount 500, 102: 400); unit 103 is listed but NotEligible, so its 600 is not "qualifying".
+    // The qualifying amount is the STAGE amount (what Genesys receives), not Due + Overdue: unit 101's September 300 is outstanding but not part of the current-month stage amount.
+    [InlineData("Both", 3, 2, 900)]
     [InlineData("Due", 2, 2, 900)]
-    [InlineData("Overdue", 2, 1, 300)]
+    [InlineData("Overdue", 2, 1, 500)]
     public async Task EligibleCountAndQualifyingAmount_CoverTheWholeFilteredList_NotJustThePage(string status, int count, int eligible, int amount)
     {
         var h = Seeded();
@@ -83,6 +84,9 @@ public sealed class CampaignPaymentStatusTests
         Assert.Single(page.Items);                                   // paging happens after the filter
         Assert.Equal(eligible, page.TotalCount - page.NotEligibleCount);
         Assert.Equal(amount, (int)page.EligibleTotalAmount!.Value);
+        // Outstanding = Due + Overdue of the same eligible units, over the whole list.
+        var expectedOutstanding = status switch { "Both" => 800 + 400, "Due" => 500 + 400, _ => 300 };
+        Assert.Equal(expectedOutstanding, (int)page.EligibleOutstandingAmount!.Value);
     }
 
     [Fact]

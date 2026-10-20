@@ -60,8 +60,10 @@ public sealed class ReviewQueryService(
         var counts = await store.CountAsync(run.CollectionsReviewRunId, spec with { ValidationStatus = null }, stale, ct);
         var unknown = await store.CountAsync(run.CollectionsReviewRunId,
             spec with { ValidationStatus = null, PaymentStatuses = [ReviewPaymentStatus.Unknown] }, stale, ct);
+        // A tower chosen on data read before towers were stored matches nothing: say so instead of looking like "this project has no customers" (and never fall back to all projects).
+        var towerMissing = spec.TowerId is not null && items.TotalCount == 0 && !await store.RunHasTowerDataAsync(run.CollectionsReviewRunId, ct);
         return CollectionsResult<ReviewPageDto>.Ok(new(ToDto(run), counts with { UnknownPaymentStatus = unknown.Total }, page, pageSize,
-            items.TotalCount, items.Items.Select(v => ToDto(v, stale)).ToList(), applied));
+            items.TotalCount, items.Items.Select(v => ToDto(v, stale)).ToList(), applied, towerMissing));
     }
 
     /// <summary>Phone numbers that would be called repeatedly (several units, or several reminder types for one unit): who, how many units, and why they are held back.</summary>
@@ -197,7 +199,7 @@ public sealed class ReviewQueryService(
         return new(r.RecordKey, r.ReminderType.ToString(), r.CompanyId, r.CustomerName, r.Phone, r.Email, r.ProjectCode, r.UnitCode,
             r.PaymentStatus.ToString(), r.RemainingAmount, r.Currency, r.DueDate, v.EffectiveStatus(stale).ToString(),
             reasons.Select(c => new ReviewReasonDto(c, (ReviewReasons.KindOf(c) ?? ReasonKind.NeedsReview).ToString(), ReviewReasons.Explain(c))).ToList(),
-            r.Source, r.SourceReadAtUtc, v.PreviousDispatchStatus, v.PreviousDispatchAtUtc);
+            r.Source, r.SourceReadAtUtc, v.PreviousDispatchStatus, v.PreviousDispatchAtUtc, r.TowerNumber, r.TowerName);
     }
 
     public (ReviewQuerySpec? Spec, string? Error) TryParse(ReviewFilter f)
@@ -206,6 +208,7 @@ public sealed class ReviewQueryService(
         if ((f.Year is null) != (f.Month is null) || f.Year is < 2000 or > 2100 || f.Month is < 1 or > 12)
             return (null, "Year and month go together (2000-2100, 1-12).");
         if (f.DueFrom is { } from && f.DueTo is { } to && from > to) return (null, "The due-date range starts after it ends.");
+        if (f.TowerId is <= 0) return (null, "Choose a valid project / tower.");
         if (f.MinRemaining is < 0 || f.MaxRemaining is < 0 || (f.MinRemaining is { } lo && f.MaxRemaining is { } hi && lo > hi))
             return (null, "Minimum remaining must not exceed maximum remaining, and neither may be negative.");
         if (new[] { f.Project, f.Unit, f.Customer, f.Reason }.Any(v => v?.Length > 200)) return (null, "Text filters are limited to 200 characters.");
@@ -266,7 +269,7 @@ public sealed class ReviewQueryService(
             if (d.Length >= 3) digits = d.TrimStart('0');
         }
         return (new ReviewQuerySpec(f.CompanyId, Blank(f.Project), Blank(f.Unit), Blank(customer), digits, dueFrom, dueTo, statuses,
-            f.MinRemaining ?? reviewOptions.DefaultMinimumRemaining, f.MaxRemaining, type, validation, reason), null);
+            f.MinRemaining ?? reviewOptions.DefaultMinimumRemaining, f.MaxRemaining, type, validation, reason, f.TowerId), null);
     }
 
     private static string? Blank(string? v) => string.IsNullOrWhiteSpace(v) ? null : v.Trim();

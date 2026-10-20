@@ -73,7 +73,7 @@ public sealed class CollectionsApiClient(HttpClient httpClient, ILogger<Collecti
         var query = HttpUtility.ParseQueryString(string.Empty);
         void Add(string name, string? value) { if (!string.IsNullOrWhiteSpace(value)) query[name] = value; }
         Add("companyId", filter.CompanyId?.ToString(CultureInfo.InvariantCulture));
-        Add("project", filter.Project); Add("unit", filter.Unit); Add("customer", filter.Customer);
+        Add("project", filter.Project); Add("towerId", filter.TowerId?.ToString(CultureInfo.InvariantCulture)); Add("unit", filter.Unit); Add("customer", filter.Customer);
         Add("year", filter.Year?.ToString(CultureInfo.InvariantCulture)); Add("month", filter.Month?.ToString(CultureInfo.InvariantCulture));
         Add("dueFrom", filter.DueFrom?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture));
         Add("dueTo", filter.DueTo?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture));

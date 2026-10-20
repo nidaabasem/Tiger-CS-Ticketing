@@ -131,7 +131,11 @@ public sealed class CollectionsReviewRenderTests
     public async Task TheFilterBar_OffersDueOverdueBoth_AndKeepsTheChoice()
     {
         using var factory = Factory(new Api()); using var client = factory.CreateClient();
-        var html = await (await client.GetAsync("/Collections/Review?dueStatus=Overdue&reminderType=LegalNotice")).Content.ReadAsStringAsync();
+        var html = await (await client.GetAsync("/Collections/Review?dueStatus=Overdue&reminderType=LegalNotice&towerId=7")).Content.ReadAsStringAsync();
+        // The same structured Project / Tower picker as Campaigns: one control, the choice kept, carried by the selection forms.
+        Assert.Single(System.Text.RegularExpressions.Regex.Matches(html, "<select[^>]*name=\"towerId\""));
+        Assert.Contains("<option value=\"7\" selected=\"selected\">124 - Tower 124</option>", html);
+        Assert.Contains("name=\"TowerId\" value=\"7\"", html);
         Assert.Contains("name=\"dueStatus\"", html);
         Assert.Contains("<option value=\"Overdue\" selected=\"selected\">Overdue</option>", html);
         Assert.Contains("name=\"DueStatus\" value=\"Overdue\"", html);                 // travels with the selection form that approval re-resolves
@@ -145,7 +149,7 @@ public sealed class CollectionsReviewRenderTests
         var token = System.Net.WebUtility.HtmlDecode(System.Text.RegularExpressions.Regex.Match(page, "name=\"__RequestVerificationToken\"[^>]*value=\"([^\"]+)\"").Groups[1].Value);
         var post = await client.PostAsync("/Collections/Review?handler=Summary", new FormUrlEncodedContent(new Dictionary<string, string>
         {
-            ["__RequestVerificationToken"] = token, ["SelectionMode"] = "AllMatching", ["Project"] = "TP140", ["DueStatus"] = "Overdue",
+            ["__RequestVerificationToken"] = token, ["SelectionMode"] = "AllMatching", ["TowerId"] = "7", ["DueStatus"] = "Overdue",
             ["DueFrom"] = "2026-09-01", ["DueTo"] = "2026-09-30", ["ReminderType"] = "LegalNotice"
         }));
         var html = await post.Content.ReadAsStringAsync();
@@ -154,7 +158,7 @@ public sealed class CollectionsReviewRenderTests
         var snapshot = System.Text.RegularExpressions.Regex.Match(html, "data-selection-snapshot.*?</dl>", System.Text.RegularExpressions.RegexOptions.Singleline).Value;
         Assert.Contains("data-snapshot-stage>Legal notice - days 12 and 14<", snapshot);
         Assert.Contains("data-snapshot-campaign>Legal notice - days 12 and 14<", snapshot);   // the campaign name is the stage name, character for character
-        Assert.Contains("data-snapshot-project>TP140<", snapshot);
+        Assert.Contains("data-snapshot-project>124 - Tower 124<", snapshot);
         Assert.Contains("data-snapshot-status>Overdue<", snapshot);
         Assert.Contains("data-snapshot-dates>2026-09-01 to 2026-09-30<", snapshot);
         Assert.Contains("data-snapshot-count>2<", snapshot);
@@ -199,6 +203,8 @@ public sealed class CollectionsReviewRenderTests
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
                 { Content = JsonContent.Create(new ReviewPageDto(Run, new ReviewCountsDto(3, 1, 1, 0, 1, 1), 1, 25, 3, items, 250m)) });
             }
+            if (path.EndsWith("/towers"))
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = JsonContent.Create(new[] { new TigerCS.Application.Modules.Collections.Dto.CollectionsTowerDto(7, "124", "Tower 124", 4, true) }) });
             if (path.EndsWith("/selection/summary"))
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = JsonContent.Create(new SelectionSummaryDto(7, 2, "FP", new Dictionary<string, decimal> { ["AED"] = 1234.5m },
                     new Dictionary<string, int> { ["LegalNotice"] = 2 }, 0, 0, 1, 50,

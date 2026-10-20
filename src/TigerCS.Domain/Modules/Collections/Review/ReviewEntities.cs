@@ -50,6 +50,10 @@ public class CollectionsReviewRecord
     public int? UnitId { get; set; }
     public string UnitCode { get; set; } = "";
     public string ProjectCode { get; set; } = "";
+    /// <summary>The unit's tower (local CollectionsTowers.TowerId) as read from the source: the structured Project / Tower filter. Null on data read before towers were stored.</summary>
+    public int? TowerId { get; set; }
+    public string? TowerNumber { get; set; }
+    public string? TowerName { get; set; }
     public ReviewPaymentStatus PaymentStatus { get; set; }
     public string SourceStatus { get; set; } = "";
     public decimal? RemainingAmount { get; set; }

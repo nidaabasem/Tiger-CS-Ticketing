@@ -963,6 +963,17 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                         .HasMaxLength(100)
                         .HasColumnType("nvarchar(100)");
 
+                    b.Property<int?>("TowerId")
+                        .HasColumnType("int");
+
+                    b.Property<string>("TowerName")
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<string>("TowerNumber")
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)");
+
                     b.Property<string>("TenantId")
                         .IsRequired()
                         .HasMaxLength(50)

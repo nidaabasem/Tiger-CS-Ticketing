@@ -43,6 +43,8 @@ public interface IReviewStore
 
     // ---- review queries (stale = the run's data is older than the freshness window)
     Task<StoredPage> QueryAsync(long runId, ReviewQuerySpec spec, bool stale, int skip, int take, CancellationToken ct);
+    /// <summary>True when at least one record of the run carries a tower (data read before towers were stored has none).</summary>
+    Task<bool> RunHasTowerDataAsync(long runId, CancellationToken ct);
     Task<ReviewCountsDto> CountAsync(long runId, ReviewQuerySpec specWithoutStatus, bool stale, CancellationToken ct);
     /// <summary>All Ready records matching the spec (Ready after the stale adjustment), ordered, capped at <paramref name="max"/> + 1.</summary>
     Task<IReadOnlyList<ReviewRecordView>> ResolveAsync(long runId, ReviewQuerySpec spec, IReadOnlyCollection<string>? keys, bool stale, int max, CancellationToken ct);

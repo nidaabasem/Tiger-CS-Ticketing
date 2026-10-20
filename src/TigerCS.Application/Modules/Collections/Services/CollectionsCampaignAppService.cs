@@ -165,7 +165,7 @@ public sealed class CollectionsCampaignAppService(
         }
 
         int count, ready, review, notEligible = 0;
-        decimal? eligibleTotal = null;
+        decimal? eligibleTotal = null, eligibleOutstanding = null;
         List<CollectionsCampaignContactDto> items;
         if (sqlPage is not null)
         {
@@ -213,7 +213,10 @@ public sealed class CollectionsCampaignAppService(
             review = contacts.Count(x => x.Status == "NeedsReview");
             notEligible = contacts.Count(x => x.Status == "NotEligible");
             // The qualifying amount: Due + Overdue of the units the stage rule makes eligible, over the WHOLE filtered list (not just this page).
-            eligibleTotal = contacts.Where(x => x.Status != "NotEligible").Sum(x => x.TotalAmount);
+            // Total qualifying amount = the STAGE amount of every eligible unit over the whole filtered list: exactly what Review & approve shows and what Genesys receives as AmountDue.
+            // It is not Due + Overdue (the balance columns): a stage amount is the part of the balance the stage rule selects. That balance is reported separately as the outstanding figure.
+            eligibleTotal = contacts.Where(x => x.Status != "NotEligible").Sum(x => x.Amount ?? 0m);
+            eligibleOutstanding = contacts.Where(x => x.Status != "NotEligible").Sum(x => x.TotalAmount);
             items = forExport ? contacts : contacts.Skip((page - 1) * pageSize).Take(pageSize).ToList();
         }
         return CollectionsResult<CollectionsCampaignPreviewDto>.Ok(new(date, clock.BusinessDate, readAtUtc,
@@ -222,7 +225,21 @@ public sealed class CollectionsCampaignAppService(
             count, ready, review, page, pageSize, items,
             from, to, CollectionsCampaignPolicy.RangeNotes(selected, date, eligibleFrom, to), towerId, snapshotStatus, min,
             new ServerTimingsDto(sourceMs, total.Elapsed.TotalMilliseconds - sourceMs, total.Elapsed.TotalMilliseconds), CrmContactStatusDto.From(crmSet.Availability), notEligible,
-            CampaignPaymentFilters.Name(paymentFilter), eligibleTotal));
+            CampaignPaymentFilters.Name(paymentFilter), eligibleTotal, eligibleOutstanding, PaymentStatusNote(paymentFilter, dateFrom, to, today)));
+    }
+
+    /// <summary>
+    /// How the Due / Overdue status meets the chosen dates. Due = instalments due inside the current Dubai month, Overdue = due before its first day; both are measured against TODAY
+    /// (not the preview date), and the dates only choose which instalments are read ([From, To], To never past the end of the current month). A combination that cannot match anything says so.
+    /// </summary>
+    internal static string? PaymentStatusNote(CampaignPaymentFilter filter, DateOnly? from, DateOnly to, DateOnly today)
+    {
+        var monthStart = CollectionsDueMonth.MonthStart(today);
+        if (filter == CampaignPaymentFilter.Due && to < monthStart)
+            return $"Due means due inside the current month (from {monthStart:yyyy-MM-dd}); the chosen dates end before it, so nothing is Due.";
+        if (filter == CampaignPaymentFilter.Overdue && from is { } start && start >= monthStart)
+            return $"Overdue means due before {monthStart:yyyy-MM-dd}; the chosen dates start on or after it, so nothing is Overdue.";
+        return null;
     }
 
     /// <summary>Review reasons and status of a candidate from its unit-level flags and the global (source / schedule / release) gates. Order is part of the contract.</summary>

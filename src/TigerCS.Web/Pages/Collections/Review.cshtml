@@ -121,7 +121,7 @@
                 <option value="4" selected="@(Model.CompanyId == 4)">Tiger Group Dubai (4)</option>
                 <option value="32" selected="@(Model.CompanyId == 32)">Tiger Group Sharjah (32)</option>
             </select></div>
-        <div class="field-group"><label class="field-label" for="fProject">Project</label><input class="field-input" id="fProject" name="project" maxlength="200" value="@Model.Project" /></div>
+        <partial name="_TowerPicker" model="@(new TowerPickerModel("reviewTower", Model.Towers, Model.TowerId, Model.TowersFailed, "Project / Tower", "All projects"))" />
         <div class="field-group"><label class="field-label" for="fUnit">Unit</label><input class="field-input" id="fUnit" name="unit" maxlength="200" value="@Model.Unit" /></div>
         <div class="field-group filter-bar__search"><label class="field-label" for="fCustomer">Customer name or phone</label><input class="field-input" type="search" id="fCustomer" name="customer" maxlength="200" value="@Model.Customer" /></div>
         <div class="field-group"><label class="field-label" for="fMonth">Due month</label><input class="field-input" type="month" id="fMonth" name="month" value="@Model.Month" /></div>
@@ -162,6 +162,7 @@
             <a class="tile tile-excluded" href="@Model.PageUrl(1, validation: "Excluded")"><strong>@report.Counts.Excluded</strong><span>Excluded</span></a>
             <a class="tile tile-sent" href="@Model.PageUrl(1, validation: "AlreadySent")"><strong>@report.Counts.AlreadySent</strong><span>Already Sent</span></a>
         </div>
+        @if (report.TowerDataMissing) { <p class="review-note" role="alert" data-tower-data-missing>This review data was read before the project / tower was stored, so the selected project cannot be matched and nothing is listed for it (the list is never widened to all projects). Refresh the review data.</p> }
         @if (report.Counts.UnknownPaymentStatus > 0 && (Model.PaymentStatus ?? "UnpaidOrPartial") is not ("All" or "Unknown"))
         {
             <p class="review-note" role="status">@report.Counts.UnknownPaymentStatus matching record(s) have an unknown payment status and are hidden from this view. They are never sendable. <a href="@Model.PageUrl(1, "Unknown")">Show them</a>.</p>
@@ -232,7 +233,7 @@
 
         <form method="post" class="panel review-selection" data-selection-form>
             <h2>Select records to send</h2>
-            <input type="hidden" name="CompanyId" value="@Model.CompanyId" /><input type="hidden" name="Project" value="@Model.Project" />
+            <input type="hidden" name="CompanyId" value="@Model.CompanyId" /><input type="hidden" name="Project" value="@Model.Project" /><input type="hidden" name="TowerId" value="@Model.TowerId" />
             <input type="hidden" name="Unit" value="@Model.Unit" /><input type="hidden" name="Customer" value="@Model.Customer" />
             <input type="hidden" name="Month" value="@Model.Month" /><input type="hidden" name="DueFrom" value="@Model.DueFrom?.ToString("yyyy-MM-dd")" />
             <input type="hidden" name="DueTo" value="@Model.DueTo?.ToString("yyyy-MM-dd")" /><input type="hidden" name="PaymentStatus" value="@Model.PaymentStatus" />
@@ -254,7 +255,7 @@
                 <dl class="review-snapshot" data-selection-snapshot>
                     <dt>Selected stage</dt><dd data-snapshot-stage>@(s.CountByReminderType.Count == 0 ? "—" : string.Join(", ", s.CountByReminderType.Keys.Select(ReviewModel.StageName)))</dd>
                     <dt>Genesys campaign name</dt><dd data-snapshot-campaign>@(s.CountByReminderType.Count == 0 ? "—" : string.Join(" · ", s.CountByReminderType.Keys.Select(ReviewModel.StageName)))</dd>
-                    <dt>Project</dt><dd data-snapshot-project>@(string.IsNullOrWhiteSpace(Model.Project) ? "All projects" : Model.Project)</dd>
+                    <dt>Project</dt><dd data-snapshot-project>@Model.ProjectText</dd>
                     <dt>Payment status</dt><dd data-snapshot-status>@Model.DueStatusText</dd>
                     <dt>Date range</dt><dd data-snapshot-dates>@Model.DateRangeText</dd>
                     <dt>Eligible customers</dt><dd data-snapshot-count>@s.Count</dd>
@@ -282,7 +283,7 @@
                         @if (s.Page * s.PageSize < s.Count) { <button class="btn btn-sm" type="submit" asp-page-handler="Summary" name="ContactPage" value="@(s.Page + 1)" formnovalidate>More contacts</button> }
                     </p>
                 }
-                <input type="hidden" name="CompanyId" value="@Model.CompanyId" /><input type="hidden" name="Project" value="@Model.Project" />
+                <input type="hidden" name="CompanyId" value="@Model.CompanyId" /><input type="hidden" name="Project" value="@Model.Project" /><input type="hidden" name="TowerId" value="@Model.TowerId" />
                 <input type="hidden" name="Unit" value="@Model.Unit" /><input type="hidden" name="Customer" value="@Model.Customer" />
                 <input type="hidden" name="Month" value="@Model.Month" /><input type="hidden" name="DueFrom" value="@Model.DueFrom?.ToString("yyyy-MM-dd")" />
                 <input type="hidden" name="DueTo" value="@Model.DueTo?.ToString("yyyy-MM-dd")" /><input type="hidden" name="PaymentStatus" value="@Model.PaymentStatus" />
@@ -328,4 +329,5 @@
     </div>
     }
 </div>
+<script src="~/js/collections-towers.js" asp-append-version="true"></script>
 <script src="~/js/collections-review.js" asp-append-version="true"></script>
