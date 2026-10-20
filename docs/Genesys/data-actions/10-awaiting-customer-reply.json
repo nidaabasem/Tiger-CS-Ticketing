@@ -1,5 +1,5 @@
 {
-  "name": "TigerCS - Awaiting Customer Reply",
+  "name": "TigerCS - Customer Reply / AI Completion",
   "integrationType": "custom-rest-actions",
   "actionType": "custom",
   "category": "TigerCS",
@@ -12,7 +12,7 @@
         "Content-Type": "application/json",
         "Accept": "application/json"
       },
-      "requestTemplate": "{\"conversationId\": \"$esc.jsonString(${input.conversationId})\", \"awaitingCustomerReply\": ${input.awaiting}}"
+      "requestTemplate": "{\"conversationId\": \"$esc.jsonString(${input.conversationId})\", \"awaitingCustomerReply\": \"$!esc.jsonString($input.awaiting)\", \"closedByAi\": \"$!esc.jsonString($input.closedByAi)\"}"
     },
     "response": {
       "translationMap": {
@@ -20,28 +20,45 @@
         "ticketStatus": "$.ticketStatus",
         "awaitingCustomerReply": "$.awaitingCustomerReply",
         "inactivityDeadlineUtc": "$.inactivityDeadlineUtc",
-        "note": "$.awaitingCustomerReplyNote"
+        "note": "$.awaitingCustomerReplyNote",
+        "closedByAi": "$.closedByAi",
+        "closedByAiNote": "$.closedByAiNote"
       },
       "translationMapDefaults": {
         "inactivityDeadlineUtc": "\"\"",
-        "note": "\"\""
+        "note": "\"\"",
+        "closedByAi": "false",
+        "closedByAiNote": "\"\""
       },
-      "successTemplate": "{\"outcome\": ${outcome}, \"ticketStatus\": ${ticketStatus}, \"awaitingCustomerReply\": ${awaitingCustomerReply}, \"inactivityDeadlineUtc\": ${inactivityDeadlineUtc}, \"note\": ${note}}"
+      "successTemplate": "{\"outcome\": ${outcome}, \"ticketStatus\": ${ticketStatus}, \"awaitingCustomerReply\": ${awaitingCustomerReply}, \"inactivityDeadlineUtc\": ${inactivityDeadlineUtc}, \"note\": ${note}, \"closedByAi\": ${closedByAi}, \"closedByAiNote\": ${closedByAiNote}}"
     }
   },
   "contract": {
     "input": {
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-04/schema#",
-        "title": "TigerCS - Awaiting Customer Reply",
+        "title": "TigerCS - Customer Reply / AI Completion",
         "type": "object",
-        "required": ["ticketId", "conversationId", "awaiting"],
+        "required": [
+          "ticketId",
+          "conversationId"
+        ],
         "properties": {
-          "ticketId": { "type": "string", "description": "Participant data TigerCsTicketId." },
-          "conversationId": { "type": "string", "description": "The conversation id." },
+          "ticketId": {
+            "type": "string",
+            "description": "Participant data TigerCsTicketId."
+          },
+          "conversationId": {
+            "type": "string",
+            "description": "The conversation id."
+          },
           "awaiting": {
             "type": "boolean",
-            "description": "true right after the chatbot sends a message that needs a reply (starts the bot-prompt timer (5 minutes; only for tickets the Website/Chatbot 10-minute rule does not track); repeating it never restarts it). false when the customer replies (cancels it AND restarts the 10-minute Website/Chatbot inactivity clock - send it on EVERY inbound customer message). Call true again with the chatbot's next question."
+            "description": "CUSTOMER INTERACTION / bot prompt. Send false on EVERY inbound customer message (the customer interacted: restarts the 10-minute Website/Chatbot inactivity clock, cancels the bot-prompt timer). Send true right after the chatbot asks a question that needs a reply (starts the bot-prompt timer used only by tickets the 10-minute rule does not track; repeating it never restarts it). LEAVE UNSET when the AI finishes the conversation - that is closedByAi, not a customer interaction."
+          },
+          "closedByAi": {
+            "type": "boolean",
+            "description": "AI CONVERSATION COMPLETION. Send true ONCE, when the Genesys AI (voicebot/chatbot) has finished the conversation and no human is involved: TigerCS closes the ticket with the reason \"Closed by AI\". Do not send it with awaiting. Never closes a ticket a person owns, a Call Center ticket, one with a human requested/pending/connected, or one already closed (e.g. by document delivery). Leave unset otherwise."
           }
         }
       }
@@ -52,11 +69,34 @@
         "title": "TigerCS - Awaiting Customer Reply result",
         "type": "object",
         "properties": {
-          "outcome": { "type": "string", "description": "\"Applied\"." },
-          "ticketStatus": { "type": "string", "description": "The ticket status now." },
-          "awaitingCustomerReply": { "type": "boolean", "description": "Whether the inactivity timer is running after this call." },
-          "inactivityDeadlineUtc": { "type": "string", "description": "When the ticket becomes eligible for automatic closure, while the timer runs." },
-          "note": { "type": "string", "description": "Why a requested timer was not started (human follow-up pending, conversation ended, ticket owned or closed). Empty otherwise." }
+          "outcome": {
+            "type": "string",
+            "description": "\"Applied\"."
+          },
+          "ticketStatus": {
+            "type": "string",
+            "description": "The ticket status now."
+          },
+          "awaitingCustomerReply": {
+            "type": "boolean",
+            "description": "Whether the inactivity timer is running after this call."
+          },
+          "inactivityDeadlineUtc": {
+            "type": "string",
+            "description": "When the ticket becomes eligible for automatic closure, while the timer runs."
+          },
+          "note": {
+            "type": "string",
+            "description": "Why a requested timer was not started (human follow-up pending, conversation ended, ticket owned or closed). Empty otherwise."
+          },
+          "closedByAi": {
+            "type": "boolean",
+            "description": "true when this call closed the ticket because closedByAi was sent."
+          },
+          "closedByAiNote": {
+            "type": "string",
+            "description": "Why closedByAi did not close the ticket (human involved, Call Center, already closed, ...), when it did not."
+          }
         }
       }
     }

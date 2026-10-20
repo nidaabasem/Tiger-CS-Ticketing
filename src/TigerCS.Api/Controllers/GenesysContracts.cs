@@ -1,3 +1,5 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using TigerCS.Application.Abstractions;
 using TigerCS.Application.Modules.GenesysIntegration.Dto;
 
@@ -171,6 +173,13 @@ public sealed record GenesysConversationEndResponse(
 /// every inbound customer message — TigerCS cannot see messages Genesys does not report. <c>awaitingCustomerReply: false</c> also counts.
 /// <b>Omit it</b> (or send false) to change nothing.
 /// </param>
+/// <param name="ClosedByAi">
+/// <c>true</c> = the Genesys AI (voicebot / chatbot) <b>finished the conversation</b>: TigerCS closes the ticket (Resolved → Closed) with the
+/// exact reason <c>Closed by AI</c>. This is NOT a customer interaction and is separate from <c>awaitingCustomerReply</c>. Closes only a
+/// ticket the AI still owns: refused (nothing changed, <c>closedByAiNote</c> says why) when a human is requested, pending or connected, a person
+/// owns the ticket, it is a Call Center ticket, or it is already closed (an earlier closure — including a document-delivery one — is never
+/// overwritten). Repeating it is harmless. Applied after every other part of the same update. <b>Omit it</b> (or false) to change nothing.
+/// </param>
 /// <param name="AwaitingCustomerReply">
 /// Chatbot inactivity timer. <c>true</c> = the chatbot just asked the customer
 /// something and is waiting for the reply: TigerCS starts a persistent timer
@@ -191,9 +200,58 @@ public sealed record GenesysTicketUpdateRequest(
     DateTime? StartedAtUtc = null,
     GenesysRoutingPart? Routing = null,
     GenesysCustomerConfirmationPart? CustomerConfirmation = null,
-    bool? AwaitingCustomerReply = null,
+    [property: JsonConverter(typeof(LenientNullableBoolConverter))] bool? AwaitingCustomerReply = null,
     GenesysRequestTypePart? RequestType = null,
-    bool? CustomerActive = null);
+    [property: JsonConverter(typeof(LenientNullableBoolConverter))] bool? CustomerActive = null,
+    [property: JsonConverter(typeof(LenientNullableBoolConverter))] bool? ClosedByAi = null);
+
+/// <summary>
+/// Reads a flag as <c>true</c>/<c>false</c>, the strings <c>"true"</c>/<c>"false"</c>, or blank/null → null ("not supplied"). A Genesys data
+/// action cannot leave a field out of its request template, so an unset Architect variable arrives as <c>""</c> — which must mean "omitted",
+/// exactly like every other optional part of this body. Anything else is a 400.
+/// </summary>
+public sealed class LenientNullableBoolConverter : JsonConverter<bool?>
+{
+    public override bool? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+    {
+        switch (reader.TokenType)
+        {
+            case JsonTokenType.Null:
+                return null;
+            case JsonTokenType.True:
+                return true;
+            case JsonTokenType.False:
+                return false;
+            case JsonTokenType.String:
+                var text = reader.GetString();
+                if (string.IsNullOrWhiteSpace(text))
+                {
+                    return null;
+                }
+
+                if (bool.TryParse(text.Trim(), out var parsed))
+                {
+                    return parsed;
+                }
+
+                break;
+        }
+
+        throw new JsonException("The flag must be true or false.");
+    }
+
+    public override void Write(Utf8JsonWriter writer, bool? value, JsonSerializerOptions options)
+    {
+        if (value is { } v)
+        {
+            writer.WriteBooleanValue(v);
+        }
+        else
+        {
+            writer.WriteNullValue();
+        }
+    }
+}
 
 /// <summary>
 /// The customer explicitly confirmed, during the interaction, that the issue
@@ -280,6 +338,8 @@ public sealed record GenesysHandoffPart(
 /// <param name="RequestTypeId">The applied request type.</param>
 /// <param name="DepartmentId">The responsible department after routing.</param>
 /// <param name="AssignedEmployeeId">The employee chosen by the automatic assignment; null means the department queue.</param>
+/// <param name="ClosedByAi">True when this call closed the ticket because <c>closedByAi: true</c> was sent.</param>
+/// <param name="ClosedByAiNote">Why <c>closedByAi: true</c> did not close the ticket, when it did not.</param>
 public sealed record GenesysTicketUpdateResponse(
     string Outcome,
     string ConversationId,
@@ -296,7 +356,9 @@ public sealed record GenesysTicketUpdateResponse(
     string? ClassificationStatus = null,
     int? RequestTypeId = null,
     int? DepartmentId = null,
-    Guid? AssignedEmployeeId = null);
+    Guid? AssignedEmployeeId = null,
+    bool ClosedByAi = false,
+    string? ClosedByAiNote = null);
 
 /// <summary>
 /// The transport shape of a Genesys <b>agent action</b>: the Ticketing screen
@@ -505,7 +567,8 @@ internal static class GenesysContractMapper
                 Absent(request.CustomerConfirmation.Note)),
         request.AwaitingCustomerReply,
         Map(request.RequestType),
-        request.CustomerActive);
+        request.CustomerActive,
+        request.ClosedByAi);
 
     private static GenesysRequestTypeDto? Map(GenesysRequestTypePart? part) =>
         part is null ? null : new GenesysRequestTypeDto(part.RequestTypeId, Absent(part.Name));

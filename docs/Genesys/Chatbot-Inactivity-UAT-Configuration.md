@@ -117,13 +117,28 @@ TigerCS can only count activity Genesys reports. Before this change **nothing re
 `awaitingCustomerReply: false` (data action 10), which the flow sends only after it asked a question, and transcripts arrive only when the
 conversation ends. The minimal change:
 
-1. Reuse the existing data action `10-awaiting-customer-reply.json` (no new action to import): `PATCH /api/genesys/tickets/{ticketId}` with
-   `awaiting = false`. TigerCS now treats `awaitingCustomerReply: false` as "the customer just interacted" and restarts the 10-minute clock.
-   (The update body also accepts `"customerActive": true` for a flow that wants to report activity without touching the bot-prompt timer;
-   that needs a data action with that body — not shipped, because the existing one already covers it.)
+1. Reuse the existing data action `10-awaiting-customer-reply.json` (no new action to import — re-import it for the new optional input):
+   `PATCH /api/genesys/tickets/{ticketId}` with `awaiting = false`. TigerCS treats `awaitingCustomerReply: false` as "the customer just
+   interacted" and restarts the 10-minute clock.
 2. In the Architect bot flow, call it with `awaiting = false` **on every inbound customer message** (the top of the message-handling loop,
    before the bot's own reply). Today the flow calls it only after the bot asked a question.
 3. Include `conversationId` in the document-copy data action (11) so a document request also counts as customer activity.
 
 No new webhook is needed. Until step 2 is done the clock only restarts on conversation creation, on `awaitingCustomerReply: false` and on
 document requests — a customer actively chatting without those signals would be closed after 10 minutes.
+
+## AI conversation completion (`closedByAi`) — Data Action 10
+
+Same data action, a different input. Keep the two signals apart:
+
+| Event | Data Action 10 inputs | Request body TigerCS receives |
+| --- | --- | --- |
+| **Customer interaction** (every inbound customer message) | `awaiting = false` | `{"conversationId": "<id>", "awaitingCustomerReply": "false", "closedByAi": ""}` |
+| Bot asked a question (original 5-min timer, optional) | `awaiting = true` | `{"conversationId": "<id>", "awaitingCustomerReply": "true", "closedByAi": ""}` |
+| **AI finished the conversation** (once) | `closedByAi = true`, `awaiting` unset | `{"conversationId": "<id>", "awaitingCustomerReply": "", "closedByAi": "true"}` |
+
+(A data action cannot omit a field, so unset inputs arrive as `""`, which TigerCS reads as "not supplied". Sending raw JSON booleans
+`{"conversationId": "<id>", "closedByAi": true}` is equally accepted.) Do not send `closedByAi` together with `awaiting`.
+
+TigerCS closes the ticket with the reason `Closed by AI` only while the AI still owns the conversation. The 10-minute inactivity closure
+remains the fallback — Genesys must not run its own timer.
