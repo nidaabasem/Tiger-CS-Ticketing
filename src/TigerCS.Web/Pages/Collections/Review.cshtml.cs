@@ -19,6 +19,8 @@ public sealed class ReviewModel(CollectionsApiClient api) : PageModel
     [BindProperty(SupportsGet = true)] public int? CompanyId { get; set; }
     [BindProperty(SupportsGet = true)] public string? Project { get; set; }
     [BindProperty(SupportsGet = true)] public string? Unit { get; set; }
+    /// <summary>The structured Project / Tower filter (the same one Campaigns uses). <see cref="Project"/> stays only for old bookmarks.</summary>
+    [BindProperty(SupportsGet = true)] public int? TowerId { get; set; }
     [BindProperty(SupportsGet = true)] public string? Customer { get; set; }
     /// <summary>yyyy-MM from the month picker.</summary>
     [BindProperty(SupportsGet = true)] public string? Month { get; set; }
@@ -30,6 +32,8 @@ public sealed class ReviewModel(CollectionsApiClient api) : PageModel
     [BindProperty(SupportsGet = true)] public string? ReminderType { get; set; }
     [BindProperty(SupportsGet = true)] public string? ValidationStatus { get; set; }
     [BindProperty(SupportsGet = true)] public string? Reason { get; set; }
+    /// <summary>Due, Overdue or Both (blank = Both): part of the filter that approval and dispatch re-resolve.</summary>
+    [BindProperty(SupportsGet = true)] public string? DueStatus { get; set; }
     [BindProperty(SupportsGet = true, Name = "page")] public int PageNumber { get; set; } = 1;
     [BindProperty(SupportsGet = true)] public Guid? Dispatch { get; set; }
 
@@ -50,6 +54,14 @@ public sealed class ReviewModel(CollectionsApiClient api) : PageModel
     public SelectionSummaryDto? Summary { get; private set; }
     public DispatchDto? DispatchResult { get; private set; }
     public OverlapPageDto? Overlaps { get; private set; }
+    /// <summary>The latest sends, newest first: stage, Genesys campaign (name, id, created or reused) and status per batch.</summary>
+    public IReadOnlyList<TigerCS.Application.Modules.Collections.Dto.CollectionsTowerDto> Towers { get; private set; } = [];
+    public bool TowersFailed { get; private set; }
+    /// <summary>The selected project / tower as people read it ("124 - Tower 124"), or "All projects".</summary>
+    public string ProjectText => TowerId is { } id
+        ? Towers.FirstOrDefault(t => t.TowerId == id) is { } tower ? tower.Label : $"Tower #{id}"
+        : string.IsNullOrWhiteSpace(Project) ? "All projects" : Project!;
+    public IReadOnlyList<DispatchDto> History { get; private set; } = [];
     public string? Error { get; private set; }
     public string? Notice { get; private set; }
     public string ConfirmKey { get; private set; } = Guid.NewGuid().ToString("N");
@@ -132,6 +144,11 @@ public sealed class ReviewModel(CollectionsApiClient api) : PageModel
         if (run.IsSuccess) Run = run.Value;
         var overlaps = await api.GetOverlapsAsync(1, cancellationToken);
         if (overlaps.IsSuccess) Overlaps = overlaps.Value;
+        var towers = await api.GetTowersAsync(cancellationToken);
+        Towers = towers.IsSuccess && towers.Value is { } list ? list : [];
+        TowersFailed = !towers.IsSuccess;
+        var history = await api.ListDispatchesAsync(cancellationToken);
+        if (history.IsSuccess && history.Value is { } sends) History = sends;
         var report = await api.GetReviewPageAsync(BuildFilter(), Math.Max(1, PageNumber), cancellationToken);
         if (report.IsSuccess) Report = report.Value;
         else Error ??= Describe(report.Outcome, report.Detail);
@@ -143,7 +160,7 @@ public sealed class ReviewModel(CollectionsApiClient api) : PageModel
         if (!string.IsNullOrWhiteSpace(Month) && DateTime.TryParseExact(Month + "-01", "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var m))
         { year = m.Year; month = m.Month; }
         return new ReviewFilter(CompanyId, Project, Unit, Customer, year, month, DueFrom, DueTo, PaymentStatus,
-            ParseMoney(MinRemaining), ParseMoney(MaxRemaining), ReminderType, ValidationStatus, Reason);
+            ParseMoney(MinRemaining), ParseMoney(MaxRemaining), ReminderType, ValidationStatus, Reason, DueStatus, TowerId);
     }
 
     private SelectionRequest BuildSelection() => new(BuildFilter(), SelectionMode,
@@ -157,15 +174,41 @@ public sealed class ReviewModel(CollectionsApiClient api) : PageModel
     {
         var query = HttpUtility.ParseQueryString(string.Empty);
         void Add(string name, string? value) { if (!string.IsNullOrWhiteSpace(value)) query[name] = value; }
-        Add("companyId", CompanyId?.ToString(CultureInfo.InvariantCulture)); Add("project", Project); Add("unit", Unit); Add("customer", Customer);
+        Add("companyId", CompanyId?.ToString(CultureInfo.InvariantCulture)); Add("project", Project); Add("towerId", TowerId?.ToString(CultureInfo.InvariantCulture)); Add("unit", Unit); Add("customer", Customer);
         Add("month", Month); Add("dueFrom", DueFrom?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)); Add("dueTo", DueTo?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture));
         Add("paymentStatus", paymentStatus ?? PaymentStatus); Add("minRemaining", MinRemaining); Add("maxRemaining", MaxRemaining);
-        Add("reminderType", ReminderType); Add("validationStatus", validation ?? ValidationStatus); Add("reason", Reason);
+        Add("reminderType", ReminderType); Add("validationStatus", validation ?? ValidationStatus); Add("reason", Reason); Add("dueStatus", DueStatus);
         query["page"] = page.ToString(CultureInfo.InvariantCulture);
         return $"/Collections/Review?{query}";
     }
 
     public static string Money(decimal? amount) => amount?.ToString("N2", CultureInfo.InvariantCulture) ?? "—";
+
+    /// <summary>The Genesys campaign shown next to a reminder type in the approval summary: the stage name, which is the exact campaign name.</summary>
+    public static string CampaignSuffix(string reminderType) =>
+        Enum.TryParse<TigerCS.Domain.Modules.Collections.Review.CampaignReminderType>(reminderType, out var type) && Enum.IsDefined(type)
+            ? $" · Genesys campaign \"{TigerCS.Domain.Modules.Collections.Review.CampaignReminderTypes.StageName(type)}\"" : "";
+
+    /// <summary>The stage display name of a reminder type key: the exact Genesys campaign name.</summary>
+    public static string StageName(string reminderType) =>
+        Enum.TryParse<TigerCS.Domain.Modules.Collections.Review.CampaignReminderType>(reminderType, out var type) && Enum.IsDefined(type)
+            ? TigerCS.Domain.Modules.Collections.Review.CampaignReminderTypes.StageName(type) : reminderType;
+
+    /// <summary>The batch's campaign action as shown to people.</summary>
+    public static string CampaignActionLabel(string? action) => action switch
+    {
+        "Created" => "Created", "ReusedExisting" => "Reused existing", _ => "—"
+    };
+
+    public string DateRangeText => (DueFrom, DueTo) switch
+    {
+        ({ } f, { } t) => $"{f:yyyy-MM-dd} to {t:yyyy-MM-dd}",
+        ({ } f, null) => $"from {f:yyyy-MM-dd}",
+        (null, { } t) => $"up to {t:yyyy-MM-dd}",
+        _ => string.IsNullOrWhiteSpace(Month) ? "All dates" : Month!
+    };
+
+    public string DueStatusText => (DueStatus ?? "Both") switch { "Due" => "Due", "Overdue" => "Overdue", _ => "Due and Overdue (both)" };
 
     public static string Label(string value) => value switch
     {

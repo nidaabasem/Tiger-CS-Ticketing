@@ -44,12 +44,14 @@
                <a href="/Collections/Review?handler=Contacts&amp;dispatch=@d.DispatchId">Download the contacts as uploaded (CSV)</a></p>
             <p class="review-note">@d.Disclaimer</p>
             <div class="table-scroll"><table class="table">
-                <thead><tr><th>#</th><th>Reminder type</th><th>List</th><th>Contacts</th><th>Status</th><th>Attempts</th><th>Detail</th><th></th></tr></thead>
+                <thead><tr><th>#</th><th>Reminder type</th><th>Genesys campaign</th><th>List</th><th>Contacts</th><th>Status</th><th>Attempts</th><th>Detail</th><th></th></tr></thead>
                 <tbody>
                 @foreach (var b in d.Batches)
                 {
                     <tr>
-                        <td>@b.Sequence</td><td>@ReviewModel.Label(b.ReminderType)</td><td><code>@b.ContactListId</code></td>
+                        <td>@b.Sequence</td><td>@ReviewModel.Label(b.ReminderType)</td>
+                        <td data-batch-campaign>@(b.GenesysCampaignName ?? b.StageName)@if (!string.IsNullOrEmpty(b.GenesysCampaignId)) { <text><br /><code data-campaign-id>@b.GenesysCampaignId</code> · <span data-campaign-action>@ReviewModel.CampaignActionLabel(b.CampaignAction)</span></text> }</td>
+                        <td><code>@b.ContactListId</code></td>
                         <td>@b.ContactCount@(b.ReturnedContactCount is { } r ? $" ({r} ids returned)" : "")</td>
                         <td><strong>@ReviewModel.Label(b.Status)</strong></td><td>@b.AttemptCount</td>
                         <td>@b.Error @b.ReconciliationNote</td>
@@ -119,12 +121,16 @@
                 <option value="4" selected="@(Model.CompanyId == 4)">Tiger Group Dubai (4)</option>
                 <option value="32" selected="@(Model.CompanyId == 32)">Tiger Group Sharjah (32)</option>
             </select></div>
-        <div class="field-group"><label class="field-label" for="fProject">Project</label><input class="field-input" id="fProject" name="project" maxlength="200" value="@Model.Project" /></div>
+        <partial name="_TowerPicker" model="@(new TowerPickerModel("reviewTower", Model.Towers, Model.TowerId, Model.TowersFailed, "Project / Tower", "All projects"))" />
         <div class="field-group"><label class="field-label" for="fUnit">Unit</label><input class="field-input" id="fUnit" name="unit" maxlength="200" value="@Model.Unit" /></div>
         <div class="field-group filter-bar__search"><label class="field-label" for="fCustomer">Customer name or phone</label><input class="field-input" type="search" id="fCustomer" name="customer" maxlength="200" value="@Model.Customer" /></div>
         <div class="field-group"><label class="field-label" for="fMonth">Due month</label><input class="field-input" type="month" id="fMonth" name="month" value="@Model.Month" /></div>
         <div class="field-group"><label class="field-label" for="fFrom">Due from</label><input class="field-input" type="date" id="fFrom" name="dueFrom" value="@Model.DueFrom?.ToString("yyyy-MM-dd")" /></div>
         <div class="field-group"><label class="field-label" for="fTo">Due to</label><input class="field-input" type="date" id="fTo" name="dueTo" value="@Model.DueTo?.ToString("yyyy-MM-dd")" /></div>
+        <div class="field-group"><label class="field-label" for="fDueStatus">Due / Overdue</label>
+            <select class="field-select" id="fDueStatus" name="dueStatus">
+                @foreach (var (value, text) in new[] { ("", "Due and Overdue (both)"), ("Due", "Due"), ("Overdue", "Overdue") }) { <option value="@value" selected="@((Model.DueStatus ?? "") == value)">@text</option> }
+            </select></div>
         <div class="field-group"><label class="field-label" for="fPay">Payment status</label>
             <select class="field-select" id="fPay" name="paymentStatus">
                 @foreach (var (value, text) in statuses) { <option value="@value" selected="@((Model.PaymentStatus ?? "UnpaidOrPartial") == value)">@text</option> }
@@ -156,6 +162,7 @@
             <a class="tile tile-excluded" href="@Model.PageUrl(1, validation: "Excluded")"><strong>@report.Counts.Excluded</strong><span>Excluded</span></a>
             <a class="tile tile-sent" href="@Model.PageUrl(1, validation: "AlreadySent")"><strong>@report.Counts.AlreadySent</strong><span>Already Sent</span></a>
         </div>
+        @if (report.TowerDataMissing) { <p class="review-note" role="alert" data-tower-data-missing>This review data was read before the project / tower was stored, so the selected project cannot be matched and nothing is listed for it (the list is never widened to all projects). Refresh the review data.</p> }
         @if (report.Counts.UnknownPaymentStatus > 0 && (Model.PaymentStatus ?? "UnpaidOrPartial") is not ("All" or "Unknown"))
         {
             <p class="review-note" role="status">@report.Counts.UnknownPaymentStatus matching record(s) have an unknown payment status and are hidden from this view. They are never sendable. <a href="@Model.PageUrl(1, "Unknown")">Show them</a>.</p>
@@ -226,13 +233,13 @@
 
         <form method="post" class="panel review-selection" data-selection-form>
             <h2>Select records to send</h2>
-            <input type="hidden" name="CompanyId" value="@Model.CompanyId" /><input type="hidden" name="Project" value="@Model.Project" />
+            <input type="hidden" name="CompanyId" value="@Model.CompanyId" /><input type="hidden" name="Project" value="@Model.Project" /><input type="hidden" name="TowerId" value="@Model.TowerId" />
             <input type="hidden" name="Unit" value="@Model.Unit" /><input type="hidden" name="Customer" value="@Model.Customer" />
             <input type="hidden" name="Month" value="@Model.Month" /><input type="hidden" name="DueFrom" value="@Model.DueFrom?.ToString("yyyy-MM-dd")" />
             <input type="hidden" name="DueTo" value="@Model.DueTo?.ToString("yyyy-MM-dd")" /><input type="hidden" name="PaymentStatus" value="@Model.PaymentStatus" />
             <input type="hidden" name="MinRemaining" value="@Model.MinRemaining" /><input type="hidden" name="MaxRemaining" value="@Model.MaxRemaining" />
             <input type="hidden" name="ReminderType" value="@Model.ReminderType" /><input type="hidden" name="ValidationStatus" value="@Model.ValidationStatus" />
-            <input type="hidden" name="Reason" value="@Model.Reason" /><input type="hidden" name="SelectedKeys" value="" data-selected-keys />
+            <input type="hidden" name="Reason" value="@Model.Reason" /><input type="hidden" name="DueStatus" value="@Model.DueStatus" /><input type="hidden" name="SelectedKeys" value="" data-selected-keys />
             <label><input type="radio" name="SelectionMode" value="SelectedKeys" checked="@(Model.SelectionMode == "SelectedKeys")" /> Only the records I ticked (<span data-selected-count>0</span>, kept across pages)</label><br />
             <label><input type="radio" name="SelectionMode" value="AllMatching" checked="@(Model.SelectionMode == "AllMatching")" /> Every <strong>Ready</strong> record matching the filters above, on all pages (not only this page; the exact number is shown next)</label>
             <p class="review-note">Only Ready records can be selected. Records that need review, are excluded or were already sent are never included.</p>
@@ -245,9 +252,18 @@
             <form method="post" class="panel review-confirm" data-confirm-form>
                 <h2>Confirm exactly this list</h2>
                 <p><strong data-summary-count>@s.Count</strong> contacts will be uploaded to Genesys.</p>
+                <dl class="review-snapshot" data-selection-snapshot>
+                    <dt>Selected stage</dt><dd data-snapshot-stage>@(s.CountByReminderType.Count == 0 ? "—" : string.Join(", ", s.CountByReminderType.Keys.Select(ReviewModel.StageName)))</dd>
+                    <dt>Genesys campaign name</dt><dd data-snapshot-campaign>@(s.CountByReminderType.Count == 0 ? "—" : string.Join(" · ", s.CountByReminderType.Keys.Select(ReviewModel.StageName)))</dd>
+                    <dt>Project</dt><dd data-snapshot-project>@Model.ProjectText</dd>
+                    <dt>Payment status</dt><dd data-snapshot-status>@Model.DueStatusText</dd>
+                    <dt>Date range</dt><dd data-snapshot-dates>@Model.DateRangeText</dd>
+                    <dt>Eligible customers</dt><dd data-snapshot-count>@s.Count</dd>
+                    <dt>Total qualifying amount</dt><dd data-snapshot-total>@string.Join(" · ", s.TotalsByCurrency.Select(t => $"{t.Key} {ReviewModel.Money(t.Value)}"))</dd>
+                </dl>
                 <ul class="review-tally">
                     @foreach (var total in s.TotalsByCurrency) { <li>Total <strong>@total.Key @ReviewModel.Money(total.Value)</strong></li> }
-                    @foreach (var type in s.CountByReminderType) { <li>@ReviewModel.Label(type.Key): <strong>@type.Value</strong> → its own contact list</li> }
+                    @foreach (var type in s.CountByReminderType) { <li>@ReviewModel.Label(type.Key): <strong>@type.Value</strong> → its own contact list@ReviewModel.CampaignSuffix(type.Key)</li> }
                 </ul>
                 @foreach (var n in s.Notices) { <p role="status">@n</p> }
                 <div class="table-scroll"><table class="table">
@@ -267,13 +283,13 @@
                         @if (s.Page * s.PageSize < s.Count) { <button class="btn btn-sm" type="submit" asp-page-handler="Summary" name="ContactPage" value="@(s.Page + 1)" formnovalidate>More contacts</button> }
                     </p>
                 }
-                <input type="hidden" name="CompanyId" value="@Model.CompanyId" /><input type="hidden" name="Project" value="@Model.Project" />
+                <input type="hidden" name="CompanyId" value="@Model.CompanyId" /><input type="hidden" name="Project" value="@Model.Project" /><input type="hidden" name="TowerId" value="@Model.TowerId" />
                 <input type="hidden" name="Unit" value="@Model.Unit" /><input type="hidden" name="Customer" value="@Model.Customer" />
                 <input type="hidden" name="Month" value="@Model.Month" /><input type="hidden" name="DueFrom" value="@Model.DueFrom?.ToString("yyyy-MM-dd")" />
                 <input type="hidden" name="DueTo" value="@Model.DueTo?.ToString("yyyy-MM-dd")" /><input type="hidden" name="PaymentStatus" value="@Model.PaymentStatus" />
                 <input type="hidden" name="MinRemaining" value="@Model.MinRemaining" /><input type="hidden" name="MaxRemaining" value="@Model.MaxRemaining" />
                 <input type="hidden" name="ReminderType" value="@Model.ReminderType" /><input type="hidden" name="ValidationStatus" value="@Model.ValidationStatus" />
-                <input type="hidden" name="Reason" value="@Model.Reason" /><input type="hidden" name="SelectionMode" value="@Model.SelectionMode" />
+                <input type="hidden" name="Reason" value="@Model.Reason" /><input type="hidden" name="DueStatus" value="@Model.DueStatus" /><input type="hidden" name="SelectionMode" value="@Model.SelectionMode" />
                 <input type="hidden" name="SelectedKeys" value="@Model.SelectedKeys" />
                 <input type="hidden" name="ExpectedCount" value="@s.Count" /><input type="hidden" name="ExpectedFingerprint" value="@s.Fingerprint" />
                 <input type="hidden" name="IdempotencyKey" value="@Model.ConfirmKey" />
@@ -283,7 +299,35 @@
             </form>
         }
     }
+    @if (Model.History.Count > 0)
+    {
+        <div class="panel review-history" data-send-history>
+            <h2>Send history</h2>
+            <div class="table-scroll"><table class="table">
+                <thead><tr><th>Sent</th><th>Stage</th><th>Genesys campaign name</th><th>Genesys campaign ID</th><th>Created / reused</th><th>Contacts</th><th>Dispatch status</th><th></th></tr></thead>
+                <tbody>
+                @foreach (var send in Model.History)
+                {
+                    @foreach (var b in send.Batches)
+                    {
+                        <tr data-history-row>
+                            <td>@send.InitiatedAtUtc.ToString("yyyy-MM-dd HH:mm") UTC</td>
+                            <td>@(b.StageName ?? "—")</td>
+                            <td>@(b.GenesysCampaignName ?? "—")</td>
+                            <td>@if (!string.IsNullOrEmpty(b.GenesysCampaignId)) { <code>@b.GenesysCampaignId</code> } else { <text>—</text> }</td>
+                            <td>@ReviewModel.CampaignActionLabel(b.CampaignAction)</td>
+                            <td>@b.ContactCount</td>
+                            <td>@ReviewModel.Label(send.Status)@if (!string.IsNullOrEmpty(b.Error)) { <br /><span class="review-note">@b.Error</span> }</td>
+                            <td><a href="/Collections/Review?dispatch=@send.DispatchId.ToString("D")">Open</a></td>
+                        </tr>
+                    }
+                }
+                </tbody>
+            </table></div>
+        </div>
+    }
     </div>
     }
 </div>
+<script src="~/js/collections-towers.js" asp-append-version="true"></script>
 <script src="~/js/collections-review.js" asp-append-version="true"></script>

@@ -7,7 +7,8 @@ public sealed record ReviewFilter(
     int? CompanyId = null, string? Project = null, string? Unit = null, string? Customer = null,
     int? Year = null, int? Month = null, DateOnly? DueFrom = null, DateOnly? DueTo = null,
     string? PaymentStatus = null, decimal? MinRemaining = null, decimal? MaxRemaining = null,
-    string? ReminderType = null, string? ValidationStatus = null, string? Reason = null);
+    string? ReminderType = null, string? ValidationStatus = null, string? Reason = null,
+    string? DueStatus = null, int? TowerId = null);
 
 /// <summary>
 /// The normalized, validated filter the store understands. <see cref="PaymentStatuses"/> is null for "All".
@@ -16,7 +17,7 @@ public sealed record ReviewQuerySpec(
     int? CompanyId, string? Project, string? Unit, string? CustomerText, string? PhoneDigits,
     DateOnly? DueFrom, DateOnly? DueTo, IReadOnlyList<ReviewPaymentStatus>? PaymentStatuses,
     decimal? MinRemaining, decimal? MaxRemaining, CampaignReminderType? ReminderType,
-    ReviewValidationStatus? ValidationStatus, string? Reason);
+    ReviewValidationStatus? ValidationStatus, string? Reason, int? TowerId = null);
 
 public sealed record ReviewRunDto(
     long RunId, string Status, string Phase, int ProgressPercent, DateOnly AsOfDate, int? CompanyId,
@@ -30,13 +31,14 @@ public sealed record ReviewRecordDto(
     string RecordKey, string ReminderType, int CompanyId, string CustomerName, string Phone, string Email,
     string ProjectCode, string UnitCode, string PaymentStatus, decimal? RemainingAmount, string Currency,
     DateOnly? DueDate, string ValidationStatus, IReadOnlyList<ReviewReasonDto> Reasons,
-    string Source, DateTime SourceReadAtUtc, string? PreviousDispatchStatus, DateTime? PreviousDispatchAtUtc);
+    string Source, DateTime SourceReadAtUtc, string? PreviousDispatchStatus, DateTime? PreviousDispatchAtUtc,
+    string? TowerNumber = null, string? TowerName = null);
 
 public sealed record ReviewReasonDto(string Code, string Kind, string Explanation);
 
 public sealed record ReviewPageDto(
     ReviewRunDto? Run, ReviewCountsDto Counts, int Page, int PageSize, int TotalCount,
-    IReadOnlyList<ReviewRecordDto> Items, decimal MinRemainingApplied);
+    IReadOnlyList<ReviewRecordDto> Items, decimal MinRemainingApplied, bool TowerDataMissing = false);
 
 public sealed record SelectionRequest(
     ReviewFilter? Filter, string Mode, IReadOnlyList<string>? RecordKeys = null,
@@ -58,7 +60,8 @@ public sealed record ConfirmDispatchRequest(
 public sealed record DispatchBatchDto(
     long BatchId, string ReminderType, string ContactListId, int Sequence, int ContactCount, string Status,
     int AttemptCount, int? HttpStatus, int? ReturnedContactCount, string? Error,
-    DateTime? StartedAtUtc, DateTime? CompletedAtUtc, DateTime? ReconciledAtUtc, string? ReconciliationNote);
+    DateTime? StartedAtUtc, DateTime? CompletedAtUtc, DateTime? ReconciledAtUtc, string? ReconciliationNote,
+    string? StageName = null, string? GenesysCampaignName = null, string? GenesysCampaignId = null, string? CampaignAction = null);
 
 public sealed record DispatchDto(
     Guid DispatchId, string Status, string? StatusReason, Guid InitiatedByEmployeeId, DateTime InitiatedAtUtc,

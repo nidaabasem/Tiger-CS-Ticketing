@@ -43,6 +43,8 @@ public interface IReviewStore
 
     // ---- review queries (stale = the run's data is older than the freshness window)
     Task<StoredPage> QueryAsync(long runId, ReviewQuerySpec spec, bool stale, int skip, int take, CancellationToken ct);
+    /// <summary>True when at least one record of the run carries a tower (data read before towers were stored has none).</summary>
+    Task<bool> RunHasTowerDataAsync(long runId, CancellationToken ct);
     Task<ReviewCountsDto> CountAsync(long runId, ReviewQuerySpec specWithoutStatus, bool stale, CancellationToken ct);
     /// <summary>All Ready records matching the spec (Ready after the stale adjustment), ordered, capped at <paramref name="max"/> + 1.</summary>
     Task<IReadOnlyList<ReviewRecordView>> ResolveAsync(long runId, ReviewQuerySpec spec, IReadOnlyCollection<string>? keys, bool stale, int max, CancellationToken ct);
@@ -108,8 +110,22 @@ public sealed record GenesysUploadResult(GenesysUploadOutcome Outcome, int? Http
 /// <param name="ContactMissing">Genesys answered 404: the contact no longer exists, so it cannot be dialled.</param>
 public sealed record GenesysSuppressResult(GenesysUploadOutcome Outcome, int? HttpStatus, bool? CallableAfter, bool ContactMissing, string? Error);
 
+/// <summary>A Genesys outbound campaign as far as this integration cares: its id, exact name, the contact list it dials and its status.</summary>
+public sealed record GenesysCampaignRef(string Id, string Name, string? ContactListId, string? Status);
+
+/// <summary>Every campaign Genesys returned for the name filter in <c>Matches</c>; callers still compare names exactly.</summary>
+public sealed record GenesysCampaignLookupResult(GenesysUploadOutcome Outcome, int? HttpStatus, IReadOnlyList<GenesysCampaignRef> Matches, string? Error);
+
+public sealed record GenesysCampaignCreateResult(GenesysUploadOutcome Outcome, int? HttpStatus, GenesysCampaignRef? Campaign, string? Error);
+
 public interface IGenesysOutboundClient
 {
+    /// <summary>GET /api/v2/outbound/campaigns?name=... (read only: an Unknown outcome changed nothing).</summary>
+    Task<GenesysCampaignLookupResult> FindCampaignsByNameAsync(string name, CancellationToken ct);
+
+    /// <summary>POST /api/v2/outbound/campaigns with the exact <paramref name="name"/>, status off, and the template settings.</summary>
+    Task<GenesysCampaignCreateResult> CreateCampaignAsync(string name, string contactListId, GenesysCampaignOptions template, CancellationToken ct);
+
     /// <summary>
     /// PUT /api/v2/outbound/contactlists/{contactListId}/contacts/{contactId} with callable=false and the contact's original data
     /// (the documented "Update a contact" operation; DELETE only removes contacts not in use by a campaign, so it is not relied on).

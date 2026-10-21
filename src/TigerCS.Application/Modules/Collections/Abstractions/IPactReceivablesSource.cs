@@ -146,7 +146,8 @@ public interface IPactCampaignSource
 /// </remarks>
 public sealed record PactCampaignRequest(
     DateOnly From, DateOnly To, decimal MinAmount, DateOnly? StageFrom, DateOnly StageToExclusive, decimal Threshold, bool ContactRequired,
-    string? Search, string? PhoneDigits, int Offset, int Take, int? CompanyId, int? TowerId, DateOnly? Today = null, decimal? MinTotal = null);
+    string? Search, string? PhoneDigits, int Offset, int Take, int? CompanyId, int? TowerId, DateOnly? Today = null, decimal? MinTotal = null,
+    TigerCS.Domain.Modules.Collections.CampaignPaymentFilter PaymentFilter = TigerCS.Domain.Modules.Collections.CampaignPaymentFilter.Both);
 
 /// <summary>Unit-level facts of one campaign candidate. <c>LatestDue</c> is the newest due date among the unit's payments in the filtered window (the list is ordered by it, newest first). <c>Flags</c> is a <see cref="TigerCS.Domain.Modules.Collections.CollectionsCampaignFlags"/> mask;
 /// <c>Amount</c> is null when the unit's stage instalments are ambiguous. FullName / Phone / Email are the LINKED contact (CRM first, PACT completing, see

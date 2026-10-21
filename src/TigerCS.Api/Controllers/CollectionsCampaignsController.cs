@@ -16,7 +16,7 @@ namespace TigerCS.Api.Controllers;
 [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
 public sealed class CollectionsCampaignsController(CollectionsCampaignAppService service) : ControllerBase
 {
-    /// <summary>Preview one communication stage, per unit, using current remaining balances from PACT companies 4 and 32. Only instalments due before the end of the current Dubai month are listed (Overdue: before the first day of the month, Due: inside it); <c>minTotal</c> keeps units whose Due + Overdue is greater than it (omit for no minimum).</summary>
+    /// <summary>Preview one communication stage, per unit, using current remaining balances from PACT companies 4 and 32. Only instalments due before the end of the current Dubai month are listed (Overdue: before the first day of the month, Due: inside it); <c>minTotal</c> keeps units whose Due + Overdue is greater than it (omit for no minimum). <c>paymentStatus</c> is Due, Overdue or Both (default): a single status keeps only that status' instalments in the figures; preview, counts and both CSV exports share it.</summary>
     [HttpGet("preview")]
     [ProducesResponseType<CollectionsCampaignPreviewDto>(StatusCodes.Status200OK)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
@@ -26,12 +26,12 @@ public sealed class CollectionsCampaignsController(CollectionsCampaignAppService
         [FromQuery] int? companyId, [FromQuery] string? search, [FromQuery] int page = 1,
         [FromQuery] int pageSize = 25, CancellationToken cancellationToken = default,
         [FromQuery] DateOnly? dateFrom = null, [FromQuery] DateOnly? dateTo = null, [FromQuery] int? towerId = null,
-        [FromQuery] decimal? minTotal = null)
+        [FromQuery] decimal? minTotal = null, [FromQuery] string? paymentStatus = null)
     {
         var caller = Caller();
         if (caller is null) return Unauthorized();
         return Result(await service.PreviewAsync(caller, stage, businessDate, companyId, search, page, pageSize,
-            cancellationToken: cancellationToken, dateFrom: dateFrom, dateTo: dateTo, towerId: towerId, minTotal: minTotal));
+            cancellationToken: cancellationToken, dateFrom: dateFrom, dateTo: dateTo, towerId: towerId, minTotal: minTotal, paymentStatus: paymentStatus));
     }
 
     /// <summary>Export the full filtered list. Review mode is for internal review; Genesys mode refuses any unresolved row,
@@ -44,11 +44,11 @@ public sealed class CollectionsCampaignsController(CollectionsCampaignAppService
     public async Task<IActionResult> Export([FromQuery] string? stage, [FromQuery] string? mode,
         [FromQuery] DateOnly? businessDate, [FromQuery] int? companyId, [FromQuery] string? search,
         CancellationToken cancellationToken = default, [FromQuery] DateOnly? dateFrom = null, [FromQuery] DateOnly? dateTo = null,
-        [FromQuery] int? towerId = null, [FromQuery] decimal? minTotal = null)
+        [FromQuery] int? towerId = null, [FromQuery] decimal? minTotal = null, [FromQuery] string? paymentStatus = null)
     {
         var caller = Caller();
         if (caller is null) return Unauthorized();
-        return Result(await service.ExportAsync(caller, stage, mode, businessDate, companyId, search, cancellationToken, dateFrom, dateTo, towerId, minTotal));
+        return Result(await service.ExportAsync(caller, stage, mode, businessDate, companyId, search, cancellationToken, dateFrom, dateTo, towerId, minTotal, paymentStatus));
     }
 
     private CollectionsCaller? Caller() => Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var id)

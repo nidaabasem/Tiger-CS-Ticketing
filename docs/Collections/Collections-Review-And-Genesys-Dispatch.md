@@ -107,6 +107,79 @@ are both scheduled on day 14). Until decided, such records are blocked; no ackno
    whether campaigns run continuously. Until then, keep campaigns inactive or time uploads close to the dialling window.
 8. Revalidation re-reads the company's PACT window (the procedures cannot filter by customer): about a minute per company, in the background job.
 
+## Campaign filters, approval snapshot and history
+
+* **Campaigns page filters:** Stage, Project / Tower, Payment status (Due / Overdue / Both, default Both), From / To date, the *Last 6 months* shortcut, Minimum Total and Search.
+  Month and Year were removed (an old bookmark that still carries `month` + `year` is read as that whole-month range). All filters are applied by the API before paging; the preview,
+  its counts, the eligible-customer count and total qualifying amount, every page and both CSV exports (`paymentStatus` included) use the same parameters.
+* **Payment status** keeps only that status' instalments in a unit's Due / Overdue / Total (Due = inside the current Dubai month, Overdue = before it), so Minimum Total and the totals follow it.
+  The stage eligibility rule is not affected. A single status is always evaluated by the reference (in-memory) engine, never by a data-store engine that does not know the filter.
+* **Review & approve** has a matching *Due / Overdue* filter (`dueStatus`; it narrows the due-date range and travels inside the stored filter), and the *Review & approve* link on Campaigns carries
+  stage, dates and status. The confirmation shows the selected stage, the Genesys campaign name (identical to the stage name), project, status, date range, eligible customers and total. Approval
+  and dispatch re-resolve that same filter (stored as the dispatch's `FilterJson`) and keep the existing fingerprint check and balance revalidation.
+* **Send history** (Review page): per batch the stage name, Genesys campaign name and id, created / reused existing, and the dispatch status.
+
+## Project, Due / Overdue, dates and amounts: exactly how they relate
+
+**Project / Tower.** One structured filter (the tower id) on both pages. Campaigns sends it to the source; Review stores each record's tower (`TowerId`, number, name; migration
+`AddTowerToReviewRecords`) and filters on it. The *Review & approve* link carries it, and so do approval (the stored filter / `FilterJson`), the frozen dispatch list, the CSV exports and the Genesys
+upload: a dispatch contains only the approved project's records, and approving a list after changing the project is refused (`ReviewRequired`). Review data read before this change has no tower,
+so choosing a project there lists nothing and says "refresh the review data"; it never falls back to all projects. The old free-text `project` URL parameter still works for bookmarks.
+
+**Due and Overdue are measured against today (Dubai), not against the chosen dates.** Due = an instalment due inside the *current calendar month*; Overdue = due before the first day of
+the current month; nothing due from next month on is ever listed (`CollectionsDueMonth`). The From / To dates only choose which instalments are *read*: [From, To] with To never past the end of the
+current month, and an empty From meaning the whole history. So:
+
+| Dates | Both | Due | Overdue |
+| --- | --- | --- | --- |
+| empty (default) | everything up to month end | current month only | before this month |
+| inside the current month | current month | current month | nothing - the page says so |
+| entirely before this month | those instalments (all Overdue) | nothing - the page says so | those instalments |
+| spanning last month and this month | both parts | the current-month part | the part before this month |
+
+A single status removes the other status' instalments from a unit's Due / Overdue / Total *before* the Minimum Total, the counts, the totals, paging and the exports are computed.
+A combination that can match nothing shows a note (`PaymentStatusNote`) instead of an unexplained empty list.
+
+**Stage eligibility is independent of both.** A unit is eligible for a stage from its own stage rows (`CollectionsCampaignPolicy`), and its stage amount is unchanged by the status or the
+dates (an explicit From only moves where eligibility starts looking, as before). The status and the dates therefore decide which units are *listed*; the stage rule decides which of them are *eligible*.
+
+**Review's Due / Overdue** filters the due-date range at the first day of the current month. Every stage window lies wholly on one side of it - Current Month and Follow Up are Due; Overdue,
+Legal Notice and Legal Case are Overdue - so on Review the status is the stage's own class, and it agrees with Campaigns for the same stage.
+
+**Total qualifying amount** (Campaigns) = the sum of the *stage amounts* of the eligible units over the whole filtered list (not the current page): the same figure Review & approve shows and Genesys
+receives as `AmountDue`. Under Both, Due and Overdue the list (and therefore the total) follows the status; a unit's stage amount does not. The *outstanding balance* line beside it is the units'
+Due + Overdue (the balance columns of the table), which is a different, larger-or-equal number by design. Units whose stage instalments are ambiguous have no stage amount and add 0.
+
+**Known differences and limits**
+* An instalment due *later in the current month* (e.g. 20 October when today is 14 October) is a stage row for Review (its window is the whole month and it reads to month end) but not for Campaigns
+  (eligibility ends at today). Both rules predate this work and were left unchanged; a test pins the difference. Which behaviour is intended is a business decision.
+* With a data-store campaign engine the qualifying and outstanding amounts and the eligible count are not computed (the production source uses the in-memory engine).
+* Review's Company filter remains; choosing a tower already implies its company.
+
+## Genesys campaign per stage
+
+When `Collections:GenesysOutbound:Campaign:Enabled` is `true`, each upload batch first resolves a Genesys campaign whose **name is exactly the stage name**
+(`CampaignReminderTypes.StageName`), then uploads its contacts. The stage enum stays the internal id; the eligibility rules and customer filtering are unchanged.
+
+| Stage | Genesys campaign name |
+| --- | --- |
+| Overdue | `Overdue reminder - day 1` |
+| Current Month | `Current month reminder - day 14` |
+| Follow Up | `Follow-up reminder - day 28` |
+| Legal Notice | `Legal notice - days 12 and 14` |
+| Legal Case | `Internal Legal referral - day 30` |
+
+* The same name is shown on the Campaigns stage picker and, per reminder type, in the approval summary.
+* Lookup is `GET /api/v2/outbound/campaigns?name=...`. Exactly one match that dials the stage's contact list is **reused**; nothing is created.
+* Several matches, a name that differs only by letter case (Genesys names are unique case-insensitively), or a match dialling another contact list **fail the batch**
+  before any upload; the records are released. An unreadable or incomplete lookup also fails the batch and never leads to a create.
+* With no match and `AllowCreate`, the campaign is created **off** from `Campaign:QueueId`, `DialingMode`, `CallerName`, `CallerAddress` (required) and
+  `ScriptId`, `CallAnalysisResponseSetId` (optional). An unconfirmed creation uploads nothing; the next send looks the campaign up first and reuses it.
+* Each batch stores `StageName`, `GenesysCampaignName`, `GenesysCampaignId` and `CampaignAction` (`Created` / `ReusedExisting`), returned on the dispatch DTO, shown in the
+  batch table and written to the log (stage name and campaign id only). Migration `AddGenesysCampaignToDispatchBatch`.
+* With `Campaign:Enabled=false` (default) the flow is unchanged: contacts go to the configured lists, and only `StageName` is recorded.
+* Genesys field requirements for campaign creation (and that `name` filters the list) should be verified against the target org in UAT.
+
 ## Configuration
 
 Non-secret keys are in `appsettings.json`; supply secrets by user-secrets/environment only.
