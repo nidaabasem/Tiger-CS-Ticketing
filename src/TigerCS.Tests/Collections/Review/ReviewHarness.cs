@@ -112,6 +112,38 @@ public sealed class FakeAdminEmailSender : TigerCS.Application.Modules.Notificat
     }
 }
 
+/// <summary>Test faults for the review-record writes: a failure before the batch is saved, or a lost answer AFTER the batch's transaction really committed.</summary>
+public sealed class WriteFaults : Microsoft.EntityFrameworkCore.Diagnostics.SaveChangesInterceptor
+{
+    public int FailBeforeSave;
+    public int FailAfterCommit;
+    public bool Persistent;
+    public int RecordSaves;
+    public Func<Exception> Make { get; set; } = () => new TransientTestException();
+
+    public override ValueTask<Microsoft.EntityFrameworkCore.Diagnostics.InterceptionResult<int>> SavingChangesAsync(
+        Microsoft.EntityFrameworkCore.Diagnostics.DbContextEventData eventData, Microsoft.EntityFrameworkCore.Diagnostics.InterceptionResult<int> result, CancellationToken cancellationToken = default)
+    {
+        if (eventData.Context!.ChangeTracker.Entries<TigerCS.Domain.Modules.Collections.Review.CollectionsReviewRecord>().Any(e => e.State == Microsoft.EntityFrameworkCore.EntityState.Added))
+        {
+            RecordSaves++;
+            if (Persistent || FailBeforeSave > 0) { if (!Persistent) FailBeforeSave--; throw Make(); }
+        }
+        return base.SavingChangesAsync(eventData, result, cancellationToken);
+    }
+}
+
+public sealed class CommitFaults(WriteFaults faults) : Microsoft.EntityFrameworkCore.Diagnostics.DbTransactionInterceptor
+{
+    public override Task TransactionCommittedAsync(System.Data.Common.DbTransaction transaction, Microsoft.EntityFrameworkCore.Diagnostics.TransactionEndEventData eventData, CancellationToken cancellationToken = default)
+    {
+        if (faults.FailAfterCommit > 0) { faults.FailAfterCommit--; throw faults.Make(); }
+        return base.TransactionCommittedAsync(transaction, eventData, cancellationToken);
+    }
+}
+
+public sealed class TransientTestException : Exception;
+
 public sealed class FakeJobScheduler : IReviewJobScheduler
 {
     public bool Available { get; set; } = true;
@@ -158,6 +190,9 @@ internal sealed class ReviewHarness : IDisposable
     public FakeGenesysClient Client { get; } = new();
     public FakeJobScheduler Scheduler { get; } = new();
     public FakeAdminEmailSender Email { get; } = new();
+    public WriteFaults Faults { get; } = new();
+    public TigerCS.Infrastructure.Modules.Collections.ReviewWriteRetryPolicy RetryPolicy { get; set; } = new()
+    { MaxAttempts = 3, Delay = _ => TimeSpan.Zero, ExtraTransient = e => e is TransientTestException };
     public FakeTimeProvider Time { get; } = new(Now);
     public CollectionsCaller Manager { get; } = new(Guid.NewGuid(), [Roles.CsManager], []);
     /// <summary>May read balances but not send.</summary>
@@ -184,11 +219,11 @@ internal sealed class ReviewHarness : IDisposable
         (_shared is not null
             ? new DbContextOptionsBuilder<TigerCsDbContext>().UseSqlite(_shared)
             : new DbContextOptionsBuilder<TigerCsDbContext>().UseSqlite($"Data Source={_file};Pooling=False;Default Timeout=60"))
-        .Options);
+        .AddInterceptors(Faults, new CommitFaults(Faults)).Options);
 
     public sealed class Scope(TigerCsDbContext context, ReviewHarness h) : IDisposable
     {
-        public IReviewStore Store { get; } = new ReviewStore(context);
+        public IReviewStore Store { get; } = new ReviewStore(context, h.RetryPolicy);
         public ReviewQueryService Query { get; private set; } = null!;
         public ReviewRefreshService Refresh { get; private set; } = null!;
         public DispatchService Dispatch { get; private set; } = null!;
