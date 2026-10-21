@@ -84,6 +84,22 @@ public sealed class ReviewRefreshService(
         return CollectionsResult<ReviewRunDto>.Ok(query.ToDto(run), CollectionsOutcome.Accepted);
     }
 
+    /// <summary>Progress is informational: a failed progress write (for example a dropped connection) must not fail a refresh whose real work can still succeed.</summary>
+    private async Task ProgressAsync(long runId, string phase, int percent, int? sourceRows, CancellationToken ct)
+    {
+        try { await store.UpdateRunProgressAsync(runId, phase, percent, sourceRows, ct); }
+        catch (Exception ex) when (ex is DbException or ReviewStorageException)
+        { logger.LogWarning("Review refresh {RunId}: progress could not be written ({ExceptionType}); continuing.", runId, ex.GetType().Name); }
+    }
+
+    /// <summary>Records the failure; if even that write fails, the run is closed by the stuck-run timeout rather than the job crashing.</summary>
+    private async Task FailSafelyAsync(long runId, string message)
+    {
+        try { await store.FailRunAsync(runId, message, clock.UtcNow, CancellationToken.None); }
+        catch (Exception ex) when (ex is DbException or ReviewStorageException)
+        { logger.LogError("Review refresh {RunId} could not record its failure ({ExceptionType}); the stuck-run timeout will close it.", runId, ex.GetType().Name); }
+    }
+
     private bool IsDead(CollectionsReviewRun run, DateTime now) =>
         now - (run.StartedAtUtc ?? run.RequestedAtUtc) > TimeSpan.FromMinutes(Math.Max(1, reviewOptions.StuckRunMinutes));
 
@@ -98,13 +114,13 @@ public sealed class ReviewRefreshService(
         budget.CancelAfter(TimeSpan.FromMinutes(Math.Max(1, reviewOptions.RefreshTimeoutMinutes)));
         try
         {
-            await store.UpdateRunProgressAsync(runId, "Reading the financial source", 5, null, ct);
+            await ProgressAsync(runId, "Reading the financial source", 5, null, ct);
             var snapshot = await source.ReadAsync(new PactReceivablesRequest(run.DueFrom, run.DueTo, run.CompanyId, MinAmount: decimal.Round(sourceOptions.DefaultMinOutstandingAmount, 4)), budget.Token);
             // Same minimum outstanding amount as the Campaigns preview. A local snapshot that is not loaded or does not cover the window would silently omit
             // receivables: refuse. (A merely stale snapshot is flagged on every record through its read time, as before.)
             if (snapshot.Snapshot is { } snapshotStatus && (!snapshotStatus.RangeCovered || snapshotStatus.Companies.Any(c => !c.HasSnapshot)))
                 throw new PactReceivablesSourceException($"Receivables data is not ready. {snapshotStatus.ReadyProblem}");
-            await store.UpdateRunProgressAsync(runId, "Validating records", 45, snapshot.Items.Count, ct);
+            await ProgressAsync(runId, "Validating records", 45, snapshot.Items.Count, ct);
             if (snapshot.Items.Any(r => r.CompanyId is not (4 or 32)))
                 throw new PactReceivablesSourceException("PACT returned a receivable without a valid company identity.");
 
@@ -113,15 +129,24 @@ public sealed class ReviewRefreshService(
             logger.LogInformation("Review refresh {RunId}: {Rows} source rows, {Records} records, {Noise} float-noise amounts normalized, {Settled} settled rows ignored.",
                 runId, snapshot.Items.Count, built.Records.Count, built.FloatNormalizedRows, built.SettledRows);
 
-            await store.UpdateRunProgressAsync(runId, "Saving records", 60, snapshot.Items.Count, ct);
-            const int chunk = 2000;
-            for (var i = 0; i < built.Records.Count; i += chunk)
+            await ProgressAsync(runId, "Saving records", 60, snapshot.Items.Count, ct);
+            var chunk = Math.Clamp(reviewOptions.PersistBatchSize, 1, 2000);
+            try
             {
-                await store.AddRecordsAsync(runId, built.Records.Skip(i).Take(chunk).ToList(), budget.Token);
-                var percent = 60 + (int)(35.0 * Math.Min(built.Records.Count, i + chunk) / Math.Max(1, built.Records.Count));
-                await store.UpdateRunProgressAsync(runId, "Saving records", percent, snapshot.Items.Count, ct);
+                for (var i = 0; i < built.Records.Count; i += chunk)
+                {
+                    // Each batch is its own idempotent transaction (see ReviewStore.AddRecordsAsync): a retry after a lost connection cannot duplicate or skip records.
+                    await store.AddRecordsAsync(runId, built.Records.Skip(i).Take(chunk).ToList(), budget.Token);
+                    var percent = 60 + (int)(35.0 * Math.Min(built.Records.Count, i + chunk) / Math.Max(1, built.Records.Count));
+                    await ProgressAsync(runId, "Saving records", percent, snapshot.Items.Count, ct);
+                }
+                await store.PublishRunAsync(runId, built.Records.Count, snapshot.Items.Count, snapshot.ReadAtUtc, clock.UtcNow, reviewOptions.RunsToKeep, ct);
             }
-            await store.PublishRunAsync(runId, built.Records.Count, snapshot.Items.Count, snapshot.ReadAtUtc, clock.UtcNow, reviewOptions.RunsToKeep, ct);
+            catch (Exception ex) when (ex is DbException)
+            {
+                // A database error while SAVING is not a financial-source problem: say what failed.
+                throw new ReviewStorageException($"Saving the review records failed ({ex.GetType().Name}). Nothing was published; the previous review data is still in use. Retry.", false, null, ex);
+            }
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -131,6 +156,11 @@ public sealed class ReviewRefreshService(
         catch (OperationCanceledException)
         {
             await store.FailRunAsync(runId, "The financial source read exceeded the time budget. Retry, or refresh one company.", clock.UtcNow, CancellationToken.None);
+        }
+        catch (ReviewStorageException ex)
+        {
+            logger.LogError(ex.InnerException ?? ex, "Review refresh {RunId} could not save its records (transient={Transient}, sql={SqlNumber}).", runId, ex.Transient, ex.SqlNumber);
+            await FailSafelyAsync(runId, ex.Message);
         }
         catch (PactReceivablesSourceException ex)
         {
