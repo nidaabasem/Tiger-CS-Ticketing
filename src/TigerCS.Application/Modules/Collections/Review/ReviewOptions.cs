@@ -22,6 +22,15 @@ public sealed class CollectionsReviewOptions
     /// <summary>A run still "Queued" after this long was never picked up by a worker (jobs off, server down): it is marked Failed so the page offers a retry.</summary>
     public int QueuedTimeoutMinutes { get; set; } = 5;
 
+    /// <summary>
+    /// Review records written per database round trip group (one transaction each). Small enough that a slow or flaky link never has to carry thousands of wide rows in one
+    /// statement batch, large enough to keep the number of transactions low. 1-2000.
+    /// </summary>
+    public int PersistBatchSize { get; set; } = 500;
+
+    /// <summary>Attempts for a database write that failed with a transient connection error (1 = no retry). Only idempotent writes are retried. 1-5.</summary>
+    public int PersistMaxAttempts { get; set; } = 3;
+
     /// <summary>Floating-point noise tolerance in AED when normalizing a floating source value to fils.</summary>
     public decimal FloatNoiseTolerance { get; set; } = MoneyNormalizer.DefaultFloatTolerance;
 

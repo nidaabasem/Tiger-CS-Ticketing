@@ -75,6 +75,7 @@ public sealed class RcvReceivablesRefresher(IConfiguration configuration, Receiv
         var gate = Gates.GetOrAdd(company, _ => new SemaphoreSlim(1, 1));
         if (!await gate.WaitAsync(0, cancellationToken))
             return (null, new ReceivablesRefreshCompanyResult(company, "AlreadyRunning", null, null, null, null, null, null, "A refresh of this company is already running in this process."));
+        var startedAt = DateTime.UtcNow;
         var runId = Guid.NewGuid();   // ours, so an attempt whose call never returns can still be found
         string? connectionString = null;
         SqlConnection? connection = null;
@@ -111,10 +112,17 @@ public sealed class RcvReceivablesRefresher(IConfiguration configuration, Receiv
         catch (SqlException ex)
         {
             closeNumber = ex.Number;
+            // The whole PACT fetch runs INSIDE the one long procedure call, so the client connection sits idle for minutes. A network device that drops idle TCP sessions then
+            // surfaces here as a transport error (-1 / 10054 / 10060) although the server may still be finishing. Say so, instead of a bare number.
+            var transport = new ReviewWriteRetryPolicy().IsTransient(ex) && ex.Number != -2;
             closeMessage = ex.Number == -2
                 ? $"The refresh exceeded its {options.RefreshCommandTimeoutSeconds} s command timeout and was stopped."
-                : $"The refresh procedure failed (SQL error {ex.Number}).";
-            logger.LogError("Receivables refresh of company {CompanyId} failed (SQL error {SqlNumber}).", company, ex.Number);
+                : transport
+                    ? $"The connection to SQL Server was lost while the refresh was running (SQL error {ex.Number}: network / transport). The previous snapshot is kept; the server session may still be finishing and the next refresh or status read closes it."
+                    : $"The refresh procedure failed (SQL error {ex.Number}).";
+            // Everything needed to find the dropped session in the SQL Server logs and on the network path; never the connection string or any data.
+            logger.LogError("Receivables refresh of company {CompanyId} failed after {ElapsedSeconds:F0} s (SQL error {SqlNumber}, class {Class}, state {State}, transport={Transport}, clientConnectionId={ClientConnectionId}, server={Server}, commandTimeoutSeconds={CommandTimeout}).",
+                company, (DateTime.UtcNow - startedAt).TotalSeconds, ex.Number, ex.Class, ex.State, transport, ex.ClientConnectionId, ex.Server, options.RefreshCommandTimeoutSeconds);
             return (runId, new ReceivablesRefreshCompanyResult(company, "Failed", null, null, null, null, null, ex.Number, closeMessage));
         }
         catch (OperationCanceledException)
