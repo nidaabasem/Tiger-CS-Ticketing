@@ -101,6 +101,18 @@ public class GenesysLiveTranscriptTests
     }
 
     [Fact]
+    public async Task AnIdLongerThanTheStoredLengthOrPaddedWithSpaces_IsStillRecognisedOnRetry()
+    {
+        var w = await BuildAsync();
+        var longId = new string('x', TicketInteractionMessage.ExternalMessageIdMaxLength + 10);
+
+        await Send(w, Live("conv-live", Customer("long", 1, longId), Customer("padded", 2, "  m-2  ")));
+        await Send(w, Live("conv-live", Customer("long", 1, longId), Customer("padded", 2, "m-2")));
+
+        Assert.Equal(["long", "padded"], Stored(w).Select(r => r.Body));
+    }
+
+    [Fact]
     public async Task AnOverlappingBatch_AppendsOnlyTheNewMessages_ContinuingTheSequence()
     {
         var w = await BuildAsync();

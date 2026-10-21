@@ -503,6 +503,23 @@ public sealed class GenesysConversationEndAppService(
     /// provider clock is not guaranteed monotonic and two messages may share
     /// a timestamp.
     /// </summary>
+    /// <summary>
+    /// The id as it is STORED (blank → none, trimmed, at most the column length), so a retry compares against what was kept: comparing the raw
+    /// value would never match a stored id that had to be shortened, and the retry would be stored again.
+    /// </summary>
+    private static string? NormalizeExternalId(string? id)
+    {
+        if (string.IsNullOrWhiteSpace(id))
+        {
+            return null;
+        }
+
+        var trimmed = id.Trim();
+        return trimmed.Length <= TicketInteractionMessage.ExternalMessageIdMaxLength
+            ? trimmed
+            : trimmed[..TicketInteractionMessage.ExternalMessageIdMaxLength];
+    }
+
     internal static bool IsValidTranscript(IReadOnlyList<GenesysTranscriptMessageDto>? transcript, out string? error) =>
         TryNormalizeTranscript(transcript, out _, out error);
 
@@ -539,7 +556,7 @@ public sealed class GenesysConversationEndAppService(
             }
 
             normalized.Add(new NormalizedMessage(
-                sender, message.SenderName, message.SenderId, message.SentAtUtc, message.Body, message.ExternalMessageId));
+                sender, message.SenderName, message.SenderId, message.SentAtUtc, message.Body, NormalizeExternalId(message.ExternalMessageId)));
         }
 
         messages = normalized;
