@@ -84,11 +84,18 @@ public sealed class ReviewRefreshService(
         return CollectionsResult<ReviewRunDto>.Ok(query.ToDto(run), CollectionsOutcome.Accepted);
     }
 
+    /// <summary>
+    /// A database failure as the application sees it: the store's own <see cref="ReviewStorageException"/>, a provider <see cref="DbException"/>, or the <see cref="InvalidOperationException"/> that EF Core raises
+    /// ("An exception has been raised that is likely due to a transient failure") around a transient SQL error for writes such as ExecuteUpdate / SaveChanges / transactions.
+    /// </summary>
+    private static bool IsDatabaseFailure(Exception ex) =>
+        ex is DbException or ReviewStorageException || (ex is InvalidOperationException && ex.InnerException is not null && IsDatabaseFailure(ex.InnerException));
+
     /// <summary>Progress is informational: a failed progress write (for example a dropped connection) must not fail a refresh whose real work can still succeed.</summary>
     private async Task ProgressAsync(long runId, string phase, int percent, int? sourceRows, CancellationToken ct)
     {
         try { await store.UpdateRunProgressAsync(runId, phase, percent, sourceRows, ct); }
-        catch (Exception ex) when (ex is DbException or ReviewStorageException)
+        catch (Exception ex) when (IsDatabaseFailure(ex))
         { logger.LogWarning("Review refresh {RunId}: progress could not be written ({ExceptionType}); continuing.", runId, ex.GetType().Name); }
     }
 
@@ -96,7 +103,7 @@ public sealed class ReviewRefreshService(
     private async Task FailSafelyAsync(long runId, string message)
     {
         try { await store.FailRunAsync(runId, message, clock.UtcNow, CancellationToken.None); }
-        catch (Exception ex) when (ex is DbException or ReviewStorageException)
+        catch (Exception ex) when (IsDatabaseFailure(ex))
         { logger.LogError("Review refresh {RunId} could not record its failure ({ExceptionType}); the stuck-run timeout will close it.", runId, ex.GetType().Name); }
     }
 
@@ -107,20 +114,32 @@ public sealed class ReviewRefreshService(
     public async Task RunAsync(long runId, CancellationToken ct)
     {
         var now = clock.UtcNow;
-        if (!await store.TryStartRunAsync(runId, now, ct)) { logger.LogInformation("Review refresh {RunId} was already claimed or finished.", runId); return; }
-        var run = await store.GetRunAsync(runId, ct);
+        CollectionsReviewRun? run;
+        try
+        {
+            if (!await store.TryStartRunAsync(runId, now, ct)) { logger.LogInformation("Review refresh {RunId} was already claimed or finished.", runId); return; }
+            run = await store.GetRunAsync(runId, ct);
+        }
+        catch (Exception ex) when (IsDatabaseFailure(ex) && !ct.IsCancellationRequested)
+        {
+            // Without this the run would sit in Queued (or Running) until the timeout. Say what happened now; the person can retry.
+            logger.LogError(ex.InnerException ?? ex, "Review refresh {RunId} could not start ({ExceptionType}).", runId, ex.GetType().Name);
+            await FailSafelyAsync(runId, ex is ReviewStorageException ? ex.Message : $"The review refresh could not start because of a database error ({ex.GetType().Name}). Retry.");
+            return;
+        }
         if (run is null) return;
+        var phase = "Starting";
         using var budget = CancellationTokenSource.CreateLinkedTokenSource(ct);
         budget.CancelAfter(TimeSpan.FromMinutes(Math.Max(1, reviewOptions.RefreshTimeoutMinutes)));
         try
         {
-            await ProgressAsync(runId, "Reading the financial source", 5, null, ct);
+            phase = "Reading the financial source"; await ProgressAsync(runId, phase, 5, null, ct);
             var snapshot = await source.ReadAsync(new PactReceivablesRequest(run.DueFrom, run.DueTo, run.CompanyId, MinAmount: decimal.Round(sourceOptions.DefaultMinOutstandingAmount, 4)), budget.Token);
             // Same minimum outstanding amount as the Campaigns preview. A local snapshot that is not loaded or does not cover the window would silently omit
             // receivables: refuse. (A merely stale snapshot is flagged on every record through its read time, as before.)
             if (snapshot.Snapshot is { } snapshotStatus && (!snapshotStatus.RangeCovered || snapshotStatus.Companies.Any(c => !c.HasSnapshot)))
                 throw new PactReceivablesSourceException($"Receivables data is not ready. {snapshotStatus.ReadyProblem}");
-            await ProgressAsync(runId, "Validating records", 45, snapshot.Items.Count, ct);
+            phase = "Validating records"; await ProgressAsync(runId, phase, 45, snapshot.Items.Count, ct);
             if (snapshot.Items.Any(r => r.CompanyId is not (4 or 32)))
                 throw new PactReceivablesSourceException("PACT returned a receivable without a valid company identity.");
 
@@ -129,7 +148,7 @@ public sealed class ReviewRefreshService(
             logger.LogInformation("Review refresh {RunId}: {Rows} source rows, {Records} records, {Noise} float-noise amounts normalized, {Settled} settled rows ignored.",
                 runId, snapshot.Items.Count, built.Records.Count, built.FloatNormalizedRows, built.SettledRows);
 
-            await ProgressAsync(runId, "Saving records", 60, snapshot.Items.Count, ct);
+            phase = "Saving records"; await ProgressAsync(runId, phase, 60, snapshot.Items.Count, ct);
             var chunk = Math.Clamp(reviewOptions.PersistBatchSize, 1, 2000);
             try
             {
@@ -150,12 +169,12 @@ public sealed class ReviewRefreshService(
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
-            await store.FailRunAsync(runId, "The refresh was cancelled.", clock.UtcNow, CancellationToken.None);
+            await FailSafelyAsync(runId, "The refresh was cancelled.");
             throw;
         }
         catch (OperationCanceledException)
         {
-            await store.FailRunAsync(runId, "The financial source read exceeded the time budget. Retry, or refresh one company.", clock.UtcNow, CancellationToken.None);
+            await FailSafelyAsync(runId, "The financial source read exceeded the time budget. Retry, or refresh one company.");
         }
         catch (ReviewStorageException ex)
         {
@@ -164,18 +183,22 @@ public sealed class ReviewRefreshService(
         }
         catch (PactReceivablesSourceException ex)
         {
-            await store.FailRunAsync(runId, ex.Message, clock.UtcNow, CancellationToken.None);
+            await FailSafelyAsync(runId, ex.Message);
         }
         catch (Exception ex) when (ex is DbException or InvalidCastException or FormatException or OverflowException)
         {
             logger.LogWarning("Review refresh {RunId} failed ({ExceptionType}).", runId, ex.GetType().Name);
-            await store.FailRunAsync(runId, "The financial source could not be read.", clock.UtcNow, CancellationToken.None);
+            await FailSafelyAsync(runId, $"The financial source could not be read (while {phase}).");
         }
         catch (Exception ex)
         {
             // Never leave the run Running: persist what actually went wrong so the page shows Failed with a retry.
-            logger.LogError(ex, "Review refresh {RunId} failed unexpectedly.", runId);
-            await store.FailRunAsync(runId, $"{ex.GetType().Name}: {ex.Message}", clock.UtcNow, CancellationToken.None);
+            logger.LogError(ex, "Review refresh {RunId} failed unexpectedly while {Phase}.", runId, phase);
+            // A transient database error wrapped by EF is reported as such (and with its SQL number when the store knows it), not as a bare InvalidOperationException.
+            var message = IsDatabaseFailure(ex) && ex is not ReviewStorageException
+                ? $"A database error interrupted the refresh while {phase} ({ex.GetType().Name} / {ex.InnerException?.GetType().Name}). The previous review data is still in use. Retry."
+                : $"Failed while {phase}: {ex.GetType().Name}: {ex.Message}";
+            await FailSafelyAsync(runId, message);
         }
     }
 }

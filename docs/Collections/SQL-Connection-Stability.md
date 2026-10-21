@@ -44,3 +44,23 @@ A failed CRM owner refresh used to save only "The CRM owners could not be stored
 * A failure that cannot even be recorded is logged the same way instead of being swallowed.
 
 No retry, lock or SQL change was added; this only makes the next failure diagnosable. `CollectionsCrmOwnerRuns` does not exist by design (state is `CollectionsCrmOwnerState` + `CollectionsCrmUnitOwner.RunId`).
+
+## "An exception has been raised that is likely due to a transient failure" on the Approved Financial Snapshot
+**Cause.** EF Core's default SQL Server strategy does not retry, and when a *write* (`ExecuteUpdate`, `SaveChanges`, a transaction) hits a transient SQL error it re-throws it as
+`InvalidOperationException("An exception has been raised that is likely due to a transient failure. Consider enabling ... EnableRetryOnFailure ...")` with the real `SqlException` as `InnerException`.
+The review refresh writes its progress with `ExecuteUpdate` (at 5 %, 45 %, 60 % and after every batch). The progress guard only caught `DbException`, so that wrapped exception was not
+recognised, fell to the catch-all, and was saved as the run's error: `InvalidOperationException: An exception has been raised ...`. The record-batch persistence added earlier was not the
+failing step (reads raise the raw `SqlException`, which is why they never showed this text).
+
+**Fix (targeted, not global).**
+* Progress, publish, fail and the run reads are idempotent, so they now go through the bounded retry (`PersistMaxAttempts`, fresh connection each time). A progress write that still fails can never fail the refresh.
+* The Queued -> Running claim is a compare-and-set and is deliberately **not** retried (an ambiguous first attempt would make a retry report "already claimed" and abandon a Running run). A transient failure there fails the run immediately with a clear message.
+* The retry classification now includes every number EF itself treats as transient (adds 10928, 10929, 10936, 41301, 41302, 41305, 41325, 41839) and looks through EF's wrapper to the inner `SqlException`.
+* The failure text names the phase (`Failed while Saving records: ...`) and never the bare EF wrapper message. Failure writes can no longer crash the job.
+
+**Why not `EnableRetryOnFailure` globally.** The single `UseSqlServer(...)` registration serves the whole application, and about 40 code paths (tickets, SLA, Genesys, approvals) open their own
+transactions through `TicketingUnitOfWork` (`Database.BeginTransactionAsync`). With a retrying strategy EF refuses user-initiated transactions unless each is wrapped in
+`CreateExecutionStrategy().Execute(...)`, so enabling it globally would break all of them, and blind retries around non-idempotent writes (ticket creation, outbox, dispatch) could duplicate work.
+A retry is only added where the write converges on the same state when repeated.
+
+**Reading the next failure.** The failed run's `ProgressPercent` (kept after failure) shows where it stopped: 1 = start, 5 = reading the source, 45 = validating, 60+ = saving records.
