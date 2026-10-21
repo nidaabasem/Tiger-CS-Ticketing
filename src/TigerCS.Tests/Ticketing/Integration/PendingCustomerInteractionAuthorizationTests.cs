@@ -72,12 +72,12 @@ public class PendingCustomerInteractionAuthorizationTests(TigerCsApiFactory fact
         Assert.Equal(HttpStatusCode.Created, created.StatusCode);
         var ticket = await created.Content.ReadFromJsonAsync<GenesysInquiryAcceptedResponse>();
 
-        // The bot could not finish and the conversation simply ended. No
-        // Handoff block at all — TigerCS must raise the work itself.
+        // The bot could not finish and escalated explicitly: Genesys states the handoff. (A conversation merely ending raises nothing.)
         var ended = await genesysClient.PatchAsJsonAsync(
             $"/api/genesys/tickets/{ticket!.TicketId}",
             new GenesysTicketUpdateRequest(
                 conversationId,
+                Handoff: new GenesysHandoffPart(Required: true, Trigger: "AiEscalated", Reason: "The bot could not finish."),
                 Ended: new GenesysConversationEndPart(
                     DateTime.UtcNow, "CustomerDisconnect",
                     [

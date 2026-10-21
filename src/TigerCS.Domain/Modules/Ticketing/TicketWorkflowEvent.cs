@@ -83,7 +83,16 @@ public enum WorkflowEventType : byte
     /// customer's word, with when it was said. Stored here for the same
     /// reason as the handoff events, so it needs no schema change.
     /// </summary>
-    CustomerConfirmedResolved = 15
+    CustomerConfirmedResolved = 15,
+
+    /// <summary>
+    /// The request type of an already-classified ticket was replaced (the
+    /// Genesys AI refined its classification while the conversation
+    /// progressed). Append-only history of the change; the note carries the
+    /// previous and the new request type and the source. Stored here for the
+    /// same reason as the handoff events, so it needs no schema change.
+    /// </summary>
+    RequestTypeReclassified = 16
 }
 
 /// <summary>

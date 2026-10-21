@@ -361,13 +361,14 @@ In the message flow, on the bot's escalation / "agent requested" exit, call:
 |---|---|
 | `ticketId` | `Task.TcsTicketId` |
 | `conversationId` | `Message.ConversationId` |
-| `trigger` | `"CustomerRequestedHuman"`, or `"AiConnectionLost"` on the bot's failure path, or `"AiEscalated"` |
+| `trigger` | `"CustomerRequestedHuman"` (the customer asked), `"AiEscalated"` (the bot cannot resolve it), `"RoutingDecision"` (a business rule requires a person) or `"AiConnectionLost"` (the bot failed). Always send the one that is true: Ticketing shows it as "Initiated by" and never defaults it to the customer |
 | `reason` | the bot's escalation reason / intent |
 | `mode` | leave empty unless it is actually known |
 
+Call this **only** on an explicit exit from the flow (the customer asked for a person, the bot escalates, a rule requires one). A conversation merely being created, the bot speaking, a missing request type, or the conversation ending are **not** handoff signals, and TigerCS no longer infers one from them.
+
 If the AI reconnects and a human is no longer needed, call `TigerCS - Cancel
-Human Request` with a `reason`. If the conversation ends while the work is
-still waiting, TigerCS keeps it outstanding. It never orphans the ticket.
+Human Request` with a `reason`. If the conversation ends while human work that Genesys requested is still waiting, TigerCS keeps it outstanding.
 
 ### 9.1 The customer confirms the issue is resolved
 

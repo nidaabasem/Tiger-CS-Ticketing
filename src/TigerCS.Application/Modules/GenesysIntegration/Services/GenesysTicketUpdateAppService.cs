@@ -122,6 +122,26 @@ public sealed class GenesysTicketUpdateAppService(
                 "customerConfirmation records only an explicit confirmation — send confirmedResolved: true, or omit the part.");
         }
 
+        // The handoff vocabulary is checked up front too: a request that will be refused for an unrecognized mode or trigger must not
+        // leave its classification applied behind it (no partial writes on a refused update).
+        if (request.Handoff is { Required: true } handoffToCheck)
+        {
+            if (!string.IsNullOrWhiteSpace(handoffToCheck.Mode) && !NamedEnum.TryParse<AgentHandoffMode>(handoffToCheck.Mode, out _))
+            {
+                return GenesysTicketUpdateResult.Failure(
+                    GenesysTicketUpdateOutcome.InvalidHandoffMode,
+                    $"'{handoffToCheck.Mode}' is not a recognized follow-up mode. Use Callback, ContinueChat, ReplyInChannel or HumanTakeover, or omit it.");
+            }
+
+            if (!string.IsNullOrWhiteSpace(handoffToCheck.Trigger) && !NamedEnum.TryParse<HandoffTrigger>(handoffToCheck.Trigger, out _))
+            {
+                return GenesysTicketUpdateResult.Failure(
+                    GenesysTicketUpdateOutcome.InvalidHandoffTrigger,
+                    $"'{handoffToCheck.Trigger}' is not a recognized handoff trigger. Use CustomerRequestedHuman, "
+                    + "AiConnectionLost, AiEscalated, RoutingDecision or AgentTransfer, or omit it.");
+            }
+        }
+
         // The request type the bot identified, validated and applied before
         // anything else: an invalid or conflicting one refuses the update
         // outright, and the department / owner it sets is what the handoff,

@@ -46,19 +46,15 @@ namespace TigerCS.Application.Modules.GenesysIntegration.Services;
 /// </para>
 ///
 /// <para>
-/// <b>An AI conversation that ends with nobody waiting on it is an orphaned
-/// ticket, so this service will not allow one.</b> When the conversation had
-/// virtual-agent activity, no human ever handled it, and no pending human
-/// work is outstanding, ending it raises a
-/// <see cref="AgentHandoffStatus.WaitingForAgent"/> handoff with
-/// <see cref="HandoffTrigger.AiConnectionLost"/> — in the same transaction as
-/// the ending, so the work and the transcript commit together or not at all.
-/// Genesys <i>should</i> say <c>Handoff.Required = true</c> itself, and when
-/// it does this adds nothing (the outstanding-work check sees it); this is the
-/// safety net for the terse end event that says only "the conversation
-/// finished". Raising work is all it does: the ticket is not resolved, not
-/// closed, not re-statused, not re-owned, and keeps the same TicketId and
-/// conversation id it always had.
+/// <b>Ending a conversation is not a request for a human.</b> The AI finishing,
+/// the customer leaving, a closed browser tab and a dropped connection all end
+/// a conversation, and none of them says a person is needed — so by default no
+/// handoff is raised here. Human work exists only when Genesys signals it
+/// explicitly (<c>handoff.required = true</c>). The previous "safety net"
+/// that raised an <see cref="HandoffTrigger.AiConnectionLost"/> handoff for any
+/// AI conversation ended without a human is kept behind
+/// <c>Genesys:AutoRaiseHandoffOnConversationEnd</c> (default off) as a rollback
+/// lever; see <see cref="TryAutoRaiseHandoffAsync"/> for its conditions.
 /// </para>
 /// </summary>
 public sealed class GenesysConversationEndAppService(
@@ -156,8 +152,9 @@ public sealed class GenesysConversationEndAppService(
         // the end event in one call.
         var transcript = stored.Concat(pendingMessages).ToList();
 
-        var autoRaisedHandoff = await TryAutoRaiseHandoffAsync(
-            callerEmployeeId, interaction, ticket, transcript, endedAtUtc, cancellationToken);
+        var autoRaisedHandoff = options.AutoRaiseHandoffOnConversationEnd
+            ? await TryAutoRaiseHandoffAsync(callerEmployeeId, interaction, ticket, transcript, endedAtUtc, cancellationToken)
+            : null;
 
         var firstHumanResponseRecordedAtUtc = await TryRecordFirstHumanResponseAsync(
             callerEmployeeId, ticket, transcript, cancellationToken);

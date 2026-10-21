@@ -985,6 +985,14 @@ public sealed class TicketDetailsModel(
                 ? TicketNameResolver.ResolveSelfAuthorName(approvalActorId, viewer) ?? $"Employee #{approvalActorId.ToString()[..8]}"
                 : "System";
 
+            // A handoff request is worded from its stated trigger, so the feed
+            // never claims "asked for a human" for a request nobody made.
+            if (approvalEvent.EventType == nameof(WorkflowEventType.HandoffRequested))
+            {
+                description = TicketDisplay.HandoffRequestedActivity(approvalEvent.Note);
+                actor = "Genesys";
+            }
+
             entries.Add(new ActivityEntry(
                 approvalEvent.OccurredAtUtc, "approval", actor, description, approvalEvent.Note, true));
         }
@@ -1045,7 +1053,7 @@ public sealed class TicketDetailsModel(
         // to it. Phrased without an actor for the Genesys-side events, whose
         // ActorEmployeeId is deliberately null — nobody in TigerCS performed
         // them.
-        nameof(WorkflowEventType.HandoffRequested) => "asked for a human agent",
+        nameof(WorkflowEventType.HandoffRequested) => "a human agent was requested",
         nameof(WorkflowEventType.HandoffAssigned) => "was assigned a human agent",
         nameof(WorkflowEventType.HandoffStarted) => "accepted the customer interaction",
         nameof(WorkflowEventType.HandoffCompleted) => "finished the customer interaction",
@@ -1054,6 +1062,7 @@ public sealed class TicketDetailsModel(
         // Record-only: the customer's word, not a status change — Resolve
         // and Close still happen through their own actions.
         nameof(WorkflowEventType.CustomerConfirmedResolved) => "recorded that the customer confirmed the issue is resolved",
+        nameof(WorkflowEventType.RequestTypeReclassified) => "changed the request type",
 
         _ => null
     };

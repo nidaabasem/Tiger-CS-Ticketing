@@ -670,6 +670,31 @@ public class Ticket
     }
 
     /// <summary>
+    /// Replaces the request type (and the workflow version pinned through it)
+    /// of a ticket that already has one — the narrow, explicit exception to
+    /// "classify once" that lets the Genesys AI refine its own classification
+    /// while the conversation progresses. <b>Whether it is allowed is the
+    /// calling service's decision</b> (no human has worked the ticket, no
+    /// approval was raised under the old type); this method only guards the
+    /// invariants it owns: the ticket is not closed and a request type was
+    /// already set, so it can never be used to classify an unclassified ticket
+    /// or to skip the write-once pin on the first classification.
+    /// </summary>
+    public void ReclassifyRequestType(int requestTypeId, int workflowTemplateId)
+    {
+        EnsureNotClosed();
+
+        if (RequestTypeId is null)
+        {
+            throw new InvalidOperationException(
+                $"Ticket {TicketId} has no request type to replace; use ClassifyRequestType for the first classification.");
+        }
+
+        RequestTypeId = requestTypeId;
+        WorkflowTemplateId = workflowTemplateId;
+    }
+
+    /// <summary>
     /// Pins the workflow version the ticket follows — write-once, at creation,
     /// by the creating application service after it resolved the request
     /// type's currently Published version. Requires the request type to be
