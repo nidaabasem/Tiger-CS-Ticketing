@@ -216,11 +216,6 @@ public sealed class GenesysServiceFixture
             Handoffs, ticketQuery, Tickets, TicketAssignments, StatusHistory, WorkflowEvents,
             DepartmentAssignments, UnitOfWork, Audit, TimeProvider.System);
 
-        // Contract #3: the one update facade over the two services above.
-        TicketUpdate = new GenesysTicketUpdateAppService(
-            Options, Conversations, Tickets, Departments, Handoffs, UnitOfWork, ConversationEnd, AgentHandoff, AgentResolution, Audit,
-            WorkflowEvents, Clock, RequestTypeClassification);
-
         var requestTypes = RequestTypes;
         var workflowTemplates = WorkflowTemplates;
         var departmentSettings = DepartmentSettings;
@@ -231,6 +226,11 @@ public sealed class GenesysServiceFixture
                 AssignmentRules, departmentSettings, DepartmentAssignments, TicketAssignments, Audit),
             sla.DueDates,
             new ReopenEligibilityService(StatusHistory, requestTypes, workflowTemplates, ReopenPolicy.Default));
+
+        // Contract #3: the one update facade over the two services above.
+        TicketUpdate = new GenesysTicketUpdateAppService(
+            Options, Conversations, Tickets, Departments, Handoffs, UnitOfWork, ConversationEnd, AgentHandoff, AgentResolution, Audit,
+            WorkflowEvents, Clock, RequestTypeClassification, Lifecycle);
 
         InactivityClose = new ChatbotInactivityCloseAppService(
             Options, Conversations, Tickets, Handoffs, Departments, Lifecycle, UnitOfWork, Clock);

@@ -874,13 +874,44 @@ public sealed class TicketLifecycleAppService(
     /// delivery <paramref name="detail"/> (document type, code, timestamp) are written to the status history and the audit entry.
     /// A ticket that is already Closed (or not closable) is a no-op: nothing is written twice.
     /// </summary>
-    public async Task<TicketMutationResult> CloseForDocumentDeliveryAsync(
+    public Task<TicketMutationResult> CloseForDocumentDeliveryAsync(
         Guid integrationEmployeeId,
         long ticketId,
         ResolutionOutcome outcome,
         string reason,
         string detail,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default) =>
+        CloseBySystemAsync(
+            integrationEmployeeId, ticketId, outcome, reason, detail, "AutoCloseDocumentDelivery",
+            ticket => ticket.CloseForDocumentDelivery(outcome), beforeCommit: null, cancellationToken);
+
+    /// <summary>
+    /// Closes the ticket when the Genesys AI reports it finished the conversation: the same Resolved → Closed system closure as document
+    /// delivery, outcome Resolved, with the exact <paramref name="reason"/> the caller supplies ("Closed by AI"). A ticket a person owns, or
+    /// one already closed (by anyone, for any reason), is left exactly as it is — nothing is overwritten or written twice.
+    /// <paramref name="beforeCommit"/> runs before the single SaveChanges so the caller's own change commits or rolls back with the closure.
+    /// </summary>
+    public Task<TicketMutationResult> CloseForAiCompletionAsync(
+        Guid integrationEmployeeId,
+        long ticketId,
+        string reason,
+        string detail,
+        Action<DateTime>? beforeCommit = null,
+        CancellationToken cancellationToken = default) =>
+        CloseBySystemAsync(
+            integrationEmployeeId, ticketId, ResolutionOutcome.Resolved, reason, detail, "AutoCloseByAi",
+            ticket => ticket.CloseForAiCompletion(), beforeCommit, cancellationToken);
+
+    private async Task<TicketMutationResult> CloseBySystemAsync(
+        Guid integrationEmployeeId,
+        long ticketId,
+        ResolutionOutcome outcome,
+        string reason,
+        string detail,
+        string auditAction,
+        Func<Ticket, TicketStatus> close,
+        Action<DateTime>? beforeCommit,
+        CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(reason);
 
@@ -904,7 +935,7 @@ public sealed class TicketLifecycleAppService(
         TicketStatus oldStatus;
         try
         {
-            oldStatus = ticket.CloseForDocumentDelivery(outcome);
+            oldStatus = close(ticket);
         }
         catch (TicketClosedException)
         {
@@ -945,7 +976,7 @@ public sealed class TicketLifecycleAppService(
             cancellationToken);
 
         await auditWriter.WriteAsync(
-            integrationEmployeeId, "AutoCloseDocumentDelivery", "Ticket", ticketId.ToString(),
+            integrationEmployeeId, auditAction, "Ticket", ticketId.ToString(),
             beforeValue: oldStatus.ToString(),
             afterValue: $"{TicketStatus.Closed};ResolutionOutcome={outcome};Reason={reason};{detail};AtUtc={now:O}",
             correlationId, cancellationToken);
@@ -964,6 +995,8 @@ public sealed class TicketLifecycleAppService(
         await EnqueueLifecycleEventAsync(
             OutboxEventTypes.TicketClosed, OutboxEventTypes.TicketClosedVersion,
             ticket, integrationEmployeeId, correlationId, now, cancellationToken);
+
+        beforeCommit?.Invoke(now);
 
         try
         {

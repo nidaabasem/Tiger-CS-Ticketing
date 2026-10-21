@@ -36,6 +36,7 @@ namespace TigerCS.Application.Modules.GenesysIntegration.Dto;
 /// <param name="CustomerConfirmation">Set when the customer explicitly confirmed during the interaction that their issue is resolved. Record-only — never resolves or closes the ticket.</param>
 /// <param name="AwaitingCustomerReply">true starts the chatbot inactivity timer (a repeat never restarts it); false cancels it (the customer replied); null leaves it as it is.</param>
 /// <param name="CustomerActive">true = the customer just did something in the conversation (sent a message, answered the bot): restarts the Website/Chatbot inactivity clock at TigerCS's own time. Send it on EVERY inbound customer message. null/false changes nothing.</param>
+/// <param name="ClosedByAi">true = the Genesys AI (voicebot / chatbot) finished the conversation: the ticket is closed (Resolved → Closed, reason "Closed by AI") — only if the AI still owns it. Refused, with a note and nothing changed, when a human is requested/pending/connected, a person owns the ticket, it is a Call Center ticket or it is already closed. null/false changes nothing.</param>
 /// <param name="RequestType">Set when the bot has identified the request type: validated, then applied with its department routing, automatic assignment and SLA policy. Repeating the same one changes nothing; a different one is refused.</param>
 public sealed record GenesysTicketUpdateDto(
     string ConversationId,
@@ -48,7 +49,8 @@ public sealed record GenesysTicketUpdateDto(
     GenesysCustomerConfirmationUpdateDto? CustomerConfirmation = null,
     bool? AwaitingCustomerReply = null,
     GenesysRequestTypeDto? RequestType = null,
-    bool? CustomerActive = null);
+    bool? CustomerActive = null,
+    bool? ClosedByAi = null);
 
 /// <summary>
 /// The customer's own statement, made during the interaction, that the issue
@@ -199,6 +201,8 @@ public enum GenesysTicketUpdateOutcome
 /// <param name="AwaitingCustomerReply">Whether the inactivity timer is running after this update.</param>
 /// <param name="InactivityDeadlineUtc">When the ticket becomes eligible for inactivity closure, while the timer runs.</param>
 /// <param name="AwaitingCustomerReplyNote">Why a requested timer was not started, when it was not.</param>
+/// <param name="ClosedByAi">True when THIS call closed the ticket because <c>closedByAi: true</c> was sent.</param>
+/// <param name="ClosedByAiNote">Why <c>closedByAi: true</c> did not close the ticket (human involved, Call Center, already closed, …), when it did not.</param>
 /// <param name="Classification">What applying the update's request type did (routing, assignment, SLA), when it carried one.</param>
 public sealed record GenesysTicketUpdateResult(
     GenesysTicketUpdateOutcome Outcome,
@@ -213,7 +217,9 @@ public sealed record GenesysTicketUpdateResult(
     bool AwaitingCustomerReply = false,
     DateTime? InactivityDeadlineUtc = null,
     string? AwaitingCustomerReplyNote = null,
-    GenesysClassificationResult? Classification = null)
+    GenesysClassificationResult? Classification = null,
+    bool ClosedByAi = false,
+    string? ClosedByAiNote = null)
 {
     public static GenesysTicketUpdateResult Failure(GenesysTicketUpdateOutcome outcome, string? detail = null) =>
         new(outcome, Detail: detail);

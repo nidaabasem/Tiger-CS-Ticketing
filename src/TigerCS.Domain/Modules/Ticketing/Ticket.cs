@@ -871,6 +871,25 @@ public class Ticket
         return previous;
     }
 
+    /// <summary>
+    /// Genesys AI completion: the virtual agent finished the conversation (<c>closedByAi</c>), so the ticket goes Resolved → Closed in one
+    /// step with outcome <see cref="ResolutionOutcomeValue.Resolved"/>. Refused for a ticket a person owns
+    /// (<see cref="TicketNotEligibleForResolutionException"/>) — a human has taken it, so the AI cannot close it — and for one already closed.
+    /// Returns the status held before so the caller writes the history rows.
+    /// </summary>
+    public TicketStatus CloseForAiCompletion()
+    {
+        EnsureNotClosed();
+
+        if (TicketStatus is not (TicketStatus.Open or TicketStatus.InProgress or TicketStatus.PendingCustomer)
+            || CurrentOwnerEmployeeId is not null)
+        {
+            throw new TicketNotEligibleForResolutionException(TicketId, TicketStatus);
+        }
+
+        return CloseForDocumentDelivery(ResolutionOutcomeValue.Resolved);
+    }
+
     /// <summary>MVP-API-Contracts.md §3.10 — the final, CS-layer-only close, distinct from Resolve. Requires a current TicketResolutions row (enforced by the caller — this method only enforces the TicketStatus precondition).</summary>
     public void Close()
     {
