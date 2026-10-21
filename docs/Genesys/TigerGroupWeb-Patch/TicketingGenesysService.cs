@@ -28,6 +28,26 @@ namespace Tiger.TigerGroupWeb.Genesys
         private static readonly TimeSpan TokenMaximumLifetime = TimeSpan.FromMinutes(20);
         private static readonly TimeSpan TokenMinimumLifetime = TimeSpan.FromSeconds(10);
 
+        // A token must still be accepted for at least this long when it is issued, so that
+        // it covers the forwarded call (ForwardBudget) and Ticketing's clock skew.
+        private static readonly TimeSpan TokenMinimumUsableValidity = TimeSpan.FromSeconds(60);
+
+        /// <summary>What to do with a freshly issued service token.</summary>
+        public enum TokenUse
+        {
+            /// <summary>Use it and keep it in the cache for <see cref="TokenLifetime.CacheFor"/>.</summary>
+            Cache,
+
+            /// <summary>Valid for the call at hand but too close to expiry to be worth keeping: use it once, never cache it.</summary>
+            UseOnce,
+
+            /// <summary>Already expired, or valid for less than the minimum usable time: it is neither cached nor used.</summary>
+            Reject
+        }
+
+        /// <summary>The decision <see cref="ComputeTokenLifetime"/> makes about a token.</summary>
+        public readonly record struct TokenLifetime(TokenUse Use, TimeSpan CacheFor);
+
         /// <summary>
         /// One time budget for a forwarded Create/Update (and the OTP/document POSTs): TigerCS login, the call, buffering
         /// the response and the single authentication retry. When it runs out the call is cancelled (the controller answers 504).
@@ -36,23 +56,40 @@ namespace Tiger.TigerGroupWeb.Genesys
         public TimeSpan ForwardBudget { get; init; } = TimeSpan.FromSeconds(30);
 
         /// <summary>
-        /// How long a service token is cached: until shortly before the JWT stops being accepted (<c>expiresAtUtc</c> from the
-        /// login response, less a 2-minute renewal margin), never longer than the previous fixed 20 minutes, never shorter than
-        /// 10 seconds. Without an expiry in the response the previous 20 minutes applies.
+        /// Decides what happens to a token whose login answer said it stops being accepted at <paramref name="expiresAtUtc"/>:
+        /// <list type="bullet">
+        /// <item><description>No expiry in the answer: cached for the previous fixed 20 minutes (the 401 refresh covers a wrong guess).</description></item>
+        /// <item><description>Expired, or valid for less than 60 seconds: <see cref="TokenUse.Reject"/> - never cached, never used.</description></item>
+        /// <item><description>Valid, but less than 2 minutes + 10 seconds remain: <see cref="TokenUse.UseOnce"/> - used for this call only, never cached.</description></item>
+        /// <item><description>Otherwise: cached until 2 minutes before it expires, at most 20 minutes.</description></item>
+        /// </list>
         /// </summary>
-        public static TimeSpan ComputeTokenLifetime(DateTimeOffset? expiresAtUtc, DateTimeOffset now)
+        public static TokenLifetime ComputeTokenLifetime(DateTimeOffset? expiresAtUtc, DateTimeOffset now)
         {
             if (expiresAtUtc is null)
             {
-                return TokenMaximumLifetime;
+                return new TokenLifetime(TokenUse.Cache, TokenMaximumLifetime);
             }
 
-            var lifetime = expiresAtUtc.Value - now - TokenRenewMargin;
+            var remaining = expiresAtUtc.Value - now;
 
-            return lifetime < TokenMinimumLifetime
-                ? TokenMinimumLifetime
-                : lifetime > TokenMaximumLifetime ? TokenMaximumLifetime : lifetime;
+            if (remaining < TokenMinimumUsableValidity)
+            {
+                return new TokenLifetime(TokenUse.Reject, TimeSpan.Zero);
+            }
+
+            var cacheFor = remaining - TokenRenewMargin;
+
+            if (cacheFor < TokenMinimumLifetime)
+            {
+                return new TokenLifetime(TokenUse.UseOnce, TimeSpan.Zero);
+            }
+
+            return new TokenLifetime(
+                TokenUse.Cache,
+                cacheFor > TokenMaximumLifetime ? TokenMaximumLifetime : cacheFor);
         }
+
 
         public TicketingGenesysService(
             IHttpClientFactory httpClientFactory,
@@ -165,18 +202,34 @@ namespace Tiger.TigerGroupWeb.Genesys
                         "TigerCS login succeeded but access token was not found.");
                 }
 
+                // The field is UTC by name: a timestamp without an offset is read as UTC,
+                // never as the server's local time. A missing or unreadable value means
+                // "expiry unknown" (the previous 20-minute cache applies).
                 DateTimeOffset? expiresAtUtc = null;
                 if (root.TryGetProperty("expiresAtUtc", out var expiresElement) &&
                     expiresElement.ValueKind == JsonValueKind.String &&
-                    expiresElement.TryGetDateTimeOffset(out var parsedExpiry))
+                    DateTimeOffset.TryParse(
+                        expiresElement.GetString(),
+                        CultureInfo.InvariantCulture,
+                        DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
+                        out var parsedExpiry))
                 {
                     expiresAtUtc = parsedExpiry;
                 }
 
-                _cache.Set(
-                    TokenCacheKey,
-                    token,
-                    ComputeTokenLifetime(expiresAtUtc, DateTimeOffset.UtcNow));
+                var lifetime = ComputeTokenLifetime(expiresAtUtc, DateTimeOffset.UtcNow);
+
+                if (lifetime.Use == TokenUse.Reject)
+                {
+                    // An expired (or nearly expired) token is neither cached nor sent.
+                    throw new InvalidOperationException(
+                        "TigerCS issued an access token that is already expired or too close to expiry to use.");
+                }
+
+                if (lifetime.Use == TokenUse.Cache)
+                {
+                    _cache.Set(TokenCacheKey, token, lifetime.CacheFor);
+                }
 
                 return token;
             }

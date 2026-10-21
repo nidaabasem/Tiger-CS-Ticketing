@@ -42,6 +42,7 @@ public sealed class FakeTigerCs : HttpMessageHandler, IHttpClientFactory
     public List<string> ClientNames { get; } = [];
     public TimeSpan? TokenValidFor { get; set; } = TimeSpan.FromMinutes(60);
     public Func<int, HttpStatusCode>? LoginStatus { get; set; }
+    public string? RawLoginBody { get; set; }
     public Func<CancellationToken, Task>? LoginDelay { get; set; }
     public Func<Seen, int, CancellationToken, Task<HttpResponseMessage>> Script { get; set; } =
         (_, _, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
@@ -83,6 +84,11 @@ public sealed class FakeTigerCs : HttpMessageHandler, IHttpClientFactory
             if (status != HttpStatusCode.OK)
             {
                 return new HttpResponseMessage(status) { Content = new StringContent("{\"detail\":\"bad credentials for svc-genesys\"}") };
+            }
+
+            if (RawLoginBody is not null)
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(RawLoginBody, Encoding.UTF8, "application/json") };
             }
 
             var expires = TokenValidFor is { } v ? $",\"expiresAtUtc\":\"{DateTime.UtcNow.Add(v):O}\"" : "";
@@ -446,17 +452,131 @@ public class TicketingGenesysForwardingTests
     }
 
     [Theory]
-    [InlineData(null, 20 * 60.0)]        // no expiry in the answer: the previous 20 minutes
-    [InlineData(60 * 60.0, 20 * 60.0)]   // long-lived token: never longer than before
-    [InlineData(10 * 60.0, 8 * 60.0)]    // 10 minutes of validity: renew 2 minutes early
-    [InlineData(60.0, 10.0)]             // nearly expired: a short, safe minimum
-    [InlineData(-30.0, 10.0)]            // already expired
-    public void TheTokenIsCachedOnlyWhileTheJwtIsStillAccepted(double? validForSeconds, double expectedSeconds)
+    [InlineData(null, TicketingGenesysService.TokenUse.Cache, 20 * 60.0)]         // no expiry in the answer: the previous 20 minutes
+    [InlineData(60 * 60.0, TicketingGenesysService.TokenUse.Cache, 20 * 60.0)]    // long-lived token: never longer than before
+    [InlineData(10 * 60.0, TicketingGenesysService.TokenUse.Cache, 8 * 60.0)]     // renew 2 minutes before it expires
+    [InlineData(125.0, TicketingGenesysService.TokenUse.UseOnce, 0.0)]            // valid, but not worth keeping: used once, never cached
+    [InlineData(61.0, TicketingGenesysService.TokenUse.UseOnce, 0.0)]
+    [InlineData(130.0, TicketingGenesysService.TokenUse.Cache, 10.0)]            // exactly the 10 s minimum worth caching
+    [InlineData(59.0, TicketingGenesysService.TokenUse.Reject, 0.0)]              // too close to expiry to cover a call
+    [InlineData(1.0, TicketingGenesysService.TokenUse.Reject, 0.0)]
+    [InlineData(0.0, TicketingGenesysService.TokenUse.Reject, 0.0)]               // expires now
+    [InlineData(-30.0, TicketingGenesysService.TokenUse.Reject, 0.0)]             // already expired
+    [InlineData(-86400.0, TicketingGenesysService.TokenUse.Reject, 0.0)]
+    public void AnExpiredOrNearlyExpiredTokenIsNeverCachedNorUsed(double? validForSeconds, TicketingGenesysService.TokenUse expectedUse, double expectedCacheSeconds)
     {
         var now = DateTimeOffset.UtcNow;
         var expires = validForSeconds is { } v ? now.AddSeconds(v) : (DateTimeOffset?)null;
 
-        Assert.Equal(expectedSeconds, TicketingGenesysService.ComputeTokenLifetime(expires, now).TotalSeconds, 3);
+        var decision = TicketingGenesysService.ComputeTokenLifetime(expires, now);
+
+        Assert.Equal(expectedUse, decision.Use);
+        Assert.Equal(expectedCacheSeconds, decision.CacheFor.TotalSeconds, 3);
+    }
+
+    [Theory]
+    [InlineData(-30)]
+    [InlineData(0)]
+    [InlineData(30)]
+    public async Task AnExpiredTokenFromLogin_IsRejected_NotCached_AndNotSent(int validForSeconds)
+    {
+        var upstream = new FakeTigerCs { TokenValidFor = TimeSpan.FromSeconds(validForSeconds) };
+        var cache = new MemoryCache(new MemoryCacheOptions());
+        var service = Host.Service(upstream, cache);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.UpdateTicketAsync(1, "{}"));
+
+        Assert.False(cache.TryGetValue("TigerCS_Genesys_AccessToken", out _));
+        Assert.Empty(upstream.TicketCalls);      // the expired token was never put on a request
+    }
+
+    [Fact]
+    public async Task AnExpiredTokenFromLogin_Answers502_ThroughTheController_WithoutLeakingTheToken()
+    {
+        await using var h = await Host.StartAsync(configure: u => u.TokenValidFor = TimeSpan.FromSeconds(-5));
+
+        var response = await h.PatchAsync("/api/genesys/tickets/1", "{\"conversationId\":\"c\"}");
+
+        Assert.Equal(HttpStatusCode.BadGateway, response.StatusCode);
+        Assert.Empty(h.Upstream.TicketCalls);
+        Assert.DoesNotContain("T1", h.Logs.All);
+        Assert.False(h.Cache.TryGetValue("TigerCS_Genesys_AccessToken", out _));
+    }
+
+    [Fact]
+    public async Task ANearlyExpiredButUsableToken_IsUsedForTheCall_ButNeverCached()
+    {
+        var upstream = new FakeTigerCs { TokenValidFor = TimeSpan.FromSeconds(100) };   // usable (> 60 s) but < 2 min 10 s
+        var cache = new MemoryCache(new MemoryCacheOptions());
+        var service = Host.Service(upstream, cache);
+
+        using var first = await service.UpdateTicketAsync(1, "{}");
+        Assert.False(cache.TryGetValue("TigerCS_Genesys_AccessToken", out _));
+        using var second = await service.UpdateTicketAsync(2, "{}");
+
+        Assert.Equal(HttpStatusCode.OK, first.StatusCode);
+        Assert.Equal(2, upstream.Logins);                                  // not served from the cache
+        Assert.Equal(["Bearer T1", "Bearer T2"], upstream.TicketCalls.Select(c => c.Authorization));
+    }
+
+    [Fact]
+    public async Task AValidToken_IsCachedAndReusedWithoutAnotherLogin()
+    {
+        var upstream = new FakeTigerCs { TokenValidFor = TimeSpan.FromMinutes(30) };
+        var cache = new MemoryCache(new MemoryCacheOptions());
+        var service = Host.Service(upstream, cache);
+
+        (await service.UpdateTicketAsync(1, "{}")).Dispose();
+        (await service.UpdateTicketAsync(2, "{}")).Dispose();
+
+        Assert.Equal(1, upstream.Logins);
+        Assert.True(cache.TryGetValue("TigerCS_Genesys_AccessToken", out _));
+    }
+
+    [Theory]
+    [InlineData("2099-01-01T10:00:00Z")]                  // Z
+    [InlineData("2099-01-01T12:00:00+02:00")]             // explicit offset: same instant
+    [InlineData("2099-01-01T10:00:00")]                   // no offset: read as UTC, not as the server's local time
+    public async Task TheExpiryTimestampIsReadAsAnInstantInUtc(string expiresAtUtc)
+    {
+        var upstream = new FakeTigerCs();
+        upstream.RawLoginBody = $"{{\"accessToken\":\"T1\",\"expiresAtUtc\":\"{expiresAtUtc}\"}}";
+        var cache = new MemoryCache(new MemoryCacheOptions());
+        var service = Host.Service(upstream, cache);
+
+        (await service.UpdateTicketAsync(1, "{}")).Dispose();
+
+        Assert.True(cache.TryGetValue("TigerCS_Genesys_AccessToken", out _));   // far-future expiry: cached (capped at 20 min)
+    }
+
+    [Theory]
+    [InlineData("\"2001-01-01T10:00:00Z\"")]            // a past instant: rejected
+    [InlineData("\"2001-01-01T10:00:00\"")]             // past, no offset: still read as UTC and rejected
+    public async Task APastExpiryTimestamp_IsRejected_InEveryFormat(string expiresJson)
+    {
+        var upstream = new FakeTigerCs();
+        upstream.RawLoginBody = "{\"accessToken\":\"T1\",\"expiresAtUtc\":" + expiresJson + "}";
+        var service = Host.Service(upstream, new MemoryCache(new MemoryCacheOptions()));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.UpdateTicketAsync(1, "{}"));
+        Assert.Empty(upstream.TicketCalls);
+    }
+
+    [Theory]
+    [InlineData("\"not a date\"")]
+    [InlineData("12345")]
+    [InlineData("null")]
+    public async Task AMissingOrUnreadableExpiry_MeansUnknown_AndKeepsThePreviousTwentyMinuteCache(string expiresJson)
+    {
+        var upstream = new FakeTigerCs();
+        upstream.RawLoginBody = "{\"accessToken\":\"T1\",\"expiresAtUtc\":" + expiresJson + "}";
+        var cache = new MemoryCache(new MemoryCacheOptions());
+        var service = Host.Service(upstream, cache);
+
+        (await service.UpdateTicketAsync(1, "{}")).Dispose();
+
+        Assert.Single(upstream.TicketCalls);
+        Assert.True(cache.TryGetValue("TigerCS_Genesys_AccessToken", out _));
     }
 
     // ------------------------------------------------------------------ existing behaviour that must not move
