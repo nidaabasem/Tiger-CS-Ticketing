@@ -32,3 +32,15 @@ Both are *transport* errors (the TCP link to the SQL Server dropped or timed out
   API host (Linux: `net.ipv4.tcp_keepalive_time` below the device timeout; Windows: `KeepAliveTime`).
 * SQL Server error log / extended events around the failure time for the `clientConnectionId` logged.
 * Connection string: `Connect Timeout=30;ConnectRetryCount=3;ConnectRetryInterval=10` helps connection establishment and idle connections, not a command that is already running.
+
+## CRM owner refresh: reading `CollectionsCrmOwnerState.LastError`
+A failed CRM owner refresh used to save only "The CRM owners could not be stored." and log the exception type. It now saves a safe, specific message and logs the connection details:
+
+* **Saved (`LastError`, also shown on the pages):** `The CRM owners could not be stored: <stage> (<procedure>) failed with SQL error <n> (class <c>, state <s>): <fixed description>. The previous CRM data was kept.`
+  Stages: opening the connection, staging chunk N of M (`usp_Collections_StoreCrmUnitOwners`), publishing the run (`usp_Collections_PublishCrmUnitOwners`), recording the failure.
+  The description is a fixed text per SQL number (for example 10060 / -1 = connection lost, 50040 = staged row count mismatch, 2628 = a value too long, 208 = object not found). It never copies the
+  database's own message, which can contain a customer value, and never contains a connection string, password or CRM data.
+* **Logged (API log, warning `CRM owners could not be stored: ...`):** stage, procedure, SQL number / class / state / line, exception type, server, database, client connection id, row count and elapsed ms.
+* A failure that cannot even be recorded is logged the same way instead of being swallowed.
+
+No retry, lock or SQL change was added; this only makes the next failure diagnosable. `CollectionsCrmOwnerRuns` does not exist by design (state is `CollectionsCrmOwnerState` + `CollectionsCrmUnitOwner.RunId`).

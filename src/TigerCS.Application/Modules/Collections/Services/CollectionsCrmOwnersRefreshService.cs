@@ -69,17 +69,25 @@ public sealed class CollectionsCrmOwnersRefreshService(
             logger.LogInformation("CRM owners loaded: {Fetched} fetched, {Stored} stored, {Rejected} not eligible, {Unlinked} without a company.", fetched, rows.Count, rejected, rows.Count - linked);
             return new(true, fetched, rows.Count, rejected, rows.Count - linked, null, reasons);
         }
+        catch (CrmOwnerStorageException ex)
+        {
+            // The safe message is what the pages and CollectionsCrmOwnerState.LastError show; the connection details stay in the log.
+            logger.LogWarning("CRM owners could not be stored: {Detail}", ex.LogDetail);
+            return await FailAsync(ex.Message, cancellationToken);
+        }
         catch (Exception ex) when (ex is System.Data.Common.DbException or InvalidOperationException)
         {
             logger.LogWarning("CRM owners could not be stored ({ExceptionType}).", ex.GetType().Name);
-            return await FailAsync("The CRM owners could not be stored.", cancellationToken);
+            return await FailAsync(CrmOwnerStorageException.BuildSafeMessage("storing the owners", null, null, null, null, ex.GetType().Name), cancellationToken);
         }
     }
 
     private async Task<CrmOwnersRefreshResult> FailAsync(string message, CancellationToken cancellationToken)
     {
         logger.LogWarning("CRM owner load failed: {Message}", message);
-        try { await store.RecordFailureAsync(message, cancellationToken); } catch (Exception ex) when (ex is System.Data.Common.DbException or InvalidOperationException) { }
+        try { await store.RecordFailureAsync(message, cancellationToken); }
+        catch (CrmOwnerStorageException ex) { logger.LogWarning("The CRM owner failure could not be recorded: {Detail}", ex.LogDetail); }
+        catch (Exception ex) when (ex is System.Data.Common.DbException or InvalidOperationException) { logger.LogWarning("The CRM owner failure could not be recorded ({ExceptionType}).", ex.GetType().Name); }
         return new(false, 0, 0, 0, 0, message);
     }
 
