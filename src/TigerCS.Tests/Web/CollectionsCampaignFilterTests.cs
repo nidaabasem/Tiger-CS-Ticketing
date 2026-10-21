@@ -49,24 +49,28 @@ public sealed class CollectionsCampaignFilterTests
     }
 
     [Fact]
-    public async Task LastSixMonths_StaysAShortcut_AndKeepsThePaymentStatusAndTower()
+    public async Task LastSixMonths_IsAPeriodChoice_ThatKeepsTheExplicitDatesAndTheOtherFilters()
     {
         var api = new FakeCollectionsApi();
         using var factory = CollectionsWebHost.Factory(api); using var client = factory.CreateClient();
-        var html = await (await client.GetAsync($"/Collections/Campaigns?{Filters}")).Content.ReadAsStringAsync();
-        var link = System.Net.WebUtility.HtmlDecode(Regex.Match(html, "<a[^>]*href=\"([^\"]*)\"[^>]*data-last-six-months").Groups[1].Value);
-        Assert.Contains("paymentStatus=Overdue", link); Assert.Contains("towerId=7", link); Assert.Contains("dateFrom=", link); Assert.Contains("dateTo=", link);
+        var html = await (await client.GetAsync("/Collections/Campaigns?stage=LegalNotice&towerId=7&paymentStatus=Overdue&businessDate=2026-10-14&dateFrom=2026-04-14&dateTo=2026-10-14")).Content.ReadAsStringAsync();
+        Assert.Contains("<option value=\"LastSixMonths\" selected=\"selected\">Last 6 months</option>", html);
+        Assert.Contains("name=\"dateFrom\" type=\"date\"", html); Assert.Contains("value=\"2026-04-14\"", html); Assert.Contains("value=\"2026-10-14\"", html);
+        Assert.Contains("<option value=\"Overdue\" selected=\"selected\">Overdue</option>", html);
+        Assert.Contains("<option value=\"7\" selected=\"selected\">", html);
     }
 
     [Fact]
-    public async Task TheFilterBar_HasNoMonthOrYear_AndOneOfEachOtherControl()
+    public async Task TheFilterForm_HasNoMonthOrYear_AndOneOfEachOtherControl()
     {
         var api = new FakeCollectionsApi();
         using var factory = CollectionsWebHost.Factory(api); using var client = factory.CreateClient();
         var html = await (await client.GetAsync("/Collections/Campaigns?stage=CurrentMonthReminder")).Content.ReadAsStringAsync();
-        var form = Regex.Match(html, "<form class=\"filter-bar\".*?</form>", RegexOptions.Singleline).Value;
-        foreach (var name in new[] { "stage", "towerId", "paymentStatus", "dateFrom", "dateTo", "minTotal", "businessDate", "search" })
+        var form = Regex.Match(html, "<form id=\"campaignFilters\".*?</form>", RegexOptions.Singleline).Value;
+        foreach (var name in new[] { "stage", "towerId", "paymentStatus", "dateFrom", "dateTo", "minTotal", "businessDate" })
             Assert.Single(Regex.Matches(form, $"name=\"{name}\""));                  // no duplicate filters
+        Assert.Single(Regex.Matches(html, "id=\"campaignSearch\""));                         // the search box sits by the results but still belongs to the same form
+        Assert.Contains("form=\"campaignFilters\"", html);
         Assert.DoesNotContain("name=\"month\"", form); Assert.DoesNotContain("name=\"year\"", form);
         foreach (var option in new[] { "Due and Overdue (both)", ">Due<", ">Overdue<" }) Assert.Contains(option, form);
     }

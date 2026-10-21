@@ -21,7 +21,7 @@
 
         const selectedLabel = () => { const o = options.find(x => x.value === select.value); return o && o.value ? o.label : ''; };
         const close = () => { list.hidden = true; input.setAttribute('aria-expanded', 'false'); active = -1; input.removeAttribute('aria-activedescendant'); };
-        const choose = option => { select.value = option.value; input.value = option.value ? option.label : ''; close(); };
+        const choose = option => { const changed = select.value !== option.value; select.value = option.value; input.value = option.value ? option.label : ''; close(); if (changed) select.dispatchEvent(new Event('change', { bubbles: true })); };
         const render = () => {
             const term = input.value.trim().toLowerCase();
             shown = options.filter(o => !term || o.label.toLowerCase().includes(term));
@@ -54,7 +54,7 @@
         });
         input.addEventListener('blur', () => {
             // Leaving the box with text that is not a chosen tower restores the current choice; an empty box means "All towers".
-            if (!input.value.trim()) select.value = '';
+            if (!input.value.trim() && select.value !== '') { select.value = ''; select.dispatchEvent(new Event('change', { bubbles: true })); }
             input.value = selectedLabel(); close();
         });
     };

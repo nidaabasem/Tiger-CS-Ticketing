@@ -24,12 +24,15 @@ public sealed class CollectionsCoverageRenderTests
     }
 
     [Fact]
-    public async Task LastSixMonthsShortcut_IsALinkWithTheExplicitRange_OnCampaigns()
+    public async Task LastSixMonthsPeriod_IsTheExplicitSixMonthRange_AndKeepsTheOtherFilters_OnCampaigns()
     {
         var api = new FakeCollectionsApi();
         using var factory = CollectionsWebHost.Factory(api); using var client = factory.CreateClient();
-        var campaigns = await (await client.GetAsync("/Collections/Campaigns?stage=CurrentMonthReminder&businessDate=2026-03-15&towerId=7")).Content.ReadAsStringAsync();
-        Assert.Contains("dateFrom=2025-09-15", campaigns); Assert.Contains("dateTo=2026-03-15", campaigns); Assert.Contains("businessDate=2026-03-15", campaigns); Assert.Contains("minTotal=100", campaigns);
+        var campaigns = await (await client.GetAsync("/Collections/Campaigns?stage=CurrentMonthReminder&businessDate=2026-03-15&towerId=7&dateFrom=2025-09-15&dateTo=2026-03-15")).Content.ReadAsStringAsync();
+        Assert.Contains("<option value=\"LastSixMonths\" selected=\"selected\">Last 6 months</option>", campaigns);          // the range the server calls "last 6 months" (CollectionsDateRanges)
+        Assert.Contains("value=\"2025-09-15\"", campaigns); Assert.Contains("value=\"2026-03-15\"", campaigns); Assert.Contains("name=\"businessDate\" type=\"date\" data-campaign-date min=\"2000-01-01\" max=\"2100-12-31\" value=\"2026-03-15\"", campaigns);
+        Assert.Contains("name=\"minTotal\"", campaigns); Assert.Contains("value=\"100\"", campaigns); Assert.Contains("<option value=\"7\" selected=\"selected\">", campaigns);
+        Assert.Empty(api.Calls("/campaigns/preview"));
     }
 
     [Fact]

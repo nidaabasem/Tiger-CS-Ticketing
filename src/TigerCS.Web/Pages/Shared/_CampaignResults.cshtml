@@ -8,11 +8,12 @@
 }
 else if (Model.Report is { } report)
 {
+    @* The financial snapshot status (load problems, CRM state, reconciliation) is its own region; it is part of this fragment only for the asynchronous reload, where
+       collections-campaign-filters.js lifts it into the always-visible status box. *@
+    if (!Model.RenderFull) { <partial name="_CampaignSnapshotStatus" model="Model" /> }
     <div hidden data-effective-filters data-from="@Model.DateFrom?.ToString("yyyy-MM-dd")" data-to="@report.DateTo?.ToString("yyyy-MM-dd")"></div>
-    if (report.Snapshot is { NothingLoaded: true } nothing) { <div class="panel"><partial name="_LoadProblem" model="nothing" /></div> return; }
-    <div class="panel">
-        @if (report.Snapshot is { } snapshot) { <partial name="_LoadProblem" model="snapshot" /> }
-        <partial name="_CrmContactNotice" model="report.Crm" />
+    if (report.Snapshot is { NothingLoaded: true }) { <div class="panel"><p class="receivables-meta" data-nothing-loaded>No customers can be shown until the financial data has loaded. See the snapshot status above.</p></div> return; }
+    <div class="panel" data-customer-results data-preview-current>
         <ul class="campaign-totals" data-campaign-totals>
             <li>Eligible customers: <strong data-eligible-count>@((report.TotalCount - report.NotEligibleCount).ToString("N0"))</strong> of @report.TotalCount.ToString("N0") listed</li>
             @if (report.EligibleTotalAmount is { } qualifying) { <li>Total qualifying amount: <strong data-eligible-total>@(report.Items.FirstOrDefault()?.Currency ?? "AED") @qualifying.ToString("N2", System.Globalization.CultureInfo.InvariantCulture)</strong> <span class="receivables-meta">(stage amount of the eligible customers, as sent to Genesys)</span></li> }
@@ -21,7 +22,6 @@ else if (Model.Report is { } report)
             @if (Model.CampaignName is { } campaignName) { <li>Genesys campaign name when sent: <strong data-campaign-name>@campaignName</strong></li> }
         </ul>
         @if (report.PaymentStatusNote is { } statusNote) { <p class="receivables-notice" role="status" data-payment-status-note>@statusNote</p> }
-        @if (report.Snapshot?.OldestSuccessUtc is { } updated) { <p class="receivables-meta" data-updated>Updated @CollectionsDisplay.DubaiTime(updated)</p> }
         @* Exports stay blocked for incomplete or stale data: the buttons only exist when every company is loaded, fresh and covers the dates (the API refuses anyway). *@
         @if (report.CanExportReview && report.Snapshot is not { IsReady: false })
         {
@@ -31,23 +31,24 @@ else if (Model.Report is { } report)
                 { <a class="btn btn-primary" href="@Model.PageUrl(export: "genesys")">Export Genesys CSV</a> }
             </div>
         }
-        @if (report.ReadyCount > 0)
-        {
-            <form method="post" class="campaign-approve" data-approve-form asp-page-handler="Approve">
-                @foreach (var name in CampaignsModel.FilterFieldNames)
-                {
-                    <input type="hidden" name="@name" value="@(name switch {
-                        "stage" => Model.Stage, "businessDate" => Model.BusinessDate?.ToString("yyyy-MM-dd"), "dateFrom" => Model.DateFrom?.ToString("yyyy-MM-dd"), "dateTo" => Model.DateTo?.ToString("yyyy-MM-dd"),
-                        "towerId" => Model.TowerId?.ToString(), "minTotal" => Model.MinTotalText, "paymentStatus" => Model.PaymentStatus, _ => Model.Search })" />
-                }
-                <input type="hidden" name="unitKeys" value="" data-selected-units />
+        @{ var blocked = Model.ApproveBlockedReason; }
+        <form method="post" class="campaign-approve" data-approve-form asp-page-handler="Approve">
+            @foreach (var name in CampaignsModel.FilterFieldNames)
+            {
+                <input type="hidden" name="@name" value="@(name switch {
+                    "stage" => Model.Stage, "businessDate" => Model.BusinessDate?.ToString("yyyy-MM-dd"), "dateFrom" => Model.DateFrom?.ToString("yyyy-MM-dd"), "dateTo" => Model.DateTo?.ToString("yyyy-MM-dd"),
+                    "towerId" => Model.TowerId?.ToString(), "minTotal" => Model.MinTotalText, "paymentStatus" => Model.PaymentStatus, _ => Model.Search })" />
+            }
+            <input type="hidden" name="unitKeys" value="" data-selected-units />
+            @if (report.ReadyCount > 0)
+            {
                 <label><input type="radio" name="selectionMode" value="SelectedUnits" checked /> Only the customers I ticked (<span data-selected-count>0</span>, kept across pages)</label>
                 <label><input type="radio" name="selectionMode" value="AllMatching" data-all-matching /> All eligible customers matching the filters (<span data-all-count>@report.ReadyCount.ToString("N0")</span>, on every page)</label>
-                <button class="btn btn-primary" type="submit" data-approve-button>Approve &amp; Send to Genesys</button>
-                <button class="btn" type="button" data-clear-selection>Clear ticks</button>
-                <span class="receivables-meta">Only Ready customers can be sent. Nothing is sent until you confirm the exact count, amount and Genesys contact list.</span>
-            </form>
-        }
+            }
+            <button class="btn btn-primary" type="submit" data-approve-button disabled="@(blocked is not null)" data-blocked="@(blocked is not null ? "true" : "false")">Approve &amp; Send to Genesys</button>
+            @if (report.ReadyCount > 0) { <button class="btn" type="button" data-clear-selection>Clear ticks</button> }
+            <span class="receivables-meta" data-approve-reason role="status">@(blocked ?? "Only Ready customers can be sent. Nothing is sent until you confirm the exact count, amount and Genesys contact list.")</span>
+        </form>
         <div class="table-scroll">
             <table class="table receivables-table campaigns-table">
                 <thead><tr><th><input type="checkbox" data-select-page aria-label="Select all eligible customers on this page" /></th><th>Customer</th><th>Mobile</th><th>Email</th><th>Project / Tower</th><th>Unit</th><th class="num">Due</th><th class="num">Overdue</th><th class="num">Total</th></tr></thead>

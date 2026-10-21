@@ -6,6 +6,7 @@
     ViewData["Title"] = "Collections Campaigns";
     ViewData["ActiveNav"] = "collections";
     Layout = "_Layout";
+    Func<TigerCS.Domain.Modules.Collections.CollectionsCampaignStage, string> stageName = TigerCS.Domain.Modules.Collections.Review.CampaignReminderTypes.StageName;
 }
 <link rel="stylesheet" href="~/css/collections-campaigns.css" asp-append-version="true" />
 <link rel="stylesheet" href="~/css/collections-snapshot.css" asp-append-version="true" />
@@ -19,62 +20,90 @@
         <div class="page-header__actions"><a class="btn" href="/Collections/Receivables">Due &amp; Overdue Customers</a></div>
     </div>
     <partial name="_CampaignApproval" model="Model" />
-    <form class="filter-bar" method="get" action="/Collections/Campaigns" data-receivables-filter data-results-form>
-        <div class="field-group">
-            <label class="field-label" for="campaignStage">Stage</label>
-            <select class="field-select" id="campaignStage" name="stage" data-campaign-stage>
-                <option value="OverdueReminder" selected="@(Model.Stage.Equals("OverdueReminder", StringComparison.OrdinalIgnoreCase))">@TigerCS.Domain.Modules.Collections.Review.CampaignReminderTypes.StageName(TigerCS.Domain.Modules.Collections.CollectionsCampaignStage.OverdueReminder)</option>
-                <option value="CurrentMonthReminder" selected="@(Model.Stage.Equals("CurrentMonthReminder", StringComparison.OrdinalIgnoreCase))">@TigerCS.Domain.Modules.Collections.Review.CampaignReminderTypes.StageName(TigerCS.Domain.Modules.Collections.CollectionsCampaignStage.CurrentMonthReminder)</option>
-                <option value="FollowUpReminder" selected="@(Model.Stage.Equals("FollowUpReminder", StringComparison.OrdinalIgnoreCase))">@TigerCS.Domain.Modules.Collections.Review.CampaignReminderTypes.StageName(TigerCS.Domain.Modules.Collections.CollectionsCampaignStage.FollowUpReminder)</option>
-                <option value="LegalNotice" selected="@(Model.Stage.Equals("LegalNotice", StringComparison.OrdinalIgnoreCase))">@TigerCS.Domain.Modules.Collections.Review.CampaignReminderTypes.StageName(TigerCS.Domain.Modules.Collections.CollectionsCampaignStage.LegalNotice)</option>
-                <option value="LegalReferral" selected="@(Model.Stage.Equals("LegalReferral", StringComparison.OrdinalIgnoreCase))">@TigerCS.Domain.Modules.Collections.Review.CampaignReminderTypes.StageName(TigerCS.Domain.Modules.Collections.CollectionsCampaignStage.LegalReferral)</option>
-            </select>
+    @* Filter first: choosing filters never queries the campaign list. Customers load only when Preview Customers is clicked; changing a filter afterwards clears them again. *@
+    <form id="campaignFilters" class="campaign-filters panel" method="get" action="/Collections/Campaigns" data-receivables-filter data-results-form data-campaign-filters>
+        <div class="campaign-filters__main">
+            <div class="field-group">
+                <label class="field-label" for="campaignStage">Campaign stage</label>
+                <select class="field-select" id="campaignStage" name="stage" data-campaign-stage>
+                    @foreach (var (value, stage) in new[] {
+                        ("OverdueReminder", TigerCS.Domain.Modules.Collections.CollectionsCampaignStage.OverdueReminder), ("CurrentMonthReminder", TigerCS.Domain.Modules.Collections.CollectionsCampaignStage.CurrentMonthReminder),
+                        ("FollowUpReminder", TigerCS.Domain.Modules.Collections.CollectionsCampaignStage.FollowUpReminder), ("LegalNotice", TigerCS.Domain.Modules.Collections.CollectionsCampaignStage.LegalNotice),
+                        ("LegalReferral", TigerCS.Domain.Modules.Collections.CollectionsCampaignStage.LegalReferral) })
+                    {
+                        <option value="@value" selected="@(Model.Stage.Equals(value, StringComparison.OrdinalIgnoreCase))">@stageName(stage)</option>
+                    }
+                </select>
+            </div>
+            <partial name="_TowerPicker" model="@(new TowerPickerModel("campaignTower", Model.Towers, Model.TowerId, Model.TowersFailed, "Project / Tower", "All projects"))" />
+            <div class="field-group">
+                <label class="field-label" for="campaignPayment">Payment status</label>
+                <select class="field-select" id="campaignPayment" name="paymentStatus" data-payment-status>
+                    @foreach (var choice in CampaignsModel.PaymentStatusChoices) { <option value="@choice" selected="@(Model.PaymentStatus.Equals(choice, StringComparison.OrdinalIgnoreCase))">@(choice == "Both" ? "Due and Overdue (both)" : choice)</option> }
+                </select>
+            </div>
+            @* Period only fills the From / To dates below (it has no name, so it is never sent): the dates stay the single source of the range. *@
+            <div class="field-group">
+                <label class="field-label" for="campaignPeriod">Period</label>
+                <select class="field-select" id="campaignPeriod" data-period data-today="@CollectionsDisplay.DubaiToday().ToString("yyyy-MM-dd")">
+                    <option value="UpToToday" selected="@(Model.Period == "UpToToday")">Up to today</option>
+                    <option value="ThisMonth" selected="@(Model.Period == "ThisMonth")">This month</option>
+                    <option value="LastSixMonths" selected="@(Model.Period == "LastSixMonths")">Last 6 months</option>
+                    <option value="Custom" selected="@(Model.Period == "Custom")">Custom range</option>
+                </select>
+            </div>
         </div>
-        <div class="field-group">
-            <label class="field-label" for="campaignDate">Preview date</label>
-            <input class="field-input" id="campaignDate" name="businessDate" type="date" data-campaign-date min="2000-01-01" max="2100-12-31" value="@Model.BusinessDate?.ToString("yyyy-MM-dd")" />
+        <div class="campaign-filters__footer">
+            <details class="campaign-advanced" open="@Model.AdvancedOpen" data-advanced-filters>
+                <summary>Advanced filters</summary>
+                <div class="campaign-advanced__grid">
+                    <div class="field-group">
+                        <label class="field-label" for="campaignDate">Preview date</label>
+                        <input class="field-input" id="campaignDate" name="businessDate" type="date" data-campaign-date min="2000-01-01" max="2100-12-31" value="@Model.BusinessDate?.ToString("yyyy-MM-dd")" />
+                    </div>
+                    <div class="field-group">
+                        <label class="field-label" for="campaignFrom">From date (instalment due)</label>
+                        <input class="field-input" id="campaignFrom" name="dateFrom" type="date" min="2000-01-01" max="2100-12-31" value="@Model.DateFrom?.ToString("yyyy-MM-dd")" data-date-from data-campaign-from />
+                    </div>
+                    <div class="field-group">
+                        <label class="field-label" for="campaignTo">To date (instalment due)</label>
+                        <input class="field-input" id="campaignTo" name="dateTo" type="date" min="2000-01-01" max="2100-12-31" value="@Model.FormDateTo?.ToString("yyyy-MM-dd")" data-date-to data-campaign-to />
+                    </div>
+                    <div class="field-group">
+                        <label class="field-label" for="campaignMin">Minimum Total (AED)</label>
+                        <input class="field-input" type="number" id="campaignMin" name="minTotal" min="0" step="any" inputmode="decimal" value="@Model.MinTotalText" data-min-total />
+                    </div>
+                </div>
+            </details>
+            <div class="campaign-filters__actions">
+                <span class="receivables-loading" role="status" hidden>Loading customers…</span>
+                <span class="receivables-timeout" role="alert" hidden>The list is taking too long. Retry or choose one tower.</span>
+                <button class="btn btn-primary" type="submit" name="render" value="full" data-preview-button>Preview Customers</button>
+            </div>
         </div>
-        <partial name="_TowerPicker" model="@(new TowerPickerModel("campaignTower", Model.Towers, Model.TowerId, Model.TowersFailed, "Project / Tower", "All projects"))" />
-        <div class="field-group">
-            <label class="field-label" for="campaignPayment">Payment status</label>
-            <select class="field-select" id="campaignPayment" name="paymentStatus" data-payment-status>
-                @foreach (var choice in CampaignsModel.PaymentStatusChoices) { <option value="@choice" selected="@(Model.PaymentStatus.Equals(choice, StringComparison.OrdinalIgnoreCase))">@(choice == "Both" ? "Due and Overdue (both)" : choice)</option> }
-            </select>
-        </div>
-        <div class="field-group">
-            <label class="field-label" for="campaignFrom">From date (instalment due)</label>
-            <input class="field-input" id="campaignFrom" name="dateFrom" type="date" min="2000-01-01" max="2100-12-31" value="@Model.DateFrom?.ToString("yyyy-MM-dd")" data-date-from data-campaign-from data-default="" />
-        </div>
-        <div class="field-group">
-            <label class="field-label" for="campaignTo">To date (instalment due)</label>
-            <input class="field-input" id="campaignTo" name="dateTo" type="date" min="2000-01-01" max="2100-12-31" value="@Model.DateTo?.ToString("yyyy-MM-dd")" data-date-to data-campaign-to data-default="@Model.DefaultTo.ToString("yyyy-MM-dd")" />
-        </div>
-        <div class="field-group receivables-shortcuts">
-            <span class="field-label">Quick range</span>
-            <a class="btn btn-sm" href="@Model.LastSixMonthsUrl()" data-last-six-months>Last 6 months</a>
-        </div>
-        <div class="field-group">
-            <label class="field-label" for="campaignMin">Minimum Total (AED)</label>
-            <input class="field-input" type="number" id="campaignMin" name="minTotal" min="0" step="any" inputmode="decimal" value="@Model.MinTotalText" data-min-total />
-        </div>
-        <div class="field-group filter-bar__search">
-            <label class="field-label" for="campaignSearch">Search</label>
-            <input class="field-input" type="search" id="campaignSearch" name="search" maxlength="200" value="@Model.Search" placeholder="Customer name, mobile, tower or apartment" />
-        </div>
-        <button class="btn btn-primary" type="submit">Preview list</button>
-        <span class="receivables-loading" role="status" hidden>Loading campaign list…</span>
-        <span class="receivables-timeout" role="alert" hidden>The list is taking too long. Retry or choose one tower.</span>
     </form>
+    <section class="campaign-snapshot panel" data-snapshot-box aria-label="Financial snapshot status" aria-live="polite">
+        <h2 class="campaign-snapshot__title">Financial snapshot</h2>
+        @if (Model.RenderFull) { <partial name="_CampaignSnapshotStatus" model="Model" /> }
+        else { <p class="receivables-meta" data-snapshot-idle>Its status appears here once customers are previewed, and stays visible while you change filters.</p> }
+    </section>
+    <div class="campaign-search">
+        @* Part of the filter form (form attribute) but placed with the results it narrows. *@
+        <label class="field-label" for="campaignSearch">Search customers</label>
+        <input class="field-input" form="campaignFilters" type="search" id="campaignSearch" name="search" maxlength="200" value="@Model.Search" placeholder="Customer name, mobile, tower or apartment" />
+    </div>
     <div class="receivables-results" data-results data-results-url="/Collections/Campaigns" aria-live="polite">
         @if (Model.RenderFull) { <partial name="_CampaignResults" model="Model" /> }
         else
         {
-            <div class="receivables-results__loading" role="status" data-results-loading>Loading campaign list…</div>
-            <noscript><p class="receivables-notice">JavaScript loads the results here. <a href="@Model.PageUrl(1)">Open the full page without JavaScript</a>.</p></noscript>
+            <div class="panel campaign-idle" role="status" data-results-idle>
+                <p class="empty-state__title">No customers loaded yet.</p>
+                <p class="receivables-meta">Choose the filters above, then click <strong>Preview Customers</strong>. Nothing is queried or sent until you do.</p>
+            </div>
         }
     </div>
 </div>
 <script src="~/js/receivables.js" asp-append-version="true"></script>
 <script src="~/js/collections-towers.js" asp-append-version="true"></script>
-<script src="~/js/collections-campaign-dates.js" asp-append-version="true"></script>
+<script src="~/js/collections-campaign-filters.js" asp-append-version="true"></script>
 <script src="~/js/collections-campaign-approve.js" asp-append-version="true"></script>

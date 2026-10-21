@@ -73,6 +73,9 @@
     };
     const collapseUnits = () => box.querySelectorAll('[data-unit]').forEach(u => { u.querySelector('[data-unit-toggle]').hidden = false; setUnitOpen(u, false); });
 
+    // The "loading data" notice may live in the results or (Campaigns) in the separate snapshot status box.
+    const running = () => document.querySelector('[data-load-running]');
+
     const afterRender = () => {
         collapseUnits();
         const marker = box.querySelector('[data-payment-views]');
@@ -85,7 +88,7 @@
             syncMonthFromDates();
         }
         window.clearTimeout(pollTimer);
-        if (box.querySelector('[data-load-running]') && polls < MAX_POLLS) { polls++; pollTimer = window.setTimeout(() => load(currentQuery(), false), POLL_MS); }
+        if (running() && polls < MAX_POLLS) { polls++; pollTimer = window.setTimeout(() => load(currentQuery(), false), POLL_MS); }
     };
 
     async function load(query, push) {
@@ -94,7 +97,7 @@
         controller = new AbortController();
         const mine = controller;
         if (timeoutNote) timeoutNote.hidden = true;
-        const polling = !push && box.querySelector('[data-load-running]') !== null;   // keep the progress text while polling
+        const polling = !push && running() !== null;   // keep the progress text while polling
         if (!polling) showLoading();
         setBusy(true);
         let timedOut = false;

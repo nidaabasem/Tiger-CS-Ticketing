@@ -8,6 +8,16 @@
 
 Collections staff can preview one communication stage per apartment at `/Collections/Campaigns`, reached from
 `/Collections/Receivables` through the Campaigns link. The page uses the direct PACT receivables source for companies 4 and 32.
+
+**Filter-first workflow.** The page opens with the filters only: Campaign stage, Project / Tower, Payment status and Period
+(Up to today, This month, Last 6 months, Custom range) in the main row; Preview date, From / To date and Minimum Total under the
+collapsible *Advanced filters* (open automatically when one holds a non-default value). Period only fills the visible From / To
+dates, which remain the single source of the range. The customer search sits above the results but belongs to the same form.
+No customer query runs until **Preview Customers** is clicked; changing any filter afterwards clears the customers and ticked
+selection and requires a new preview. The financial snapshot status (load problems with Retry, CRM state, reconciliation) is a
+separate region that filter changes never clear. **Approve & Send** is disabled unless the preview is current, the financial
+source is reconciled and eligible customers are selected (ticked, or *all eligible customers matching the filters*). Nothing is
+sent to Genesys until the confirmation step. Script tests: `tools/ui-tests` (`npm install && npm test`).
 It does not add CRM or other-company coverage. It creates no campaign, sends no message, schedules no job, creates no ticket,
 and opens no legal case. The existing reminder dispatcher and its rule configuration are unchanged.
 

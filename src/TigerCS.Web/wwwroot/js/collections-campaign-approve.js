@@ -11,7 +11,7 @@
     const sync = () => {
         const form = document.querySelector('[data-approve-form]');
         document.querySelectorAll('.campaign-select').forEach(box => { box.checked = selected.has(box.dataset.unitKey); });
-        document.querySelectorAll('[data-selected-count]').forEach(c => { c.textContent = String(selected.size); });
+        document.querySelectorAll('[data-selected-count]').forEach(c => { if (c.textContent !== String(selected.size)) c.textContent = String(selected.size); });   // sync() also runs from a MutationObserver: write only on change
         const hidden = document.querySelector('[data-selected-units]');
         if (hidden) hidden.value = [...selected].join(',');
         const all = document.querySelector('[data-select-page]');
@@ -19,7 +19,17 @@
         if (form) {
             const button = form.querySelector('[data-approve-button]');
             const mode = form.querySelector('input[name="selectionMode"]:checked');
-            if (button) button.disabled = !!mode && mode.value === 'SelectedUnits' && selected.size === 0;
+            // Enabled only for a current preview (this form exists only inside the current results), a valid reconciliation (server: data-blocked) and eligible customers chosen.
+            const blocked = !!button && button.dataset.blocked === 'true';
+            const nothingTicked = !!mode && mode.value === 'SelectedUnits' && selected.size === 0;
+            if (button) button.disabled = blocked || nothingTicked || !mode;
+            const reason = form.querySelector('[data-approve-reason]');
+            if (reason) {
+                if (!reason.dataset.default) reason.dataset.default = reason.textContent;
+                // Only when it differs: sync() also runs from a MutationObserver on the results, so an unconditional write would re-trigger itself forever.
+                const text = !blocked && nothingTicked ? 'Tick at least one Ready customer, or choose all eligible customers.' : reason.dataset.default;
+                if (reason.textContent !== text) reason.textContent = text;
+            }
         }
     };
 
@@ -35,6 +45,8 @@
     // A new preview (filters changed) starts a new selection; paging keeps it.
     const filter = document.querySelector('[data-results-form]');
     if (filter) filter.addEventListener('submit', () => { selected.clear(); save(selected); });
+    // Changed filters clear the customers (filters script); the ticks go with them.
+    window.addEventListener('campaign-preview-invalidated', () => { selected.clear(); save(selected); sync(); });
     // A double click cannot submit twice (the idempotency key would replay it anyway).
     document.addEventListener('submit', event => {
         const form = event.target;
