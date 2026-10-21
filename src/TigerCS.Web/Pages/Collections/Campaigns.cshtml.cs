@@ -4,6 +4,7 @@ using System.Web;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using TigerCS.Application.Modules.Collections.Dto;
+using TigerCS.Application.Modules.Collections.Review;
 using TigerCS.Application.Modules.Collections.Services;
 using TigerCS.Domain.Modules.Collections;
 using TigerCS.Web.Services.Api;
@@ -47,6 +48,8 @@ public sealed class CampaignsModel(CollectionsApiClient api, Microsoft.Extension
         Towers = towers.IsSuccess && towers.Value is { } list ? list : [];
         TowersFailed = !towers.IsSuccess;
         if (RenderFull) await LoadReportAsync(cancellationToken);
+        await LoadApprovalStateAsync(cancellationToken);
+        if (TempData["ApprovalError"] is string error) ApprovalError = error;
     }
 
     /// <summary>The results area only (HTML fragment): summary, snapshot status, table, pagination and export links.</summary>
@@ -124,6 +127,230 @@ public sealed class CampaignsModel(CollectionsApiClient api, Microsoft.Extension
         ? CollectionsCampaignPolicy.DefaultDateTo(stage, BusinessDate ?? Report?.BusinessDate ?? CollectionsDisplay.DubaiToday())
         : BusinessDate ?? Report?.BusinessDate ?? CollectionsDisplay.DubaiToday();
 
+    // ------------------------------------------------------------------ approval and dispatch (one page: select, approve, send)
+
+    [BindProperty(SupportsGet = true, Name = "dispatch")] public Guid? DispatchId { get; set; }
+    public ReviewRunDto? Run { get; private set; }
+    public bool RunActive => Run is { Status: "Queued" or "Running" };
+    public SelectionSummaryDto? Summary { get; private set; }
+    public DispatchDto? DispatchResult { get; private set; }
+    public OverlapPageDto? Overlaps { get; private set; }
+    public IReadOnlyList<DispatchDto> History { get; private set; } = [];
+    public string? ApprovalError { get; private set; }
+    public string? ApprovalNotice { get; private set; }
+    public string ConfirmKey { get; private set; } = Guid.NewGuid().ToString("N");
+    public string SelectionMode { get; private set; } = ReviewQueryService.ModeSelectedUnits;
+    public string UnitKeys { get; private set; } = "";
+    public int ContactPage { get; private set; } = 1;
+    public static IReadOnlyList<string> FilterFieldNames => ["stage", "businessDate", "dateFrom", "dateTo", "towerId", "minTotal", "paymentStatus", "search"];
+
+    /// <summary>Progress / failure of the approval-data refresh and the latest sends, shown above the list. Never throws: a missing piece just hides its panel.</summary>
+    private async Task LoadApprovalStateAsync(CancellationToken ct)
+    {
+        try
+        {
+            var run = await api.GetReviewRunAsync(ct);
+            if (run.IsSuccess) Run = run.Value;
+            var history = await api.ListDispatchesAsync(ct);
+            if (history.IsSuccess && history.Value is { } sends) History = sends.Take(10).ToList();
+            if (DispatchId is { } id)
+            {
+                var dispatch = await api.GetDispatchAsync(id, ct);
+                if (dispatch.IsSuccess) DispatchResult = dispatch.Value; else ApprovalError ??= Describe(dispatch.Outcome, dispatch.Detail);
+            }
+        }
+        catch (Exception ex) when (ex is System.Text.Json.JsonException or HttpRequestException)
+        {
+            // The list itself must stay usable when the approval status cannot be read; the panels are simply absent.
+            ApprovalError ??= "The approval and send status could not be read. The customer list below is unaffected; reload to retry.";
+        }
+    }
+
+    /// <summary>Progress poll for the approval-data refresh (JSON, no financial data).</summary>
+    public async Task<IActionResult> OnGetRunAsync(CancellationToken ct)
+    {
+        var run = await api.GetReviewRunAsync(ct);
+        return new JsonResult(run.IsSuccess && run.Value is { } r
+            ? new { r.Status, r.Phase, r.ProgressPercent, r.Error, active = r.Status is "Queued" or "Running" }
+            : new { Status = "Unknown", Phase = "", ProgressPercent = 0, Error = (string?)null, active = false });
+    }
+
+    /// <summary>Polled while a send is running: the dispatch status without the page.</summary>
+    public async Task<IActionResult> OnGetSendAsync(Guid dispatch, CancellationToken ct)
+    {
+        var result = await api.GetDispatchAsync(dispatch, ct);
+        return new JsonResult(result.IsSuccess && result.Value is { } d
+            ? new { d.Status, d.Phase, active = d.Status is "Queued" or "Revalidating" or "Sending" }
+            : new { Status = "Unknown", Phase = (string?)null, active = false });
+    }
+
+    public async Task<IActionResult> OnPostRefreshApprovalAsync(string? returnUrl, CancellationToken ct)
+    {
+        var started = await api.StartReviewRefreshAsync(null, ct);
+        var target = !string.IsNullOrEmpty(returnUrl) && Url.IsLocalUrl(returnUrl) ? returnUrl : "/Collections/Campaigns";
+        if (started.IsSuccess) return LocalRedirect(target);
+        SetFiltersFromForm();
+        await LoadApprovalStateAsync(ct);
+        ApprovalError = Describe(started.Outcome, started.Detail);
+        return Page();
+    }
+
+    /// <summary>
+    /// "Approve &amp; Send to Genesys", step 1: make sure the approved financial snapshot is ready, then re-resolve the exact selection (revalidation against eligibility,
+    /// suppression and duplicate rules happens there) and show the confirmation. Nothing is sent here.
+    /// </summary>
+    public async Task<IActionResult> OnPostApproveAsync(string? selectionMode, string? unitKeys, int contactPage = 1, CancellationToken ct = default)
+    {
+        SetFiltersFromForm();
+        SelectionMode = string.Equals(selectionMode, ReviewQueryService.ModeAllMatching, StringComparison.OrdinalIgnoreCase) ? ReviewQueryService.ModeAllMatching : ReviewQueryService.ModeSelectedUnits;
+        UnitKeys = unitKeys ?? "";
+        ContactPage = Math.Max(1, contactPage);
+        await LoadApprovalStateAsync(ct);
+
+        // The approval data is a stored, validated copy of the financial snapshot. Missing, failed or stale data starts a visible refresh instead of approving from a guess.
+        if (Run is null || Run.Status == "Failed" || (Run.Status == "Completed" && Run.IsStale))
+        {
+            var started = await api.StartReviewRefreshAsync(null, ct);
+            if (!started.IsSuccess) { ApprovalError = Describe(started.Outcome, started.Detail); return Page(); }
+            Run = started.Value;
+        }
+        if (RunActive)
+        {
+            ApprovalNotice = "The approved financial snapshot is being prepared. Approve & Send is available when it has finished.";
+            return Page();
+        }
+        await ShowSummaryAsync(ct);
+        return Page();
+    }
+
+    private async Task ShowSummaryAsync(CancellationToken ct)
+    {
+        var result = await api.SummarizeSelectionAsync(BuildSelection(), ct);
+        if (!result.IsSuccess) { ApprovalError = Describe(result.Outcome, result.Detail); return; }
+        var summary = result.Value!;
+        if (summary.Count == 0)
+        {
+            ApprovalError = !summary.SourceReconciled
+                ? "The financial source has not been reconciled against PACT for the configured procedure, so nothing can be sent."
+                : "None of the selected customers is Ready to send now (needs review, paid, or already sent).";
+            return;
+        }
+        Summary = summary;
+        var overlaps = await api.GetOverlapsAsync(1, ct);
+        if (overlaps.IsSuccess) Overlaps = overlaps.Value;
+    }
+
+    /// <summary>Step 2: the confirmation. Creates the approval record (who, when, exactly which list) and queues the revalidate-and-upload job.</summary>
+    public async Task<IActionResult> OnPostConfirmAsync(string? selectionMode, string? unitKeys, int expectedCount, string? expectedFingerprint, string? idempotencyKey, bool ackCampaign, CancellationToken ct = default)
+    {
+        SetFiltersFromForm();
+        SelectionMode = string.Equals(selectionMode, ReviewQueryService.ModeAllMatching, StringComparison.OrdinalIgnoreCase) ? ReviewQueryService.ModeAllMatching : ReviewQueryService.ModeSelectedUnits;
+        UnitKeys = unitKeys ?? "";
+        var request = new ConfirmDispatchRequest(BuildSelection(), expectedCount, expectedFingerprint ?? "", idempotencyKey ?? "", ackCampaign);
+        var result = await api.ConfirmDispatchAsync(request, ct);
+        if (result.IsSuccess) return Redirect($"/Collections/Campaigns?dispatch={result.Value!.DispatchId:D}");
+        await LoadApprovalStateAsync(ct);
+        ApprovalError = result.Outcome == ApiOutcome.Conflict ? (result.Detail ?? "The list changed. Review the current list and confirm again.") : Describe(result.Outcome, result.Detail);
+        await ShowSummaryAsync(ct);   // re-show what is really there now
+        return Page();
+    }
+
+    /// <summary>Retries ONLY the administrator email of a finished send; the Genesys upload is never repeated.</summary>
+    public async Task<IActionResult> OnPostRetryEmailAsync(Guid dispatch, CancellationToken ct)
+    {
+        var result = await api.RetryAdminEmailAsync(dispatch, ct);
+        if (!result.IsSuccess) TempData["ApprovalError"] = Describe(result.Outcome, result.Detail);
+        return Redirect($"/Collections/Campaigns?dispatch={dispatch:D}");
+    }
+
+    public async Task<IActionResult> OnPostReconcileAsync(Guid dispatch, long batchId, string? resolution, string? note, CancellationToken ct)
+    {
+        var result = await api.ReconcileBatchAsync(dispatch, batchId, new ReconcileBatchRequest(resolution ?? "", note ?? ""), ct);
+        if (!result.IsSuccess) TempData["ApprovalError"] = Describe(result.Outcome, result.Detail);
+        return Redirect($"/Collections/Campaigns?dispatch={dispatch:D}");
+    }
+
+    /// <summary>Download of the contacts of one send in the Genesys contact-list columns.</summary>
+    public async Task<IActionResult> OnGetContactsAsync(Guid dispatch, CancellationToken ct)
+    {
+        var bytes = await api.GetDispatchContactsCsvAsync(dispatch, ct);
+        return bytes is null ? NotFound() : File(Encoding.UTF8.GetPreamble().Concat(bytes).ToArray(), "text/csv; charset=utf-8", $"genesys-contacts-{dispatch:N}.csv");
+    }
+
+    private SelectionRequest BuildSelection() => new(ApprovalFilter(), SelectionMode, null, null, ContactPage, 50,
+        string.IsNullOrWhiteSpace(UnitKeys) ? [] : UnitKeys.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
+
+    /// <summary>The same filters the preview used, read from the posted form (so the approval re-resolves exactly the list that was previewed).</summary>
+    private void SetFiltersFromForm()
+    {
+        var form = Request.HasFormContentType ? Request.Form : null;
+        string? Get(string name) => form is not null && form.TryGetValue(name, out var v) ? v.ToString() : null;
+        DateOnly? Date(string name) => DateOnly.TryParse(Get(name), CultureInfo.InvariantCulture, out var d) ? d : null;
+        PaymentStatus = CampaignPaymentFilters.TryParse(Get("paymentStatus"), out var payment) ? CampaignPaymentFilters.Name(payment) : "Both";
+        Stage = Get("stage") is { Length: > 0 } st ? st : "OverdueReminder";
+        BusinessDate = Date("businessDate"); DateFrom = Date("dateFrom"); DateTo = Date("dateTo");
+        TowerId = int.TryParse(Get("towerId"), NumberStyles.Integer, CultureInfo.InvariantCulture, out var tower) ? tower : null;
+        Search = Get("search")?.Trim();
+        MinTotal = ParseMinTotalText(form?.ContainsKey("minTotal") == true, Get("minTotal"));
+    }
+
+    public static decimal? ParseMinTotalText(bool present, string? raw)
+    {
+        if (!present) return ReceivablesModel.DefaultMinTotal;
+        var text = raw?.Trim() ?? "";
+        if (text.Length == 0) return null;
+        return decimal.TryParse(text, NumberStyles.Number, CultureInfo.InvariantCulture, out var value) && value >= 0 ? value : ReceivablesModel.DefaultMinTotal;
+    }
+
+    /// <summary>The Campaigns link that reopens the list with the filters of the posted form (used by Refresh / Retry so the person does not lose their place).</summary>
+    public string ReturnUrl() => PageUrl(1).Replace("&render=full", "");
+
+    public static string Money(decimal? amount) => amount?.ToString("N2", CultureInfo.InvariantCulture) ?? "—";
+
+    public static string Label(string value) => value switch
+    {
+        "CurrentMonth" => "Current Month", "FollowUp" => "Follow Up", "LegalNotice" => "Legal Notice", "LegalCase" => "Legal Case",
+        "UploadedToGenesys" => "Uploaded to Genesys", "UnknownOutcome" => "Unconfirmed", "CompletedWithErrors" => "Partial failure",
+        "ReviewRequired" => "Review required", "NotConfigured" => "Not configured", _ => value
+    };
+
+    /// <summary>The send's headline for people: Success, Partial failure, Failure, or still running.</summary>
+    public static (string Css, string Text) Verdict(DispatchDto d) => d.Status switch
+    {
+        "Queued" or "Revalidating" or "Sending" => ("running", "In progress: nothing is reported as sent until Genesys confirms it"),
+        "Completed" when d.UploadedCount > 0 && d.FailedCount == 0 && d.UnknownCount == 0 => ("success", "Success: Genesys accepted every approved contact"),
+        "Completed" => ("neutral", "Finished: nothing was uploaded to Genesys"),
+        "CompletedWithErrors" when d.UploadedCount > 0 => ("partial", "Partial failure: some contacts were uploaded, others were not or are unconfirmed"),
+        "CompletedWithErrors" => ("failure", "Failure: Genesys did not accept the contacts"),
+        "ReviewRequired" => ("failure", "Stopped for review: nothing was sent"),
+        "Cancelled" => ("neutral", "Cancelled before sending"),
+        _ => ("failure", "Failure: nothing was sent")
+    };
+
+    public static string EmailStatusText(DispatchDto d) => d.AdminEmailStatus switch
+    {
+        "Sent" => $"Administrator report emailed to {d.AdminEmailRecipientCount} recipient(s)",
+        "Failed" => "Administrator report email failed (the Genesys result is not affected)",
+        "NotConfigured" => "Administrator report NOT sent: notification is not configured",
+        "Disabled" => "Administrator report is switched off",
+        "Sending" => "Administrator report is being sent",
+        _ => d.Status is "Completed" or "CompletedWithErrors" ? "Administrator report pending" : "Administrator report is sent when the send finishes"
+    };
+
+    public static string CampaignActionLabel(string? action) => action switch { "Created" => "Created", "ReusedExisting" => "Reused existing", _ => "—" };
+
+    public static string StageName(string reminderType) =>
+        Enum.TryParse<TigerCS.Domain.Modules.Collections.Review.CampaignReminderType>(reminderType, out var type) && Enum.IsDefined(type)
+            ? TigerCS.Domain.Modules.Collections.Review.CampaignReminderTypes.StageName(type) : reminderType;
+
+    private static string Describe(ApiOutcome outcome, string? detail) => outcome switch
+    {
+        ApiOutcome.Forbidden => "Your account does not have permission for this Collections operation.",
+        ApiOutcome.Unauthorized => "Your session has expired. Sign in again.",
+        ApiOutcome.Unreachable => "The Tiger CS API could not be reached. Nothing was changed.",
+        _ => detail ?? "The request could not be completed."
+    };
+
     public async Task<IActionResult> OnPostLoadCoverageAsync(DateOnly dateFrom, DateOnly dateTo, string? returnUrl, int? companyId = null, CancellationToken cancellationToken = default)
     {
         var result = await api.RequestCoverageLoadAsync(dateFrom, dateTo, cancellationToken, companyId);
@@ -165,19 +392,15 @@ public sealed class CampaignsModel(CollectionsApiClient api, Microsoft.Extension
     }
 
     /// <summary>
-    /// Review &amp; approve for exactly this selection: the stage, the explicit due-date range and the Due / Overdue status travel with the link, so the review list starts from the
-    /// filters the preview used. (The Review page keeps its own project text and amount filters; the tower is not a review filter.)
+    /// The approval filter for exactly this list: the stage, the due-date range, Due / Overdue, tower, minimum total and search of the preview, expressed for the stored approval data.
+    /// Approval and dispatch re-resolve this same filter, so what is approved is what the preview listed (and only its Ready customers).
     /// </summary>
-    public string ReviewUrl()
+    public ReviewFilter ApprovalFilter()
     {
-        var query = HttpUtility.ParseQueryString(string.Empty);
-        if (CollectionsEnums.TryParse<CollectionsCampaignStage>(Stage, out var stage))
-            query["reminderType"] = TigerCS.Domain.Modules.Collections.Review.CampaignReminderTypes.FromStage(stage).ToString();
-        if (DateFrom is { } from) query["dueFrom"] = from.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
-        if (DateTo is { } to) query["dueTo"] = to.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
-        if (PaymentStatus is not "Both") query["dueStatus"] = PaymentStatus;
-        if (TowerId is { } tower) query["towerId"] = tower.ToString(CultureInfo.InvariantCulture);
-        return query.Count == 0 ? "/Collections/Review" : $"/Collections/Review?{query}";
+        string? reminderType = CollectionsEnums.TryParse<CollectionsCampaignStage>(Stage, out var stage)
+            ? TigerCS.Domain.Modules.Collections.Review.CampaignReminderTypes.FromStage(stage).ToString() : null;
+        return new ReviewFilter(Customer: string.IsNullOrWhiteSpace(Search) ? null : Search, DueFrom: DateFrom, DueTo: DateTo,
+            MinRemaining: MinTotal ?? 0m, ReminderType: reminderType, DueStatus: PaymentStatus is "Both" ? null : PaymentStatus, TowerId: TowerId);
     }
 
     /// <summary>The stage's display name = the Genesys campaign name used when this list is sent.</summary>

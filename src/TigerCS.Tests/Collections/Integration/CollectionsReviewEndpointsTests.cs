@@ -65,6 +65,7 @@ public sealed class CollectionsReviewEndpointsTests
         ["contacts"] = (await client.GetAsync($"/api/collections/review/dispatches/{AnyDispatch}/contacts")).StatusCode,
         ["sweep"] = (await client.PostAsync("/api/collections/review/suppression/sweep", null)).StatusCode,
         ["cancel"] = (await client.PostAsync($"/api/collections/review/dispatches/{AnyDispatch}/cancel", null)).StatusCode,
+        ["retry-email"] = (await client.PostAsync($"/api/collections/review/dispatches/{AnyDispatch}/admin-email/retry", null)).StatusCode,
         ["reconcile"] = (await client.PostAsJsonAsync($"/api/collections/review/dispatches/{AnyDispatch}/batches/1/reconcile",
             new ReconcileBatchRequest("ConfirmedNotUploaded", "checked"))).StatusCode,
     };
@@ -91,7 +92,7 @@ public sealed class CollectionsReviewEndpointsTests
         Assert.All(await CallEveryRouteAsync(anonymous), r => Assert.Equal(HttpStatusCode.Unauthorized, r.Value));
         using var reporter = await Client(factory, Roles.ReportingUser);
         var results = await CallEveryRouteAsync(reporter);
-        foreach (var route in new[] { "runs/current", "runs/{id}", "records", "dispatches", "dispatches/{id}", "refresh", "summary", "confirm", "reconcile", "cancel", "overlaps", "sweep", "contacts" })
+        foreach (var route in new[] { "runs/current", "runs/{id}", "records", "dispatches", "dispatches/{id}", "refresh", "summary", "confirm", "reconcile", "cancel", "retry-email", "overlaps", "sweep", "contacts" })
             Assert.Equal(HttpStatusCode.Forbidden, results[route]);
         Assert.Equal(0, source.Reads);
     }
@@ -109,6 +110,7 @@ public sealed class CollectionsReviewEndpointsTests
         Assert.Equal(HttpStatusCode.Forbidden, results["confirm"]);
         Assert.Equal(HttpStatusCode.Forbidden, results["reconcile"]);
         Assert.Equal(HttpStatusCode.Forbidden, results["cancel"]);
+        Assert.Equal(HttpStatusCode.Forbidden, results["retry-email"]);
         Assert.Equal(HttpStatusCode.Forbidden, results["sweep"]);
         Assert.Equal(HttpStatusCode.Forbidden, results["contacts"]);
         Assert.Equal(HttpStatusCode.OK, results["overlaps"]);

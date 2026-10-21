@@ -25,7 +25,8 @@ namespace TigerCS.Application.Modules.Collections.Review;
 public sealed class DispatchService(
     CollectionsOptions options, GenesysOutboundOptions genesys, CollectionsAuthorizationService authorization, CollectionsClock clock,
     IReviewStore store, IReviewJobScheduler scheduler, IGenesysOutboundClient client,
-    ReviewQueryService query, CurrentBalanceReader balances, ILogger<DispatchService> logger)
+    ReviewQueryService query, CurrentBalanceReader balances, ILogger<DispatchService> logger,
+    TigerCS.Application.Modules.IdentityAndAccess.Abstractions.IEmployeeRepository? employees = null)
 {
     public const string UploadDisclaimer =
         "Uploaded to Genesys means the contact was added to the outbound contact list. It does not mean the customer was called, " +
@@ -124,14 +125,32 @@ public sealed class DispatchService(
         if (!(await authorization.ResolveAsync(caller, ct)).CanReadFinancials)
             return CollectionsResult<DispatchDto>.Fail(CollectionsOutcome.Forbidden);
         var dispatch = await store.GetDispatchAsync(dispatchId, ct);
-        return dispatch is null ? CollectionsResult<DispatchDto>.Fail(CollectionsOutcome.NotFound) : CollectionsResult<DispatchDto>.Ok(ToDto(dispatch));
+        return dispatch is null ? CollectionsResult<DispatchDto>.Fail(CollectionsOutcome.NotFound) : CollectionsResult<DispatchDto>.Ok(await WithApproverAsync(ToDto(dispatch), ct));
     }
 
     public async Task<CollectionsResult<IReadOnlyList<DispatchDto>>> ListAsync(CollectionsCaller caller, CancellationToken ct)
     {
         if (!(await authorization.ResolveAsync(caller, ct)).CanReadFinancials)
             return CollectionsResult<IReadOnlyList<DispatchDto>>.Fail(CollectionsOutcome.Forbidden);
-        return CollectionsResult<IReadOnlyList<DispatchDto>>.Ok((await store.ListDispatchesAsync(50, ct)).Select(ToDto).ToList());
+        var list = new List<DispatchDto>();
+        foreach (var d in await store.ListDispatchesAsync(50, ct)) list.Add(await WithApproverAsync(ToDto(d), ct));
+        return CollectionsResult<IReadOnlyList<DispatchDto>>.Ok(list);
+    }
+
+    private readonly Dictionary<Guid, string?> _names = [];
+
+    /// <summary>Adds the approving employee's display name (looked up once per employee); the id stays when it cannot be resolved.</summary>
+    private async Task<DispatchDto> WithApproverAsync(DispatchDto dto, CancellationToken ct)
+    {
+        if (employees is null) return dto;
+        if (!_names.TryGetValue(dto.InitiatedByEmployeeId, out var name))
+        {
+            try { name = (await employees.GetByIdAsync(dto.InitiatedByEmployeeId, ct))?.DisplayName; }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception) { name = null; }
+            _names[dto.InitiatedByEmployeeId] = name;
+        }
+        return dto with { ApprovedByName = name };
     }
 
     // ---------------------------------------------------------------- execute (background job)
@@ -597,6 +616,8 @@ public sealed class DispatchService(
                 b.Sequence, b.ContactCount, b.Status.ToString(), b.AttemptCount, b.HttpStatus, b.ReturnedContactCount, b.Error, b.StartedAtUtc,
                 b.CompletedAtUtc, b.ReconciledAtUtc, b.ReconciliationNote, b.StageName, b.GenesysCampaignName, b.GenesysCampaignId, b.CampaignAction)).ToList(),
             UploadDisclaimer, d.Phase, d.RevalidationMs, Count2(ContactSuppressionStatus.Suppressed), Count2(ContactSuppressionStatus.Failed),
-            d.Items.Count(i => i.Status == DispatchItemStatus.UploadedToGenesys && string.IsNullOrEmpty(i.GenesysContactId)));
+            d.Items.Count(i => i.Status == DispatchItemStatus.UploadedToGenesys && string.IsNullOrEmpty(i.GenesysContactId)),
+            AdminEmailStatus: d.AdminEmailStatus.ToString(), AdminEmailError: d.AdminEmailError, AdminEmailAttemptedAtUtc: d.AdminEmailAttemptedAtUtc,
+            AdminEmailRecipientCount: d.AdminEmailRecipientCount);
     }
 }

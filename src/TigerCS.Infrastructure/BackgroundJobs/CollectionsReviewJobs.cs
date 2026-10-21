@@ -15,10 +15,15 @@ public sealed class CollectionsReviewRefreshJob(ReviewRefreshService refresh)
 /// Revalidates and uploads one approved dispatch. Safe to execute twice: the dispatch lease admits one worker, batches are claimed
 /// atomically, and a batch whose outcome is unknown is never resent.
 /// </summary>
-public sealed class CollectionsDispatchJob(DispatchService dispatch)
+public sealed class CollectionsDispatchJob(DispatchService dispatch, DispatchAdminReportService adminReport)
 {
     [AutomaticRetry(Attempts = 3, DelaysInSeconds = [60, 300, 900])]
-    public Task RunAsync(long dispatchId, CancellationToken cancellationToken) => dispatch.ExecuteAsync(dispatchId, cancellationToken);
+    public async Task RunAsync(long dispatchId, CancellationToken cancellationToken)
+    {
+        await dispatch.ExecuteAsync(dispatchId, cancellationToken);
+        // After the Genesys work is stored. The report never throws and never touches Genesys, so a mail problem cannot trigger another upload through a job retry.
+        await adminReport.SendAfterDispatchAsync(dispatchId, cancellationToken);
+    }
 }
 
 /// <summary>
@@ -49,6 +54,8 @@ public sealed class HangfireReviewJobScheduler(IBackgroundJobClient client) : IR
 /// <summary>Used when Hangfire is switched off: work stays Queued and is reported as such. Nothing runs silently.</summary>
 public sealed class NoOpReviewJobScheduler(ILogger<NoOpReviewJobScheduler> logger) : IReviewJobScheduler
 {
+    public bool IsAvailable => false;
+
     public void EnqueueRefresh(long runId) => logger.LogWarning("Background jobs are disabled; review refresh {RunId} stays queued.", runId);
 
     public void EnqueueDispatch(long dispatchId) => logger.LogWarning("Background jobs are disabled; dispatch {DispatchId} stays queued.", dispatchId);

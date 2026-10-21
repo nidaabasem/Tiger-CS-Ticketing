@@ -94,6 +94,10 @@ internal sealed class FakeCollectionsApi : HttpMessageHandler
                     ["Payment status and Due/Overdue are independent: an instalment can be partially paid and overdue at the same time."], DateTime.UtcNow,
                     new ServerTimingsDto(12, 3, 20), byUnit ? "units" : "instalments", units, months, dueMonth));
             }
+            case "/api/collections/review/runs/current":
+                return Json<TigerCS.Application.Modules.Collections.Review.ReviewRunDto?>(null);
+            case "/api/collections/review/dispatches":
+                return Json(new List<TigerCS.Application.Modules.Collections.Review.DispatchDto>());
             case "/api/collections/campaigns/export":
                 if (Status != HttpStatusCode.OK) return Task.FromResult(new HttpResponseMessage(Status));
                 return Json(new CollectionsCampaignExportDto("campaign-review.csv", "CustomerName\r\nExample\r\n", 1));
@@ -130,7 +134,7 @@ internal sealed class FakeCollectionsApi : HttpMessageHandler
 
 internal static class CollectionsWebHost
 {
-    public static WebApplicationFactory<TigerCsWeb::Program> Factory(FakeCollectionsApi api) =>
+    public static WebApplicationFactory<TigerCsWeb::Program> Factory(HttpMessageHandler api) =>
         new WebApplicationFactory<TigerCsWeb::Program>().WithWebHostBuilder(builder =>
         {
             builder.UseEnvironment("Development");

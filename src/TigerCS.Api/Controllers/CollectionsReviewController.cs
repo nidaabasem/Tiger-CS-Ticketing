@@ -20,7 +20,7 @@ namespace TigerCS.Api.Controllers;
 [Route("api/collections/review")]
 [Tags(OpenApiTags.Collections)]
 [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
-public sealed class CollectionsReviewController(ReviewQueryService query, ReviewRefreshService refresh, DispatchService dispatch) : ControllerBase
+public sealed class CollectionsReviewController(ReviewQueryService query, ReviewRefreshService refresh, DispatchService dispatch, DispatchAdminReportService adminReport) : ControllerBase
 {
     public sealed record StartRefreshRequest(int? CompanyId);
 
@@ -94,6 +94,12 @@ public sealed class CollectionsReviewController(ReviewQueryService query, Review
         var result = await dispatch.ExportContactsAsync(caller, dispatchId, ct);
         return result.IsSuccess ? File(System.Text.Encoding.UTF8.GetBytes(result.Value!), "text/csv; charset=utf-8", $"genesys-contacts-{dispatchId:N}.csv") : Result(result);
     }
+
+    /// <summary>Retries only the administrator report of a finished send. Never repeats the Genesys upload.</summary>
+    [HttpPost("dispatches/{dispatchId:guid}/admin-email/retry")]
+    [ProducesResponseType<DispatchDto>(StatusCodes.Status200OK)]
+    public async Task<IActionResult> RetryAdminEmail(Guid dispatchId, CancellationToken ct) =>
+        Caller() is { } caller ? Result(await adminReport.RetryAsync(caller, dispatchId, ct)) : Unauthorized();
 
     /// <summary>Starts the paid-after-upload suppression sweep now (it also runs on a schedule when enabled).</summary>
     [HttpPost("suppression/sweep")]

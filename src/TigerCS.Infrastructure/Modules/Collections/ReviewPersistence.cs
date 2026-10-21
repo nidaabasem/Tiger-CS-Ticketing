@@ -75,6 +75,8 @@ public class CollectionsDispatchConfiguration : IEntityTypeConfiguration<Collect
         builder.Property(d => d.ApprovedTotalsJson).HasMaxLength(500).IsRequired();
         builder.Property(d => d.StatusReason).HasMaxLength(500);
         builder.Property(d => d.Phase).HasMaxLength(200);
+        builder.Property(d => d.AdminEmailStatus).HasConversion<string>().HasMaxLength(16).IsRequired().HasDefaultValue(AdminEmailStatus.None);
+        builder.Property(d => d.AdminEmailError).HasMaxLength(500);
         builder.HasIndex(d => d.IdempotencyKey).IsUnique().HasDatabaseName("UX_CollectionsDispatches_IdempotencyKey");
         builder.HasIndex(d => d.PublicId).IsUnique().HasDatabaseName("UX_CollectionsDispatches_PublicId");
         builder.HasMany(d => d.Items).WithOne().HasForeignKey(i => i.CollectionsDispatchId).OnDelete(DeleteBehavior.Restrict);
@@ -145,6 +147,9 @@ public sealed class ReviewStore(TigerCsDbContext db) : IReviewStore
 
     public Task<CollectionsReviewRun?> GetRunAsync(long runId, CancellationToken ct) =>
         db.CollectionsReviewRuns.AsNoTracking().FirstOrDefaultAsync(r => r.CollectionsReviewRunId == runId, ct);
+
+    public Task<CollectionsReviewRun?> GetLatestRunAsync(CancellationToken ct) =>
+        db.CollectionsReviewRuns.AsNoTracking().OrderByDescending(r => r.CollectionsReviewRunId).FirstOrDefaultAsync(ct);
 
     public Task<CollectionsReviewRun?> GetActiveRunAsync(CancellationToken ct) =>
         db.CollectionsReviewRuns.AsNoTracking().FirstOrDefaultAsync(r => r.IsActive, ct);
@@ -271,10 +276,12 @@ public sealed class ReviewStore(TigerCsDbContext db) : IReviewStore
         return new ReviewCountsDto(ready + review + excluded + sent, ready, review, excluded, sent);
     }
 
-    public async Task<IReadOnlyList<ReviewRecordView>> ResolveAsync(long runId, ReviewQuerySpec spec, IReadOnlyCollection<string>? keys, bool stale, int max, CancellationToken ct)
+    public async Task<IReadOnlyList<ReviewRecordView>> ResolveAsync(long runId, ReviewQuerySpec spec, IReadOnlyCollection<string>? keys, bool stale, int max, CancellationToken ct,
+        IReadOnlyCollection<string>? unitKeys = null)
     {
         var q = Filtered(runId, spec);
         if (keys is not null) q = q.Where(r => keys.Contains(r.RecordKey));
+        if (unitKeys is not null) q = q.Where(r => unitKeys.Contains(r.CompanyId.ToString() + "|" + r.TenantId + "|" + r.UnitCode));
         var rows = await ByStatus(WithSent(q), spec.ValidationStatus, stale).OrderBy(x => x.Record.RecordKey).Take(max + 1).ToListAsync(ct);
         return await WithHistoryAsync(rows, ct);
     }
@@ -329,6 +336,20 @@ public sealed class ReviewStore(TigerCsDbContext db) : IReviewStore
             .ExecuteUpdateAsync(s => s.SetProperty(d => d.LeaseOwner, owner).SetProperty(d => d.LeaseExpiresAtUtc, expires)
                 .SetProperty(d => d.Status, d => d.Status == DispatchStatus.Queued ? DispatchStatus.Revalidating : d.Status), ct) == 1;
     }
+
+    public async Task<bool> TryClaimAdminEmailAsync(long dispatchId, DateTime nowUtc, DateTime staleBeforeUtc, CancellationToken ct) =>
+        await db.CollectionsDispatches.Where(d => d.CollectionsDispatchId == dispatchId
+                && (d.Status == DispatchStatus.Completed || d.Status == DispatchStatus.CompletedWithErrors)
+                && (d.AdminEmailStatus == AdminEmailStatus.None || d.AdminEmailStatus == AdminEmailStatus.Failed || d.AdminEmailStatus == AdminEmailStatus.NotConfigured
+                    || d.AdminEmailStatus == AdminEmailStatus.Disabled
+                    || (d.AdminEmailStatus == AdminEmailStatus.Sending && d.AdminEmailAttemptedAtUtc < staleBeforeUtc)))
+            .ExecuteUpdateAsync(s => s.SetProperty(d => d.AdminEmailStatus, AdminEmailStatus.Sending).SetProperty(d => d.AdminEmailAttemptedAtUtc, nowUtc)
+                .SetProperty(d => d.AdminEmailAttempts, d => d.AdminEmailAttempts + 1), ct) == 1;
+
+    public Task RecordAdminEmailAsync(long dispatchId, AdminEmailStatus status, string? error, int recipientCount, DateTime nowUtc, CancellationToken ct) =>
+        db.CollectionsDispatches.Where(d => d.CollectionsDispatchId == dispatchId)
+            .ExecuteUpdateAsync(s => s.SetProperty(d => d.AdminEmailStatus, status).SetProperty(d => d.AdminEmailError, error == null ? null : (error.Length > 500 ? error.Substring(0, 500) : error))
+                .SetProperty(d => d.AdminEmailRecipientCount, recipientCount).SetProperty(d => d.AdminEmailAttemptedAtUtc, nowUtc), ct);
 
     public async Task<bool> RenewLeaseAsync(long dispatchId, Guid owner, DateTime nowUtc, TimeSpan ttl, CancellationToken ct)
     {

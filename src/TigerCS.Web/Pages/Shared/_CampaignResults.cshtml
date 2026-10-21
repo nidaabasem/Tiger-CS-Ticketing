@@ -31,13 +31,31 @@ else if (Model.Report is { } report)
                 { <a class="btn btn-primary" href="@Model.PageUrl(export: "genesys")">Export Genesys CSV</a> }
             </div>
         }
+        @if (report.ReadyCount > 0)
+        {
+            <form method="post" class="campaign-approve" data-approve-form asp-page-handler="Approve">
+                @foreach (var name in CampaignsModel.FilterFieldNames)
+                {
+                    <input type="hidden" name="@name" value="@(name switch {
+                        "stage" => Model.Stage, "businessDate" => Model.BusinessDate?.ToString("yyyy-MM-dd"), "dateFrom" => Model.DateFrom?.ToString("yyyy-MM-dd"), "dateTo" => Model.DateTo?.ToString("yyyy-MM-dd"),
+                        "towerId" => Model.TowerId?.ToString(), "minTotal" => Model.MinTotalText, "paymentStatus" => Model.PaymentStatus, _ => Model.Search })" />
+                }
+                <input type="hidden" name="unitKeys" value="" data-selected-units />
+                <label><input type="radio" name="selectionMode" value="SelectedUnits" checked /> Only the customers I ticked (<span data-selected-count>0</span>, kept across pages)</label>
+                <label><input type="radio" name="selectionMode" value="AllMatching" data-all-matching /> All eligible customers matching the filters (<span data-all-count>@report.ReadyCount.ToString("N0")</span>, on every page)</label>
+                <button class="btn btn-primary" type="submit" data-approve-button>Approve &amp; Send to Genesys</button>
+                <button class="btn" type="button" data-clear-selection>Clear ticks</button>
+                <span class="receivables-meta">Only Ready customers can be sent. Nothing is sent until you confirm the exact count, amount and Genesys contact list.</span>
+            </form>
+        }
         <div class="table-scroll">
             <table class="table receivables-table campaigns-table">
-                <thead><tr><th>Customer</th><th>Mobile</th><th>Email</th><th>Project / Tower</th><th>Unit</th><th class="num">Due</th><th class="num">Overdue</th><th class="num">Total</th></tr></thead>
+                <thead><tr><th><input type="checkbox" data-select-page aria-label="Select all eligible customers on this page" /></th><th>Customer</th><th>Mobile</th><th>Email</th><th>Project / Tower</th><th>Unit</th><th class="num">Due</th><th class="num">Overdue</th><th class="num">Total</th></tr></thead>
                 <tbody>
                 @foreach (var row in report.Items)
                 {
                     <tr data-campaign-status="@row.Status">
+                        <td>@if (row.Status == "Ready") { <input type="checkbox" class="campaign-select" data-unit-key="@TigerCS.Application.Modules.Collections.Review.ReviewQueryService.UnitKey(row.CompanyId, row.TenantId, row.UnitCode)" aria-label="Select @row.CustomerName" /> }</td>
                         <td><strong>@row.CustomerName</strong>@foreach (var note in CampaignsModel.ReviewNotes(row, report.Crm?.State)) { <span class="receivables-meta receivables-meta--review" data-unit-note>@note</span> }@if (row.Status == "NotEligible") { <span class="receivables-meta" data-campaign-readiness>@CampaignsModel.Readiness(row)</span> }</td>
                         <td>@(row.Phone.Length > 0 ? row.Phone : "—")@if (row.Phone.Length == 0) { <span class="receivables-meta receivables-meta--missing" data-unit-note>@CampaignsModel.NoMobileNote(row)</span> }</td>
                         <td>@(row.Email.Length > 0 ? row.Email : "—")@if (row.Email.Length == 0) { <span class="receivables-meta receivables-meta--missing" data-unit-note>No email: email not possible</span> }</td>
@@ -49,7 +67,7 @@ else if (Model.Report is { } report)
                     </tr>
                 }
                 @if (report.TotalCount == 0)
-                { <tr><td colspan="8">@(CollectionsDisplay.FailedCompanies(report.Snapshot) is null ? "No units qualify for these filters." : "No units to show yet.")</td></tr> }
+                { <tr><td colspan="9">@(CollectionsDisplay.FailedCompanies(report.Snapshot) is null ? "No units qualify for these filters." : "No units to show yet.")</td></tr> }
                 </tbody>
             </table>
         </div>

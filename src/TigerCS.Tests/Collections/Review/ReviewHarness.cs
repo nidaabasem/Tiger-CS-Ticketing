@@ -95,11 +95,31 @@ public sealed class FakeGenesysClient : IGenesysOutboundClient
     }
 }
 
+/// <summary>Scripted mail provider for the administrator report: records every message and can fail by recipient.</summary>
+public sealed class FakeAdminEmailSender : TigerCS.Application.Modules.Notifications.Abstractions.IEmailSender
+{
+    public bool SendsRealMail { get; set; } = true;
+    public List<TigerCS.Application.Modules.Notifications.Abstractions.EmailMessage> Sent { get; } = [];
+    public Func<string, TigerCS.Application.Modules.Notifications.Abstractions.EmailSendResult>? Respond { get; set; }
+    public Exception? Throw { get; set; }
+    public Task<TigerCS.Application.Modules.Notifications.Abstractions.EmailSendResult> SendAsync(
+        TigerCS.Application.Modules.Notifications.Abstractions.EmailMessage message, CancellationToken cancellationToken = default)
+    {
+        if (Throw is not null) throw Throw;
+        var result = Respond?.Invoke(message.ToAddress) ?? TigerCS.Application.Modules.Notifications.Abstractions.EmailSendResult.Sent();
+        if (result.Outcome == TigerCS.Application.Modules.Notifications.Abstractions.EmailSendOutcome.Sent) Sent.Add(message);
+        return Task.FromResult(result);
+    }
+}
+
 public sealed class FakeJobScheduler : IReviewJobScheduler
 {
+    public bool Available { get; set; } = true;
+    public bool IsAvailable => Available;
+    public Exception? EnqueueFailure { get; set; }
     public List<long> Refreshes { get; } = [];
     public List<long> Dispatches { get; } = [];
-    public void EnqueueRefresh(long runId) => Refreshes.Add(runId);
+    public void EnqueueRefresh(long runId) { if (EnqueueFailure is not null) throw EnqueueFailure; Refreshes.Add(runId); }
     public void EnqueueDispatch(long dispatchId) => Dispatches.Add(dispatchId);
     public int Sweeps;
     public void EnqueueSuppressionSweep() => Sweeps++;
@@ -137,6 +157,7 @@ internal sealed class ReviewHarness : IDisposable
     public TigerCS.Application.Modules.Collections.Services.CollectionsUnitLinkService? Links { get; set; }
     public FakeGenesysClient Client { get; } = new();
     public FakeJobScheduler Scheduler { get; } = new();
+    public FakeAdminEmailSender Email { get; } = new();
     public FakeTimeProvider Time { get; } = new(Now);
     public CollectionsCaller Manager { get; } = new(Guid.NewGuid(), [Roles.CsManager], []);
     /// <summary>May read balances but not send.</summary>
@@ -172,18 +193,20 @@ internal sealed class ReviewHarness : IDisposable
         public ReviewRefreshService Refresh { get; private set; } = null!;
         public DispatchService Dispatch { get; private set; } = null!;
         public SuppressionService Suppression { get; private set; } = null!;
+        public DispatchAdminReportService AdminReport { get; private set; } = null!;
         public TigerCsDbContext Context => context;
 
         public Scope Wire(IGenesysOutboundClient? client = null)
         {
             var clock = new CollectionsClock(h.Options, h.Time);
             var auth = new CollectionsAuthorizationService(h.Options, new FakeDepartmentRepository());
-            Query = new ReviewQueryService(h.Options, h.Review, auth, clock, Store);
+            Query = new ReviewQueryService(h.Options, h.Review, auth, clock, Store, null, h.Genesys);
             Refresh = new ReviewRefreshService(h.Options, h.Campaign, h.Sql, h.Review, auth, clock, h.Source, Store, h.Scheduler, Query,
                 NullLogger<ReviewRefreshService>.Instance, h.Links);
             var balances = new CurrentBalanceReader(h.Sql, h.Source, Refresh, NullLogger<CurrentBalanceReader>.Instance);
             Dispatch = new DispatchService(h.Options, h.Genesys, auth, clock, Store, h.Scheduler, client ?? h.Client, Query, balances,
                 NullLogger<DispatchService>.Instance);
+            AdminReport = new DispatchAdminReportService(h.Campaign, Store, h.Email, clock, auth, NullLogger<DispatchAdminReportService>.Instance);
             Suppression = new SuppressionService(h.Options, h.Genesys, clock, Store, client ?? h.Client, balances, NullLogger<SuppressionService>.Instance);
             return this;
         }

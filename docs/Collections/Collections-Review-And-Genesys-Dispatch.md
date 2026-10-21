@@ -1,3 +1,7 @@
+> **Update: one page.** There is no separate *Review & Approve* screen any more. Selecting customers, **Approve & Send to Genesys**, the confirmation, the send status and the
+> administrator email all happen on **Collections Campaigns**. `/Collections/Review` only forwards to Campaigns (and keeps `?dispatch=` links working). The review data, validation
+> rules, approval record, revalidation, batching and idempotency described below are unchanged; they now run behind the Campaigns page. See `Campaigns-Approve-And-Send.md`.
+
 # Collections review, approval and Genesys outbound dispatch
 
 > **Later round:** UAT readiness, template/export findings, V2 deployment, paid-after-upload suppression, the repeated-call block and the live-dispatch gate are in [Collections-UAT-Readiness.md](Collections-UAT-Readiness.md). Where this page differs (the shared-phone acknowledgement no longer exists; dispatch needs `LiveCustomerDispatchEnabled` and `SuppressionEnabled`), that page is current.
