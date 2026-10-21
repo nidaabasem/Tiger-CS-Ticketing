@@ -41,6 +41,8 @@ public class CollectionsReviewRecordConfiguration : IEntityTypeConfiguration<Col
         builder.Property(r => r.Email).HasMaxLength(320).IsRequired();
         builder.Property(r => r.UnitCode).HasMaxLength(60).IsRequired();
         builder.Property(r => r.ProjectCode).HasMaxLength(60).IsRequired();
+        builder.Property(r => r.TowerNumber).HasMaxLength(20);
+        builder.Property(r => r.TowerName).HasMaxLength(200);
         builder.Property(r => r.PaymentStatus).HasConversion<string>().HasMaxLength(16).IsRequired();
         builder.Property(r => r.SourceStatus).HasMaxLength(100).IsRequired();
         builder.Property(r => r.RemainingAmount).HasPrecision(19, 4);
@@ -121,6 +123,10 @@ public class CollectionsGenesysBatchConfiguration : IEntityTypeConfiguration<Col
         builder.Property(b => b.ReminderType).HasConversion<string>().HasMaxLength(16).IsRequired();
         builder.Property(b => b.ContactListId).HasMaxLength(36).IsUnicode(false).IsRequired();
         builder.Property(b => b.Status).HasConversion<string>().HasMaxLength(24).IsRequired();
+        builder.Property(b => b.StageName).HasMaxLength(200);
+        builder.Property(b => b.GenesysCampaignName).HasMaxLength(200);
+        builder.Property(b => b.GenesysCampaignId).HasMaxLength(64).IsUnicode(false);
+        builder.Property(b => b.CampaignAction).HasMaxLength(24);
         builder.Property(b => b.RequestHash).HasMaxLength(64).IsUnicode(false);
         builder.Property(b => b.Error).HasMaxLength(500);
         builder.Property(b => b.ReconciliationNote).HasMaxLength(500);
@@ -210,6 +216,7 @@ public sealed class ReviewStore(TigerCsDbContext db) : IReviewStore
         var q = db.CollectionsReviewRecords.AsNoTracking().Where(r => r.CollectionsReviewRunId == runId);
         if (s.CompanyId is { } company) q = q.Where(r => r.CompanyId == company);
         if (s.Project is { } project) { var p = Like(project); q = q.Where(r => EF.Functions.Like(r.ProjectCode, p, "\\")); }
+        if (s.TowerId is { } tower) q = q.Where(r => r.TowerId == tower);
         if (s.Unit is { } unit) { var p = Like(unit); q = q.Where(r => EF.Functions.Like(r.UnitCode, p, "\\")); }
         if (s.CustomerText is { } text)
         {
@@ -250,6 +257,9 @@ public sealed class ReviewStore(TigerCsDbContext db) : IReviewStore
             .ThenBy(x => x.Record.ReminderType).ThenBy(x => x.Record.CollectionsReviewRecordId).Skip(skip).Take(take).ToListAsync(ct);
         return new StoredPage(await WithHistoryAsync(rows, ct), total);
     }
+
+    public Task<bool> RunHasTowerDataAsync(long runId, CancellationToken ct) =>
+        db.CollectionsReviewRecords.AsNoTracking().AnyAsync(r => r.CollectionsReviewRunId == runId && r.TowerId != null, ct);
 
     public async Task<ReviewCountsDto> CountAsync(long runId, ReviewQuerySpec specWithoutStatus, bool stale, CancellationToken ct)
     {
@@ -372,6 +382,8 @@ public sealed class ReviewStore(TigerCsDbContext db) : IReviewStore
         tracked.ReturnedContactCount = batch.ReturnedContactCount; tracked.RequestHash = batch.RequestHash;
         tracked.CompletedAtUtc = batch.CompletedAtUtc; tracked.ReconciledByEmployeeId = batch.ReconciledByEmployeeId;
         tracked.ReconciledAtUtc = batch.ReconciledAtUtc; tracked.ReconciliationNote = Cut(batch.ReconciliationNote);
+        tracked.StageName = batch.StageName; tracked.GenesysCampaignName = batch.GenesysCampaignName;
+        tracked.GenesysCampaignId = batch.GenesysCampaignId; tracked.CampaignAction = batch.CampaignAction;
         await db.SaveChangesAsync(ct);
         db.ChangeTracker.Clear();
     }

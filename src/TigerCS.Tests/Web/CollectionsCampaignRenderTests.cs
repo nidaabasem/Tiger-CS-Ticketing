@@ -17,11 +17,14 @@ public sealed class CollectionsCampaignRenderTests
         Assert.Empty(api.Calls("/campaigns/preview"));
         Assert.Contains("data-results-loading", html);
         Assert.Contains("<option value=\"7\" selected=\"selected\">124 - Tower 124</option>", html);
-        Assert.Contains("name=\"month\"", html); Assert.Contains("name=\"year\"", html);
+        // Month and Year were redundant with the date range and are gone; Payment status and Project / Tower are the new controls.
+        Assert.DoesNotContain("name=\"month\"", html); Assert.DoesNotContain("name=\"year\"", html);
+        Assert.DoesNotContain("data-month-select", html); Assert.DoesNotContain("All months", html);
+        Assert.Contains("name=\"paymentStatus\"", html); Assert.Contains("<option value=\"Both\" selected=\"selected\">Due and Overdue (both)</option>", html);
+        Assert.Contains("Project / Tower", html); Assert.Contains("All projects", html);
         Assert.Contains("name=\"dateFrom\"", html); Assert.Contains("name=\"dateTo\"", html);
         Assert.Contains("data-last-six-months", html);
         Assert.Contains("Minimum Total (AED)", html); Assert.Contains("name=\"minTotal\"", html); Assert.Contains("value=\"100\"", html);
-        Assert.Contains("<option value=\"\">All months</option>", html);
         Assert.DoesNotContain("name=\"companyId\"", html);
         Assert.Contains("/js/collections-campaign-dates.js", html);
         Assert.DoesNotContain("page-subtitle", html);                                // no explanatory text on the page
@@ -39,12 +42,15 @@ public sealed class CollectionsCampaignRenderTests
         Assert.DoesNotContain("companyId", call);
         // Exactly the requested columns, in order.
         var headers = Regex.Matches(Regex.Match(html, "<thead>.*?</thead>", RegexOptions.Singleline).Value, "<th(?:\\s[^>]*)?>(.*?)</th>").Select(m => m.Groups[1].Value).ToList();
-        Assert.Equal(["Customer", "Mobile", "Email", "Tower", "Apartment", "Due", "Overdue", "Total"], headers);
+        Assert.Equal(["Customer", "Mobile", "Email", "Project / Tower", "Unit", "Due", "Overdue", "Total"], headers);
         var cells = Regex.Matches(Regex.Match(html, "<tbody>.*?</tbody>", RegexOptions.Singleline).Value, "<td[^>]*>(.*?)</td>", RegexOptions.Singleline)
             .Select(m => System.Net.WebUtility.HtmlDecode(Regex.Replace(m.Groups[1].Value, "<[^>]+>", "")).Trim()).ToList();
         Assert.Equal(["Campaign Customer", "+971500003001", "— No email: email not possible", "Al Ghaf", "TP140-101", "—", "650.00", "650.00"], cells);   // no email -> a dash and the short reason; zero Due -> a dash; Total = Due + Overdue
         Assert.Contains("Export review CSV", html);
         Assert.DoesNotContain("Export Genesys CSV", html);
+        // Eligible customers and the total qualifying amount, and the exact Genesys campaign name the stage will use.
+        Assert.Contains("data-eligible-count", html); Assert.Contains("data-eligible-total", html);
+        Assert.Contains("data-campaign-name>Current month reminder - day 14<", html);
         foreach (var gone in new[] { "Earliest unpaid due date", "Qualifying balance", "Needs review", "Financial source reconciliation", "Data details", "Scheduled:", "Data refreshed", "campaign-summary", "Source:", "Preview only" })
             Assert.DoesNotContain(gone, html);
         // Export links carry exactly the previewed filters (incl. the minimum), so the file matches the list.

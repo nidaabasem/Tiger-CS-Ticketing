@@ -130,7 +130,77 @@ public sealed class GenesysOutboundHttpClient(HttpClient http, IGenesysTokenProv
         return new(GenesysUploadOutcome.Accepted, raw.Status, ReadCallable(raw.Body), false, null);
     }
 
-    private async Task<Raw> SendAsync(HttpMethod method, string path, string body, string what, CancellationToken ct)
+    public async Task<GenesysCampaignLookupResult> FindCampaignsByNameAsync(string name, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(name)) throw new ArgumentException("A campaign name is required.", nameof(name));
+        var found = new List<GenesysCampaignRef>();
+        for (var page = 1; page <= MaxLookupPages; page++)
+        {
+            var raw = await SendAsync(HttpMethod.Get,
+                $"api/v2/outbound/campaigns?name={Uri.EscapeDataString(name)}&pageSize=100&pageNumber={page}", null, "campaign lookup", ct);
+            if (raw.Outcome != GenesysUploadOutcome.Accepted) return new(raw.Outcome, raw.Status, [], raw.Error);
+            try
+            {
+                using var doc = JsonDocument.Parse(raw.Body ?? "");
+                var root = doc.RootElement;
+                if (root.TryGetProperty("entities", out var entities) && entities.ValueKind == JsonValueKind.Array)
+                    found.AddRange(entities.EnumerateArray().Select(ReadCampaign).OfType<GenesysCampaignRef>());
+                var pageCount = root.TryGetProperty("pageCount", out var pc) && pc.TryGetInt32(out var n) ? n : 1;
+                if (page >= pageCount) return new(GenesysUploadOutcome.Accepted, raw.Status, found, null);
+            }
+            catch (JsonException) { return new(GenesysUploadOutcome.Unknown, raw.Status, [], "Genesys returned an unreadable campaign list."); }
+        }
+        // More pages than we are willing to read: the answer is incomplete, so it must not be mistaken for "no such campaign".
+        return new(GenesysUploadOutcome.Unknown, null, [], "The campaign lookup returned too many pages to check.");
+    }
+
+    public async Task<GenesysCampaignCreateResult> CreateCampaignAsync(string name, string contactListId, GenesysCampaignOptions t, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(name)) throw new ArgumentException("A campaign name is required.", nameof(name));
+        if (t.MissingForCreate() is { Count: > 0 } missing)
+            return new(GenesysUploadOutcome.Rejected, null, null, $"The campaign template is incomplete ({string.Join(", ", missing)}).");
+        var body = new Dictionary<string, object?>
+        {
+            ["name"] = name,
+            ["contactList"] = new { id = contactListId },
+            ["queue"] = new { id = t.QueueId },
+            ["dialingMode"] = t.DialingMode,
+            ["callerName"] = t.CallerName,
+            ["callerAddress"] = t.CallerAddress,
+            // Created off on purpose: nothing may dial until a person switches the campaign on in Genesys.
+            ["campaignStatus"] = "off"
+        };
+        if (!string.IsNullOrWhiteSpace(t.ScriptId)) body["script"] = new { id = t.ScriptId };
+        if (!string.IsNullOrWhiteSpace(t.CallAnalysisResponseSetId)) body["callAnalysisResponseSet"] = new { id = t.CallAnalysisResponseSetId };
+        if (t.AbandonRate is { } rate) body["abandonRate"] = rate;
+        var raw = await SendAsync(HttpMethod.Post, "api/v2/outbound/campaigns", JsonSerializer.Serialize(body), "campaign creation", ct);
+        if (raw.Outcome != GenesysUploadOutcome.Accepted) return new(raw.Outcome, raw.Status, null, raw.Error);
+        try
+        {
+            using var doc = JsonDocument.Parse(raw.Body ?? "");
+            var created = ReadCampaign(doc.RootElement);
+            if (created is not null) return new(GenesysUploadOutcome.Accepted, raw.Status, created, null);
+        }
+        catch (JsonException) { /* falls through */ }
+        // Genesys said OK but we cannot tell which campaign it made: not safe to treat as either created or not created.
+        return new(GenesysUploadOutcome.Unknown, raw.Status, null, "Genesys accepted the campaign but returned no usable id.");
+    }
+
+    private const int MaxLookupPages = 10;
+
+    private static GenesysCampaignRef? ReadCampaign(JsonElement e)
+    {
+        if (e.ValueKind != JsonValueKind.Object) return null;
+        var id = e.TryGetProperty("id", out var i) && i.ValueKind == JsonValueKind.String ? i.GetString() : null;
+        if (string.IsNullOrEmpty(id)) return null;
+        var name = e.TryGetProperty("name", out var n) && n.ValueKind == JsonValueKind.String ? n.GetString() ?? "" : "";
+        var list = e.TryGetProperty("contactList", out var cl) && cl.ValueKind == JsonValueKind.Object
+            && cl.TryGetProperty("id", out var cid) && cid.ValueKind == JsonValueKind.String ? cid.GetString() : null;
+        var status = e.TryGetProperty("campaignStatus", out var st) && st.ValueKind == JsonValueKind.String ? st.GetString() : null;
+        return new(id, name, list, status);
+    }
+
+    private async Task<Raw> SendAsync(HttpMethod method, string path, string? body, string what, CancellationToken ct)
     {
         for (var attempt = 0; attempt < 2; attempt++)
         {
@@ -139,7 +209,7 @@ public sealed class GenesysOutboundHttpClient(HttpClient http, IGenesysTokenProv
             catch (GenesysAuthenticationException ex) { return new(GenesysUploadOutcome.Rejected, null, null, ex.Message); }
 
             using var request = new HttpRequestMessage(method, new Uri(new Uri(options.ApiBaseUrl.TrimEnd('/') + "/"), path))
-            { Content = new StringContent(body, Encoding.UTF8, "application/json") };
+            { Content = body is null ? null : new StringContent(body, Encoding.UTF8, "application/json") };
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
             HttpResponseMessage response;

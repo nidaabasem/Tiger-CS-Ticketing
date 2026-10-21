@@ -41,6 +41,43 @@ public sealed class FakeGenesysClient : IGenesysOutboundClient
         }
     }
 
+    /// <summary>Campaigns that "exist" in the fake Genesys; <see cref="FindCampaignsByNameAsync"/> returns those whose name contains the searched text.</summary>
+    public List<GenesysCampaignRef> Campaigns { get; } = [];
+    public List<string> CampaignLookups { get; } = [];
+    public List<(string Name, string ContactListId)> CampaignCreates { get; } = [];
+    public Queue<GenesysUploadOutcome> LookupScript { get; } = new();
+    public Queue<GenesysUploadOutcome> CreateScript { get; } = new();
+    /// <summary>For the next Unknown create only: Genesys did make the campaign, but the answer was lost.</summary>
+    public bool CreateUnknownStillCreates { get; set; }
+
+    public Task<GenesysCampaignLookupResult> FindCampaignsByNameAsync(string name, CancellationToken ct)
+    {
+        lock (_gate)
+        {
+            CampaignLookups.Add(name);
+            var outcome = LookupScript.Count > 0 ? LookupScript.Dequeue() : GenesysUploadOutcome.Accepted;
+            return Task.FromResult(outcome == GenesysUploadOutcome.Accepted
+                ? new GenesysCampaignLookupResult(outcome, 200, Campaigns.Where(c => c.Name.Contains(name, StringComparison.OrdinalIgnoreCase)).ToList(), null)
+                : new GenesysCampaignLookupResult(outcome, outcome == GenesysUploadOutcome.Rejected ? 403 : null, [], "Genesys could not be reached."));
+        }
+    }
+
+    public Task<GenesysCampaignCreateResult> CreateCampaignAsync(string name, string contactListId, GenesysCampaignOptions template, CancellationToken ct)
+    {
+        lock (_gate)
+        {
+            CampaignCreates.Add((name, contactListId));
+            var outcome = CreateScript.Count > 0 ? CreateScript.Dequeue() : GenesysUploadOutcome.Accepted;
+            if (outcome == GenesysUploadOutcome.Accepted || (outcome == GenesysUploadOutcome.Unknown && CreateUnknownStillCreates))
+            {
+                var made = new GenesysCampaignRef($"campaign-{Campaigns.Count + 1}", name, contactListId, "off");
+                Campaigns.Add(made);
+                if (outcome == GenesysUploadOutcome.Accepted) return Task.FromResult(new GenesysCampaignCreateResult(outcome, 200, made, null));
+            }
+            return Task.FromResult(new GenesysCampaignCreateResult(outcome, outcome == GenesysUploadOutcome.Rejected ? 400 : null, null, "Genesys did not confirm."));
+        }
+    }
+
     public Task<GenesysUploadResult> UploadContactsAsync(string contactListId, IReadOnlyList<GenesysContactPayload> contacts, CancellationToken ct)
     {
         lock (_gate)

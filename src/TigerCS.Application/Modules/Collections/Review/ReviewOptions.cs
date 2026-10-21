@@ -87,4 +87,36 @@ public sealed class GenesysOutboundOptions
             ? label.Trim() : CampaignReminderTypes.DefaultLabel(type);
 
     public int EffectiveBatchSize => Math.Clamp(BatchSize, 1, MaxBatchSize);
+
+    /// <summary>Campaign lookup/creation (<c>Collections:GenesysOutbound:Campaign</c>). Off by default: contacts are then uploaded to the lists exactly as before.</summary>
+    public GenesysCampaignOptions Campaign { get; set; } = new();
+}
+
+/// <summary>
+/// Genesys campaign handling. When <see cref="Enabled"/>, every upload batch first resolves a campaign named exactly like its stage
+/// (<see cref="CampaignReminderTypes.StageName(CampaignReminderType)"/>): an existing campaign with that name is reused, never duplicated;
+/// otherwise one is created (status off) from this template when <see cref="AllowCreate"/> is set.
+/// </summary>
+public sealed class GenesysCampaignOptions
+{
+    public bool Enabled { get; set; }
+    /// <summary>False: only an existing campaign may be used; a missing one fails the batch before any upload.</summary>
+    public bool AllowCreate { get; set; }
+    /// <summary>Required to create: the queue agents/calls are routed to (Genesys queue id).</summary>
+    public string? QueueId { get; set; }
+    /// <summary>Required to create: e.g. preview, power, predictive, progressive or agentless.</summary>
+    public string? DialingMode { get; set; }
+    /// <summary>Required to create: the caller name shown to the customer.</summary>
+    public string? CallerName { get; set; }
+    /// <summary>Required to create: the caller number (E.164).</summary>
+    public string? CallerAddress { get; set; }
+    public string? ScriptId { get; set; }
+    public string? CallAnalysisResponseSetId { get; set; }
+    public double? AbandonRate { get; set; }
+
+    /// <summary>The settings still missing for creation, by name; empty when a campaign can be created.</summary>
+    public IReadOnlyList<string> MissingForCreate() => new[]
+    {
+        (nameof(QueueId), QueueId), (nameof(DialingMode), DialingMode), (nameof(CallerName), CallerName), (nameof(CallerAddress), CallerAddress)
+    }.Where(p => string.IsNullOrWhiteSpace(p.Item2)).Select(p => p.Item1).ToList();
 }
