@@ -62,7 +62,25 @@ public sealed class ReviewRefreshService(
                 ? CollectionsResult<ReviewRunDto>.Fail(CollectionsOutcome.FinanceUnavailable, "Could not queue the refresh. Retry.")
                 : CollectionsResult<ReviewRunDto>.Ok(query.ToDto(winner), CollectionsOutcome.Replayed);
         }
-        scheduler.EnqueueRefresh(run.CollectionsReviewRunId);
+        // Nothing would ever pick the run up (background jobs off) or the queue is unreachable: say so now instead of leaving the page on "Queued".
+        string? notQueued = null;
+        if (!scheduler.IsAvailable)
+            notQueued = "Background jobs are disabled on this server (BackgroundJobs:Enabled is false), so the refresh cannot run. Enable them and retry.";
+        else
+        {
+            try { scheduler.EnqueueRefresh(run.CollectionsReviewRunId); }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Review refresh {RunId} could not be queued.", run.CollectionsReviewRunId);
+                notQueued = $"The refresh could not be queued ({ex.GetType().Name}: {ex.Message}). Retry.";
+            }
+        }
+        if (notQueued is not null)
+        {
+            await store.FailRunAsync(run.CollectionsReviewRunId, notQueued, clock.UtcNow, ct);
+            run = await store.GetRunAsync(run.CollectionsReviewRunId, ct) ?? run;
+            return CollectionsResult<ReviewRunDto>.Ok(query.ToDto(run), CollectionsOutcome.Accepted);
+        }
         return CollectionsResult<ReviewRunDto>.Ok(query.ToDto(run), CollectionsOutcome.Accepted);
     }
 
@@ -122,6 +140,12 @@ public sealed class ReviewRefreshService(
         {
             logger.LogWarning("Review refresh {RunId} failed ({ExceptionType}).", runId, ex.GetType().Name);
             await store.FailRunAsync(runId, "The financial source could not be read.", clock.UtcNow, CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            // Never leave the run Running: persist what actually went wrong so the page shows Failed with a retry.
+            logger.LogError(ex, "Review refresh {RunId} failed unexpectedly.", runId);
+            await store.FailRunAsync(runId, $"{ex.GetType().Name}: {ex.Message}", clock.UtcNow, CancellationToken.None);
         }
     }
 }

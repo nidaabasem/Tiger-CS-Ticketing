@@ -114,6 +114,9 @@ public sealed class CollectionsApiClient(HttpClient httpClient, ILogger<Collecti
     public Task<ApiResult<DispatchDto>> GetDispatchAsync(Guid dispatchId, CancellationToken cancellationToken) =>
         GetAsync<DispatchDto>($"{ReviewBase}/dispatches/{dispatchId:D}", cancellationToken);
 
+    public Task<ApiResult<DispatchDto>> RetryAdminEmailAsync(Guid dispatchId, CancellationToken cancellationToken) =>
+        PostAsync<object, DispatchDto>($"{ReviewBase}/dispatches/{dispatchId:D}/admin-email/retry", new { }, cancellationToken);
+
     public Task<ApiResult<DispatchDto>> ReconcileBatchAsync(Guid dispatchId, long batchId, ReconcileBatchRequest request, CancellationToken cancellationToken) =>
         PostAsync<ReconcileBatchRequest, DispatchDto>($"{ReviewBase}/dispatches/{dispatchId:D}/batches/{batchId.ToString(CultureInfo.InvariantCulture)}/reconcile", request, cancellationToken);
 

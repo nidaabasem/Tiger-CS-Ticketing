@@ -82,14 +82,17 @@ public sealed class CollectionsCampaignFilterTests
     }
 
     [Fact]
-    public async Task ReviewAndApprove_CarriesTheStageDatesAndPaymentStatus()
+    public async Task ApproveAndSend_CarriesTheSameFiltersAsThePreview_AndThereIsNoReviewLink()
     {
-        var api = new FakeCollectionsApi();
+        var api = new FakeCollectionsApi { IncludeNotEligible = true };
         using var factory = CollectionsWebHost.Factory(api); using var client = factory.CreateClient();
-        var html = await (await client.GetAsync($"/Collections/Campaigns?{Filters}")).Content.ReadAsStringAsync();
-        var link = System.Net.WebUtility.HtmlDecode(Regex.Match(html, "href=\"([^\"]*)\"[^>]*data-review-link").Groups[1].Value);
-        Assert.StartsWith("/Collections/Review?", link);
-        Assert.Contains("reminderType=LegalNotice", link); Assert.Contains("towerId=7", link); Assert.Contains("dueFrom=2026-09-01", link); Assert.Contains("dueTo=2026-10-31", link); Assert.Contains("dueStatus=Overdue", link);
+        var html = await (await client.GetAsync($"/Collections/Campaigns?handler=Results&{Filters}")).Content.ReadAsStringAsync();
+        var form = Regex.Match(html, "<form[^>]*data-approve-form.*?</form>", RegexOptions.Singleline).Value;
+        Assert.NotEmpty(form);
+        foreach (var expected in new[] { "name=\"stage\" value=\"LegalNotice\"", "name=\"towerId\" value=\"7\"", "name=\"dateFrom\" value=\"2026-09-01\"", "name=\"dateTo\" value=\"2026-10-31\"",
+            "name=\"minTotal\" value=\"250\"", "name=\"paymentStatus\" value=\"Overdue\"", "name=\"search\" value=\"3001\"" })
+            Assert.Contains(expected, form);
+        Assert.DoesNotContain("data-review-link", html);
     }
 
     [Fact]

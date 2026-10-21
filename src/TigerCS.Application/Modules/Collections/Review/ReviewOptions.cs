@@ -19,6 +19,9 @@ public sealed class CollectionsReviewOptions
     /// <summary>A run still "Running" after this long is treated as dead and may be replaced.</summary>
     public int StuckRunMinutes { get; set; } = 30;
 
+    /// <summary>A run still "Queued" after this long was never picked up by a worker (jobs off, server down): it is marked Failed so the page offers a retry.</summary>
+    public int QueuedTimeoutMinutes { get; set; } = 5;
+
     /// <summary>Floating-point noise tolerance in AED when normalizing a floating source value to fils.</summary>
     public decimal FloatNoiseTolerance { get; set; } = MoneyNormalizer.DefaultFloatTolerance;
 

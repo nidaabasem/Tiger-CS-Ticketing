@@ -13,11 +13,16 @@ namespace TigerCS.Application.Modules.Collections.Review;
 /// </summary>
 public sealed class ReviewQueryService(
     CollectionsOptions options, CollectionsReviewOptions reviewOptions, CollectionsAuthorizationService authorization,
-    CollectionsClock clock, IReviewStore store, ReceivablesSnapshotOptions? snapshotOptions = null)
+    CollectionsClock clock, IReviewStore store, ReceivablesSnapshotOptions? snapshotOptions = null, GenesysOutboundOptions? genesys = null)
 {
     public const string UnpaidOrPartial = "UnpaidOrPartial";
     public const string ModeSelectedKeys = "SelectedKeys";
     public const string ModeAllMatching = "AllMatching";
+    /// <summary>The customers ticked on the Campaigns page, as <see cref="UnitKey"/> values: every Ready record of those units that also matches the filter.</summary>
+    public const string ModeSelectedUnits = "SelectedUnits";
+
+    /// <summary>The identity of a Campaigns row: company, tenant and unit code.</summary>
+    public static string UnitKey(int companyId, string tenantId, string unitCode) => $"{companyId}|{tenantId}|{unitCode}";
 
     public static readonly IReadOnlyList<string> PaymentStatusChoices = [UnpaidOrPartial, "All", "Unpaid", "PartiallyPaid", "Paid", "Unknown"];
 
@@ -27,7 +32,21 @@ public sealed class ReviewQueryService(
             return CollectionsResult<ReviewRunDto?>.Fail(CollectionsOutcome.Forbidden);
         if (!options.Enabled) return CollectionsResult<ReviewRunDto?>.Fail(CollectionsOutcome.Disabled);
         var active = await store.GetActiveRunAsync(ct);
-        var run = active ?? await store.GetCurrentRunAsync(ct);
+        if (active is not null && TimeoutReason(active) is { } reason)
+        {
+            // The worker never picked the run up (or died): fail it so the page and its poll stop at "Failed" with the reason.
+            await store.FailRunAsync(active.CollectionsReviewRunId, reason, clock.UtcNow, ct);
+            active = await store.GetRunAsync(active.CollectionsReviewRunId, ct);
+            if (active is not null) return CollectionsResult<ReviewRunDto?>.Ok(ToDto(active));
+        }
+        var current = await store.GetCurrentRunAsync(ct);
+        var run = active ?? current;
+        if (active is null)
+        {
+            // A refresh that failed after the published run stays visible (with its reason) until a newer one succeeds, instead of silently showing the old data.
+            var latest = await store.GetLatestRunAsync(ct);
+            if (latest is { Status: ReviewRunStatus.Failed } && (current is null || latest.CollectionsReviewRunId > current.CollectionsReviewRunId)) run = latest;
+        }
         return CollectionsResult<ReviewRunDto?>.Ok(run is null ? null : ToDto(run));
     }
 
@@ -132,7 +151,18 @@ public sealed class ReviewQueryService(
             var excluded = (request.ExcludedKeys ?? []).ToHashSet(StringComparer.Ordinal);
             if (excluded.Count > 0) views = views.Where(v => !excluded.Contains(v.Record.RecordKey)).ToList();
         }
-        else return new(run, [], 0, "Choose a selection mode: SelectedKeys or AllMatching.");
+        else if (string.Equals(request.Mode, ModeSelectedUnits, StringComparison.OrdinalIgnoreCase))
+        {
+            var units = (request.UnitKeys ?? []).Where(k => !string.IsNullOrWhiteSpace(k)).Select(k => k.Trim()).ToHashSet(StringComparer.Ordinal);
+            if (units.Count == 0) return new(run, [], 0, "Select at least one customer.");
+            var parsed = TryParse(request.Filter ?? new ReviewFilter());
+            if (parsed.Error is not null) return new(run, [], 0, parsed.Error);
+            views = await store.ResolveAsync(run.CollectionsReviewRunId, parsed.Spec! with { ValidationStatus = ReviewValidationStatus.Ready }, null, stale, max, ct, units);
+            if (views.Count > max) return new(run, [], 0, $"At most {max} records can be approved at once.");
+            // A ticked customer that has no Ready record any more (paid, already sent, changed) is counted as left out, never silently kept.
+            skipped = units.Count(u => !views.Any(v => UnitKey(v.Record.CompanyId, v.Record.TenantId, v.Record.UnitCode) == u));
+        }
+        else return new(run, [], 0, "Choose a selection mode: SelectedKeys, SelectedUnits or AllMatching.");
 
         // The view must be Ready now (stale-adjusted, not already sent) and carry a confirmed amount.
         var ready = views.Where(v => v.EffectiveStatus(stale) == ReviewValidationStatus.Ready
@@ -179,7 +209,30 @@ public sealed class ReviewQueryService(
         if (records.Count > 0 && IsStale(resolved.Run!)) notices.Add("The review data is stale; refresh it before approving.");
         return new(resolved.Run!.CollectionsReviewRunId, records.Count, Fingerprint(records), TotalsByCurrency(records),
             records.GroupBy(r => r.ReminderType.ToString()).OrderBy(g => g.Key, StringComparer.Ordinal).ToDictionary(g => g.Key, g => g.Count()),
-            shared.Records, shared.Numbers, page, size, contacts, notices);
+            shared.Records, shared.Numbers, page, size, contacts, notices, ContactLists(records), resolved.Run.SourceReconciled);
+    }
+
+    /// <summary>The Genesys contact list each reminder type of the selection will be uploaded to (an unconfigured list is shown as such; confirming is then refused).</summary>
+    private IReadOnlyDictionary<string, string> ContactLists(IReadOnlyList<CollectionsReviewRecord> records)
+    {
+        var lists = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var type in records.Select(r => r.ReminderType).Distinct().OrderBy(t => t.ToString(), StringComparer.Ordinal))
+        {
+            try { lists[type.ToString()] = genesys is null ? "(not configured)" : genesys.ContactListIdFor(type); }
+            catch (InvalidOperationException) { lists[type.ToString()] = "(not configured)"; }
+        }
+        return lists;
+    }
+
+    private string? TimeoutReason(CollectionsReviewRun run)
+    {
+        var now = clock.UtcNow;
+        if (run.Status == ReviewRunStatus.Queued && now - run.RequestedAtUtc > TimeSpan.FromMinutes(Math.Max(1, reviewOptions.QueuedTimeoutMinutes)))
+            return $"The refresh was not picked up by a background worker within {Math.Max(1, reviewOptions.QueuedTimeoutMinutes)} minutes. "
+                 + "Check that BackgroundJobs:Enabled is true and the API's Hangfire server is running, then retry.";
+        if (run.Status == ReviewRunStatus.Running && now - (run.StartedAtUtc ?? run.RequestedAtUtc) > TimeSpan.FromMinutes(Math.Max(1, reviewOptions.StuckRunMinutes)))
+            return "The refresh stopped responding and was marked failed. Retry.";
+        return null;
     }
 
     /// <summary>A review run is built from the local receivables snapshot, so it is stale when that snapshot is: the snapshot's own limit (<see cref="ReceivablesSnapshotOptions.MaxAgeMinutes"/>) applies.</summary>

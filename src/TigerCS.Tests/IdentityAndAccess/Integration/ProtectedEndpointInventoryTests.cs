@@ -105,6 +105,7 @@ public class ProtectedEndpointInventoryTests : IClassFixture<TigerCsApiFactory>
         ["GET /api/collections/review/runs/current"] = nameof(Collections.Integration.CollectionsReviewEndpointsTests.SystemAdministrator_IsAuthorizedOnEveryReviewRoute_ThroughTheOverride),
         ["GET /api/collections/review/runs/{runId:long}"] = nameof(Collections.Integration.CollectionsReviewEndpointsTests.SystemAdministrator_IsAuthorizedOnEveryReviewRoute_ThroughTheOverride),
         ["POST /api/collections/review/dispatches/{dispatchId:guid}/cancel"] = nameof(Collections.Integration.CollectionsReviewEndpointsTests.SystemAdministrator_IsAuthorizedOnEveryReviewRoute_ThroughTheOverride),
+        ["POST /api/collections/review/dispatches/{dispatchId:guid}/admin-email/retry"] = nameof(Collections.Integration.CollectionsReviewEndpointsTests.SystemAdministrator_IsAuthorizedOnEveryReviewRoute_ThroughTheOverride),
         ["GET /api/collections/review/overlaps"] = nameof(Collections.Integration.CollectionsReviewEndpointsTests.SystemAdministrator_IsAuthorizedOnEveryReviewRoute_ThroughTheOverride),
         ["GET /api/collections/review/dispatches/{dispatchId:guid}/contacts"] = nameof(Collections.Integration.CollectionsReviewEndpointsTests.SystemAdministrator_IsAuthorizedOnEveryReviewRoute_ThroughTheOverride),
         ["POST /api/collections/review/suppression/sweep"] = nameof(Collections.Integration.CollectionsReviewEndpointsTests.SystemAdministrator_IsAuthorizedOnEveryReviewRoute_ThroughTheOverride),
