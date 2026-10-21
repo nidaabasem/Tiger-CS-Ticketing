@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <!-- ISOLATED HARNESS - not the TigerGroupWeb project. It compiles the two patched files against minimal stand-ins for
+       TicketingOptions / GenesysAuthDefaults (stubs/Stubs.cs) and runs the regression tests in tests/. -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
+    <PackageReference Include="Microsoft.AspNetCore.TestHost" Version="10.0.11" />
+  </ItemGroup>
+  <ItemGroup><Using Include="Xunit" /></ItemGroup>
+  <ItemGroup>
+    <Compile Include="src/*.cs" />
+    <Compile Include="stubs/*.cs" />
+    <Compile Include="tests/*.cs" />
+  </ItemGroup>
+</Project>
