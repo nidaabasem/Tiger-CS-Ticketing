@@ -94,3 +94,51 @@ again and starts a new timer measured from then.
    `resolution-outcome-not-reopenable`.
 5. After step 2, send `awaitingCustomerReply: true` for the same conversation: `awaitingCustomerReply:false` with the
    "already closed" note; wait past the deadline: ticket stays InProgress; one closed and one reopened email in total.
+
+## Website/Chatbot "customer inactive" rule (10 minutes)
+
+Website and chatbot (Genesys chat/messaging) tickets close automatically once the customer has done **nothing for more than 10 minutes**,
+counted from their **last interaction** — never from ticket creation. Closure reason:
+`Automatically closed — customer inactive for more than 10 minutes.`
+
+| Setting | Value | Notes |
+| --- | --- | --- |
+| `Genesys__CustomerInactivityTimeoutMinutes` | `10` | This rule. `0` switches it off. |
+| `Genesys__AwaitingReplyTimeoutMinutes` | `5` | The original bot-prompt rule, now only for tickets the new rule does not track (voice calls, Call Center). Unchanged for them. |
+
+Out of scope (never closed by this rule): Call Center tickets (originating or current department `CC`), human-managed tickets (an owner, a
+connected agent, an open handoff request), voice calls, ended conversations, tickets already closed (including by document delivery).
+Needs `BackgroundJobs__Enabled=true` and the migration `AddLastCustomerInteractionToTicketInteractions`
+(`AddLastCustomerInteractionToTicketInteractions.sql`).
+
+### Genesys integration change required
+
+TigerCS can only count activity Genesys reports. Before this change **nothing reported individual customer messages**: the only signal was
+`awaitingCustomerReply: false` (data action 10), which the flow sends only after it asked a question, and transcripts arrive only when the
+conversation ends. The minimal change:
+
+1. Reuse the existing data action `10-awaiting-customer-reply.json` (no new action to import — re-import it for the new optional input):
+   `PATCH /api/genesys/tickets/{ticketId}` with `awaiting = false`. TigerCS treats `awaitingCustomerReply: false` as "the customer just
+   interacted" and restarts the 10-minute clock.
+2. In the Architect bot flow, call it with `awaiting = false` **on every inbound customer message** (the top of the message-handling loop,
+   before the bot's own reply). Today the flow calls it only after the bot asked a question.
+3. Include `conversationId` in the document-copy data action (11) so a document request also counts as customer activity.
+
+No new webhook is needed. Until step 2 is done the clock only restarts on conversation creation, on `awaitingCustomerReply: false` and on
+document requests — a customer actively chatting without those signals would be closed after 10 minutes.
+
+## AI conversation completion (`closedByAi`) — Data Action 10
+
+Same data action, a different input. Keep the two signals apart:
+
+| Event | Data Action 10 inputs | Request body TigerCS receives |
+| --- | --- | --- |
+| **Customer interaction** (every inbound customer message) | `awaiting = false` | `{"conversationId": "<id>", "awaitingCustomerReply": "false", "closedByAi": ""}` |
+| Bot asked a question (original 5-min timer, optional) | `awaiting = true` | `{"conversationId": "<id>", "awaitingCustomerReply": "true", "closedByAi": ""}` |
+| **AI finished the conversation** (once) | `closedByAi = true`, `awaiting` unset | `{"conversationId": "<id>", "awaitingCustomerReply": "", "closedByAi": "true"}` |
+
+(A data action cannot omit a field, so unset inputs arrive as `""`, which TigerCS reads as "not supplied". Sending raw JSON booleans
+`{"conversationId": "<id>", "closedByAi": true}` is equally accepted.) Do not send `closedByAi` together with `awaiting`.
+
+TigerCS closes the ticket with the reason `Closed by AI` only while the AI still owns the conversation. The 10-minute inactivity closure
+remains the fallback — Genesys must not run its own timer.

@@ -1,7 +1,10 @@
 using TigerCS.Application.Abstractions;
 using TigerCS.Application.Modules.GenesysIntegration.Abstractions;
 using TigerCS.Application.Modules.GenesysIntegration.Dto;
+using TigerCS.Application.Modules.IdentityAndAccess.Abstractions;
 using TigerCS.Application.Modules.Ticketing.Abstractions;
+using TigerCS.Application.Modules.Ticketing.Dto;
+using TigerCS.Application.Modules.Ticketing.Services;
 using TigerCS.Domain.Modules.Ticketing;
 
 namespace TigerCS.Application.Modules.GenesysIntegration.Services;
@@ -53,6 +56,7 @@ public sealed class GenesysTicketUpdateAppService(
     GenesysOptions options,
     IGenesysConversationRepository conversationRepository,
     ITicketRepository ticketRepository,
+    IDepartmentRepository departmentRepository,
     ITicketAgentHandoffRepository handoffRepository,
     ITicketingUnitOfWork unitOfWork,
     GenesysConversationEndAppService conversationEndAppService,
@@ -61,8 +65,12 @@ public sealed class GenesysTicketUpdateAppService(
     IAuditEntryWriter auditWriter,
     ITicketWorkflowEventRepository workflowEventRepository,
     TimeProvider timeProvider,
-    GenesysRequestTypeClassificationAppService classificationAppService)
+    GenesysRequestTypeClassificationAppService classificationAppService,
+    TicketLifecycleAppService lifecycleAppService)
 {
+    /// <summary>The exact closure reason recorded when the AI finishes the conversation.</summary>
+    public const string ClosedByAiReason = "Closed by AI";
+
     public async Task<GenesysTicketUpdateResult> UpdateAsync(
         Guid callerEmployeeId, long ticketId, GenesysTicketUpdateDto request, CancellationToken cancellationToken = default)
     {
@@ -297,6 +305,8 @@ public sealed class GenesysTicketUpdateAppService(
             await RecordCustomerConfirmationAsync(callerEmployeeId, ticket, conversationId, confirmation, cancellationToken);
         }
 
+        await ApplyCustomerActivityAsync(callerEmployeeId, ticket, interaction, request, cancellationToken);
+
         var timerNote = await ApplyAwaitingCustomerReplyAsync(callerEmployeeId, ticket, interaction, request, cancellationToken);
 
         // The handoff state is reported on EVERY update, not only on one that
@@ -310,6 +320,9 @@ public sealed class GenesysTicketUpdateAppService(
             handoffStatus = openHandoff.Status.ToString();
             handoffId = openHandoff.TicketAgentHandoffId;
         }
+
+        // The AI finished the conversation. Last, so everything else this update carries (transcript, end, handoff state) is stored first.
+        var (closedByAi, closedByAiNote) = await ApplyClosedByAiAsync(callerEmployeeId, ticket, interaction, request, cancellationToken);
 
         return new GenesysTicketUpdateResult(
             GenesysTicketUpdateOutcome.Applied,
@@ -325,13 +338,117 @@ public sealed class GenesysTicketUpdateAppService(
             AwaitingCustomerReply: interaction.AwaitingCustomerReplySinceUtc is not null,
             InactivityDeadlineUtc: InactivityDeadline(interaction),
             AwaitingCustomerReplyNote: timerNote,
-            Classification: classification);
+            Classification: classification,
+            ClosedByAi: closedByAi,
+            ClosedByAiNote: closedByAiNote);
     }
 
-    private DateTime? InactivityDeadline(TicketInteraction interaction) =>
-        interaction.AwaitingCustomerReplySinceUtc is { } since && options.CustomerInactivityTimeout is { } timeout
-            ? since + timeout
-            : null;
+    /// <summary>
+    /// <c>closedByAi: true</c> — the Genesys AI finished the conversation. Closes through the lifecycle (Resolved → Closed, audit
+    /// <c>AutoCloseByAi</c>, history, notification) with the exact reason <see cref="ClosedByAiReason"/>, but ONLY while the AI still owns the
+    /// conversation: no requested/pending/connected human, no person owning the ticket, not a Call Center ticket, still open. Anything else is
+    /// answered with a note and changes nothing — never an error, so a retried webhook stays safe. An already-closed ticket (by a person, document
+    /// delivery, inactivity or an earlier AI call) is left exactly as it is: no second write and no overwritten reason.
+    /// </summary>
+    private async Task<(bool Closed, string? Note)> ApplyClosedByAiAsync(
+        Guid callerEmployeeId, Ticket ticket, TicketInteraction interaction, GenesysTicketUpdateDto request, CancellationToken cancellationToken)
+    {
+        if (request.ClosedByAi != true)
+        {
+            return (false, null);
+        }
+
+        if (ticket.TicketStatus == TicketStatus.Closed)
+        {
+            return (false, "Not closed: the ticket is already closed; it was left as it is.");
+        }
+
+        if (request.Handoff is { Required: true }
+            || await handoffRepository.GetOpenByInteractionIdAsync(interaction.TicketInteractionId, cancellationToken) is not null)
+        {
+            return (false, "Not closed: human follow-up is requested or pending for this conversation.");
+        }
+
+        if (ticket.CurrentOwnerEmployeeId is not null)
+        {
+            return (false, "Not closed: a person owns the ticket.");
+        }
+
+        if (interaction.HandledByUserId is not null || NullIfBlank(request.Routing?.AgentId) is not null)
+        {
+            return (false, "Not closed: a human agent is handling this conversation.");
+        }
+
+        if (await CustomerInactivityScope.IsCallCenterTicketAsync(ticket, departmentRepository, cancellationToken))
+        {
+            return (false, "Not closed: Call Center tickets are managed by people and are never closed by the AI.");
+        }
+
+        if (ticket.TicketStatus is not (TicketStatus.Open or TicketStatus.InProgress or TicketStatus.PendingCustomer))
+        {
+            return (false, $"Not closed: the ticket is {ticket.TicketStatus}.");
+        }
+
+        var result = await lifecycleAppService.CloseForAiCompletionAsync(
+            callerEmployeeId, ticket.TicketId, ClosedByAiReason, $"ConversationId={interaction.GenesysConversationId}",
+            beforeCommit: _ =>
+            {
+                // The conversation is over: neither inactivity clock may fire for it.
+                interaction.StopTrackingCustomerInteraction();
+                interaction.CancelAwaitingCustomerReply();
+            },
+            cancellationToken);
+
+        return result.Outcome switch
+        {
+            TicketMutationOutcome.Success => (true, null),
+            TicketMutationOutcome.TicketClosed => (false, "Not closed: the ticket is already closed; it was left as it is."),
+            TicketMutationOutcome.ConcurrencyConflict => (false, "Not closed: the ticket changed at the same moment. Send closedByAi again."),
+            _ => (false, "Not closed: the ticket is not in a state the AI may close.")
+        };
+    }
+
+    private DateTime? InactivityDeadline(TicketInteraction interaction)
+    {
+        var deadlines = new List<DateTime>(2);
+        if (interaction.LastCustomerInteractionAtUtc is { } last && options.CustomerInactivityTimeout is { } timeout)
+        {
+            deadlines.Add(last + timeout);
+        }
+        else if (interaction.AwaitingCustomerReplySinceUtc is { } since && options.AwaitingReplyTimeout is { } awaitingTimeout)
+        {
+            deadlines.Add(since + awaitingTimeout);
+        }
+
+        return deadlines.Count == 0 ? null : deadlines.Min();
+    }
+
+    /// <summary>
+    /// The customer did something (<c>customerActive: true</c>, or <c>awaitingCustomerReply: false</c> — "the customer replied"): restart
+    /// the Website/Chatbot inactivity clock from now. Recorded only for a live Website/Chatbot conversation whose ticket is still open
+    /// and not human-managed; otherwise it is a no-op. A repeat inside the same instant changes nothing.
+    /// </summary>
+    private async Task ApplyCustomerActivityAsync(
+        Guid callerEmployeeId, Ticket ticket, TicketInteraction interaction, GenesysTicketUpdateDto request, CancellationToken cancellationToken)
+    {
+        if (request.CustomerActive != true && request.AwaitingCustomerReply != false)
+        {
+            return;
+        }
+
+        if (!interaction.IsWebsiteOrChatbotConversation
+            || ticket.TicketStatus is TicketStatus.Closed or TicketStatus.Resolved
+            || ticket.CurrentOwnerEmployeeId is not null
+            || await CustomerInactivityScope.IsCallCenterTicketAsync(ticket, departmentRepository, cancellationToken))
+        {
+            return;
+        }
+
+        if (interaction.RecordCustomerInteraction(timeProvider.GetUtcNow().UtcDateTime, callerEmployeeId))
+        {
+            await unitOfWork.SaveChangesAsync(cancellationToken);
+        }
+    }
 
     /// <summary>
     /// The chatbot inactivity timer's only writer on the request path.
@@ -363,6 +480,12 @@ public sealed class GenesysTicketUpdateAppService(
 
         string? note = null;
         var start = false;
+
+        if (humanFollowUp && interaction.StopTrackingCustomerInteraction())
+        {
+            // A human is requested or pending: the conversation is no longer the bot's to close for silence.
+            await unitOfWork.SaveChangesAsync(cancellationToken);
+        }
 
         if (humanFollowUp)
         {

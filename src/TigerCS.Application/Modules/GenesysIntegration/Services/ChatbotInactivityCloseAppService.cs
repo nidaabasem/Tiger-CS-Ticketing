@@ -1,5 +1,6 @@
 using TigerCS.Application.Abstractions;
 using TigerCS.Application.Modules.GenesysIntegration.Abstractions;
+using TigerCS.Application.Modules.IdentityAndAccess.Abstractions;
 using TigerCS.Application.Modules.Ticketing.Abstractions;
 using TigerCS.Application.Modules.Ticketing.Dto;
 using TigerCS.Application.Modules.Ticketing.Services;
@@ -24,6 +25,19 @@ public enum ChatbotInactivityCloseOutcome
 }
 
 /// <summary>
+/// <b>Two rules, never both on one ticket.</b>
+/// <list type="bullet">
+/// <item><b>Website/Chatbot (current):</b> a ticket whose Genesys chat conversation is tracked
+/// (<see cref="TicketInteraction.LastCustomerInteractionAtUtc"/>) closes when the customer has done nothing for more than
+/// <see cref="GenesysOptions.CustomerInactivityTimeout"/> (default 10 minutes) <i>since their last interaction</i> — never since
+/// ticket creation. Each customer message restarts it. Reason: <see cref="CustomerInactiveReasonFor"/>.</item>
+/// <item><b>Bot-prompt (original):</b> for everything that rule does not track (voice, Call Center, rows from before it), the
+/// chatbot waited more than <see cref="GenesysOptions.AwaitingReplyTimeout"/> (5) for an answer. Unchanged.</item>
+/// </list>
+/// Call Center tickets (originating or current department) and human-managed tickets (owner, handler, open handoff) are never closed by the
+/// first rule; a candidate found to be out of scope simply stops being tracked. A ticket already closed — e.g. by document delivery — is
+/// never touched again.
+///
 /// Closes a ticket whose chatbot has been waiting on the customer for longer
 /// than the configured time (<see cref="GenesysOptions.CustomerInactivityTimeout"/>,
 /// default 5 minutes). Driven by a recurring server-side job — never by a
@@ -68,6 +82,7 @@ public sealed class ChatbotInactivityCloseAppService(
     IGenesysConversationRepository conversationRepository,
     ITicketRepository ticketRepository,
     ITicketAgentHandoffRepository handoffRepository,
+    IDepartmentRepository departmentRepository,
     TicketLifecycleAppService lifecycleAppService,
     ITicketingUnitOfWork unitOfWork,
     TimeProvider timeProvider)
@@ -79,21 +94,36 @@ public sealed class ChatbotInactivityCloseAppService(
     public static string ReasonFor(int timeoutMinutes) =>
         $"Automatically closed — customer did not respond for more than {timeoutMinutes} minutes.";
 
-    /// <summary>Ids of interactions whose timer is already past the timeout — candidates only; each is re-checked by <see cref="TryCloseAsync"/>.</summary>
+    /// <summary>The closure reason of the Website/Chatbot rule, with the configured minutes (10 by default).</summary>
+    public static string CustomerInactiveReasonFor(int timeoutMinutes) =>
+        $"Automatically closed — customer inactive for more than {timeoutMinutes} minutes.";
+
+    /// <summary>Ids of interactions past either timeout — candidates only; each is re-checked by <see cref="TryCloseAsync"/>.</summary>
     public async Task<IReadOnlyList<long>> ListDueAsync(CancellationToken cancellationToken = default)
     {
-        if (!options.Enabled || options.CustomerInactivityTimeout is not { } timeout)
+        if (!options.Enabled)
         {
             return [];
         }
 
-        var cutoff = timeProvider.GetUtcNow().UtcDateTime - timeout;
-        return await conversationRepository.ListAwaitingReplyOlderThanAsync(cutoff, BatchSize, cancellationToken);
+        var now = timeProvider.GetUtcNow().UtcDateTime;
+        var due = new List<long>();
+        if (options.CustomerInactivityTimeout is { } inactivity)
+        {
+            due.AddRange(await conversationRepository.ListCustomerInactiveOlderThanAsync(now - inactivity, BatchSize, cancellationToken));
+        }
+
+        if (options.AwaitingReplyTimeout is { } awaiting)
+        {
+            due.AddRange(await conversationRepository.ListAwaitingReplyOlderThanAsync(now - awaiting, BatchSize, cancellationToken));
+        }
+
+        return [.. due.Distinct().Take(BatchSize)];
     }
 
     public async Task<ChatbotInactivityCloseOutcome> TryCloseAsync(long ticketInteractionId, CancellationToken cancellationToken = default)
     {
-        if (!options.Enabled || options.CustomerInactivityTimeout is not { } timeout)
+        if (!options.Enabled)
         {
             return ChatbotInactivityCloseOutcome.NotDue;
         }
@@ -101,9 +131,55 @@ public sealed class ChatbotInactivityCloseAppService(
         var interaction = await conversationRepository.GetByIdAsync(ticketInteractionId, cancellationToken);
         var now = timeProvider.GetUtcNow().UtcDateTime;
 
-        // Not waiting, not yet due, ended (End clears the timer) or already
-        // closed by an earlier run: nothing to do, and nothing to write.
-        if (interaction is null || !interaction.IsInactivityTimeoutDue(now, timeout) || interaction.IsEnded)
+        // Gone, ended (End clears both clocks) or already closed by an earlier run: nothing to do, nothing to write.
+        if (interaction is null || interaction.IsEnded || interaction.InactivityClosedAtUtc is not null)
+        {
+            return ChatbotInactivityCloseOutcome.NotDue;
+        }
+
+        // A tracked conversation is governed by the customer-interaction clock ONLY; the bot-prompt clock governs the rest.
+        // (Otherwise the shorter bot-prompt rule would close a tracked chat at 5 minutes.)
+        return interaction.LastCustomerInteractionAtUtc is not null
+            ? await TryCloseForCustomerInactivityAsync(interaction, now, cancellationToken)
+            : await TryCloseForUnansweredPromptAsync(interaction, now, cancellationToken);
+    }
+
+    private async Task<ChatbotInactivityCloseOutcome> TryCloseForCustomerInactivityAsync(
+        TicketInteraction interaction, DateTime now, CancellationToken cancellationToken)
+    {
+        if (options.CustomerInactivityTimeout is not { } timeout || !interaction.IsCustomerInactive(now, timeout))
+        {
+            return ChatbotInactivityCloseOutcome.NotDue;
+        }
+
+        var reporter = interaction.LastCustomerInteractionReportedByEmployeeId;
+        var ticket = await ticketRepository.GetByIdAsync(interaction.TicketId, cancellationToken);
+
+        var excluded = reporter is null
+            || ticket is null
+            || !interaction.IsWebsiteOrChatbotConversation
+            || interaction.HandledByUserId is not null
+            || ticket.TicketStatus is not (TicketStatus.Open or TicketStatus.InProgress or TicketStatus.PendingCustomer)
+            || ticket.CurrentOwnerEmployeeId is not null
+            || await CustomerInactivityScope.IsCallCenterTicketAsync(ticket!, departmentRepository, cancellationToken)
+            || await handoffRepository.GetOpenByInteractionIdAsync(interaction.TicketInteractionId, cancellationToken) is not null;
+
+        if (excluded)
+        {
+            // Out of scope (closed, human-managed, Call Center): stop tracking so it is not re-examined every run.
+            // A later customer interaction starts the clock again if it is back in scope.
+            interaction.StopTrackingCustomerInteraction();
+            return await SaveExcludedAsync(cancellationToken);
+        }
+
+        return await CloseAsync(
+            interaction, ticket!, reporter!.Value, CustomerInactiveReasonFor((int)timeout.TotalMinutes), cancellationToken);
+    }
+
+    private async Task<ChatbotInactivityCloseOutcome> TryCloseForUnansweredPromptAsync(
+        TicketInteraction interaction, DateTime now, CancellationToken cancellationToken)
+    {
+        if (options.AwaitingReplyTimeout is not { } timeout || !interaction.IsInactivityTimeoutDue(now, timeout))
         {
             return ChatbotInactivityCloseOutcome.NotDue;
         }
@@ -123,13 +199,17 @@ public sealed class ChatbotInactivityCloseAppService(
             return await CancelTimerAsync(interaction, cancellationToken);
         }
 
-        var reason = ReasonFor((int)timeout.TotalMinutes);
+        return await CloseAsync(interaction, ticket!, reporter!.Value, ReasonFor((int)timeout.TotalMinutes), cancellationToken);
+    }
 
+    private async Task<ChatbotInactivityCloseOutcome> CloseAsync(
+        TicketInteraction interaction, Ticket ticket, Guid reporter, string reason, CancellationToken cancellationToken)
+    {
         TicketMutationResult result;
         try
         {
             result = await lifecycleAppService.CloseForCustomerInactivityAsync(
-                reporter!.Value, ticket!.TicketId, reason,
+                reporter, ticket.TicketId, reason,
                 beforeCommit: closedAtUtc => interaction.RecordInactivityClosure(closedAtUtc),
                 cancellationToken);
         }
@@ -145,6 +225,20 @@ public sealed class ChatbotInactivityCloseAppService(
             // Closed meanwhile / not eligible: the same exclusion as above.
             _ => await CancelTimerAsync(interaction, cancellationToken)
         };
+    }
+
+    private async Task<ChatbotInactivityCloseOutcome> SaveExcludedAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            await unitOfWork.SaveChangesAsync(cancellationToken);
+        }
+        catch (TicketConcurrentlyModifiedException)
+        {
+            return ChatbotInactivityCloseOutcome.LostRace;
+        }
+
+        return ChatbotInactivityCloseOutcome.Excluded;
     }
 
     private async Task<ChatbotInactivityCloseOutcome> CancelTimerAsync(

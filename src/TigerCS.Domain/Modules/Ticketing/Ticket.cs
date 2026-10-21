@@ -830,6 +830,66 @@ public class Ticket
         return previous;
     }
 
+    /// <summary>
+    /// Call Center tickets are worked from the moment they exist: a ticket that originates in the Call Center department starts
+    /// <see cref="TicketStatus.InProgress"/> instead of <see cref="TicketStatus.Open"/>. Creation-time only — a persisted
+    /// ticket moves through <see cref="ChangeStatus"/>, which still demands an owner for Open→InProgress. Leaves
+    /// <see cref="OriginatingDepartmentId"/> (write-once) and every other field untouched.
+    /// </summary>
+    public void StartInProgressAtCreation()
+    {
+        if (TicketId != 0 || TicketStatus != TicketStatus.Open)
+        {
+            throw new InvalidTicketStatusTransitionException(TicketId, TicketStatus, TicketStatus.InProgress);
+        }
+
+        TicketStatus = TicketStatus.InProgress;
+    }
+
+    /// <summary>
+    /// Document-delivery closure (Genesys chatbot / voicebot): the document workflow reached its end, so the ticket goes
+    /// Resolved → Closed in one step with the given <paramref name="outcome"/> — <see cref="ResolutionOutcomeValue.Resolved"/>
+    /// when the document was sent, <see cref="ResolutionOutcomeValue.Cancelled"/> when it could not be delivered (never "Resolved":
+    /// nothing was fixed). Returns the status held before so the caller writes the history rows. A human owner does not block it:
+    /// the request that ends the workflow is the customer's own document request, not an inactivity guess.
+    /// </summary>
+    public TicketStatus CloseForDocumentDelivery(ResolutionOutcomeValue outcome)
+    {
+        EnsureNotClosed();
+
+        if (outcome is not (ResolutionOutcomeValue.Resolved or ResolutionOutcomeValue.Cancelled)
+            || TicketStatus is not (TicketStatus.Open or TicketStatus.InProgress or TicketStatus.PendingCustomer))
+        {
+            throw new TicketNotEligibleForResolutionException(TicketId, TicketStatus);
+        }
+
+        var previous = TicketStatus;
+        TicketStatus = TicketStatus.Resolved;
+        ResolutionOutcome = (byte)outcome;
+        DuplicateOfTicketId = null;
+        TicketStatus = TicketStatus.Closed;
+        return previous;
+    }
+
+    /// <summary>
+    /// Genesys AI completion: the virtual agent finished the conversation (<c>closedByAi</c>), so the ticket goes Resolved → Closed in one
+    /// step with outcome <see cref="ResolutionOutcomeValue.Resolved"/>. Refused for a ticket a person owns
+    /// (<see cref="TicketNotEligibleForResolutionException"/>) — a human has taken it, so the AI cannot close it — and for one already closed.
+    /// Returns the status held before so the caller writes the history rows.
+    /// </summary>
+    public TicketStatus CloseForAiCompletion()
+    {
+        EnsureNotClosed();
+
+        if (TicketStatus is not (TicketStatus.Open or TicketStatus.InProgress or TicketStatus.PendingCustomer)
+            || CurrentOwnerEmployeeId is not null)
+        {
+            throw new TicketNotEligibleForResolutionException(TicketId, TicketStatus);
+        }
+
+        return CloseForDocumentDelivery(ResolutionOutcomeValue.Resolved);
+    }
+
     /// <summary>MVP-API-Contracts.md §3.10 — the final, CS-layer-only close, distinct from Resolve. Requires a current TicketResolutions row (enforced by the caller — this method only enforces the TicketStatus precondition).</summary>
     public void Close()
     {

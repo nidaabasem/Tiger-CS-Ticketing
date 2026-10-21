@@ -96,5 +96,70 @@ public sealed class InteractionTimerConcurrencyTests : IDisposable
         Assert.Empty(await new GenesysConversationRepository(query).ListAwaitingReplyOlderThanAsync(now.AddMinutes(-5), 10));
     }
 
+    private long SeedTracked(DateTime lastInteraction, bool ended = false, bool closed = false)
+    {
+        using var context = _db.CreateContext();
+        var ticket = _db.AddTicket(context, _db.CustomerServiceId);
+        context.SaveChanges();
+        var interaction = TicketInteraction.CreateFromGenesys(
+            ticket.TicketId, channelId: 7, "+971500000001", $"conv-{Guid.NewGuid():N}", null, null, null, null, null, null, null,
+            lastInteraction, isOriginatingInteraction: true);
+        interaction.StartTrackingCustomerInteraction(lastInteraction, _db.CsAgentId);
+        if (ended)
+        {
+            interaction.End(lastInteraction.AddMinutes(1), "CustomerDisconnect");
+        }
+
+        if (closed)
+        {
+            interaction.RecordInactivityClosure(lastInteraction.AddMinutes(11));
+        }
+
+        context.TicketInteractions.Add(interaction);
+        context.SaveChanges();
+        return interaction.TicketInteractionId;
+    }
+
+    [Fact]
+    public async Task CustomerInactiveQuery_ReturnsOnlyLiveTrackedConversationsPastTheCutoff()
+    {
+        var now = DashboardSqliteFixture.Now;
+        var stale = SeedTracked(now.AddMinutes(-30));
+        SeedTracked(now.AddMinutes(-3));                 // active: inside the window
+        SeedTracked(now.AddMinutes(-30), ended: true);   // ended: never a candidate
+        SeedTracked(now.AddMinutes(-30), closed: true);  // already closed: never a candidate
+
+        await using var context = _db.CreateContext();
+        var due = await new GenesysConversationRepository(context).ListCustomerInactiveOlderThanAsync(now.AddMinutes(-10), 10);
+
+        Assert.Equal([stale], due);
+    }
+
+    [Fact]
+    public async Task CustomerMessageCommittingFirst_MakesTheInactivityClosureFail()
+    {
+        var now = DashboardSqliteFixture.Now;
+        var interactionId = SeedTracked(now.AddMinutes(-30));
+
+        await using var jobContext = _db.CreateContext();
+        var jobInteraction = await new GenesysConversationRepository(jobContext).GetByIdAsync(interactionId);
+        Assert.True(jobInteraction!.IsCustomerInactive(now, TimeSpan.FromMinutes(10)));
+
+        await using (var messageContext = _db.CreateContext())
+        {
+            var messaged = await new GenesysConversationRepository(messageContext).GetByIdAsync(interactionId);
+            Assert.True(messaged!.RecordCustomerInteraction(now, _db.CsAgentId));
+            await messageContext.SaveChangesAsync();
+        }
+
+        jobInteraction.RecordInactivityClosure(now);
+        await Assert.ThrowsAsync<TicketConcurrentlyModifiedException>(() => new TicketingUnitOfWork(jobContext).SaveChangesAsync());
+
+        await using var verify = _db.CreateContext();
+        var stored = await verify.TicketInteractions.AsNoTracking().SingleAsync(i => i.TicketInteractionId == interactionId);
+        Assert.Null(stored.InactivityClosedAtUtc);
+        Assert.Equal(now, stored.LastCustomerInteractionAtUtc);
+    }
+
     public void Dispose() => _db.Dispose();
 }

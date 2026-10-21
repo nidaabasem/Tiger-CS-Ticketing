@@ -867,6 +867,151 @@ public sealed class TicketLifecycleAppService(
     }
 
     /// <summary>
+    /// Closes the ticket behind a Genesys document request once its delivery workflow has ended: Resolved → Closed in one
+    /// transaction, as a system action by the integration account. A delivered document closes as <see cref="ResolutionOutcome.Resolved"/>
+    /// (customer is told it was resolved and closed); a failed one as <see cref="ResolutionOutcome.Cancelled"/> with the distinct
+    /// failure <paramref name="reason"/> (only <c>TicketClosed</c> is sent — "resolved" would be false). The reason and the
+    /// delivery <paramref name="detail"/> (document type, code, timestamp) are written to the status history and the audit entry.
+    /// A ticket that is already Closed (or not closable) is a no-op: nothing is written twice.
+    /// </summary>
+    public Task<TicketMutationResult> CloseForDocumentDeliveryAsync(
+        Guid integrationEmployeeId,
+        long ticketId,
+        ResolutionOutcome outcome,
+        string reason,
+        string detail,
+        CancellationToken cancellationToken = default) =>
+        CloseBySystemAsync(
+            integrationEmployeeId, ticketId, outcome, reason, detail, "AutoCloseDocumentDelivery",
+            ticket => ticket.CloseForDocumentDelivery(outcome), beforeCommit: null, cancellationToken);
+
+    /// <summary>
+    /// Closes the ticket when the Genesys AI reports it finished the conversation: the same Resolved → Closed system closure as document
+    /// delivery, outcome Resolved, with the exact <paramref name="reason"/> the caller supplies ("Closed by AI"). A ticket a person owns, or
+    /// one already closed (by anyone, for any reason), is left exactly as it is — nothing is overwritten or written twice.
+    /// <paramref name="beforeCommit"/> runs before the single SaveChanges so the caller's own change commits or rolls back with the closure.
+    /// </summary>
+    public Task<TicketMutationResult> CloseForAiCompletionAsync(
+        Guid integrationEmployeeId,
+        long ticketId,
+        string reason,
+        string detail,
+        Action<DateTime>? beforeCommit = null,
+        CancellationToken cancellationToken = default) =>
+        CloseBySystemAsync(
+            integrationEmployeeId, ticketId, ResolutionOutcome.Resolved, reason, detail, "AutoCloseByAi",
+            ticket => ticket.CloseForAiCompletion(), beforeCommit, cancellationToken);
+
+    private async Task<TicketMutationResult> CloseBySystemAsync(
+        Guid integrationEmployeeId,
+        long ticketId,
+        ResolutionOutcome outcome,
+        string reason,
+        string detail,
+        string auditAction,
+        Func<Ticket, TicketStatus> close,
+        Action<DateTime>? beforeCommit,
+        CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(reason);
+
+        var ticket = await ticketRepository.GetByIdAsync(ticketId, cancellationToken);
+        if (ticket is null)
+        {
+            return TicketMutationResult.Failure(TicketMutationOutcome.NotFound);
+        }
+
+        if (ticket.TicketStatus == TicketStatus.Closed)
+        {
+            return TicketMutationResult.Failure(TicketMutationOutcome.TicketClosed);
+        }
+
+        var now = timeProvider.GetUtcNow().UtcDateTime;
+        reason = reason.Length <= ReopenReasonMaxLength ? reason : reason[..ReopenReasonMaxLength];
+        var note = reason;
+
+        await using var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
+
+        TicketStatus oldStatus;
+        try
+        {
+            oldStatus = close(ticket);
+        }
+        catch (TicketClosedException)
+        {
+            return TicketMutationResult.Failure(TicketMutationOutcome.TicketClosed);
+        }
+        catch (TicketNotEligibleForResolutionException)
+        {
+            return TicketMutationResult.Failure(TicketMutationOutcome.NotEligibleForResolution);
+        }
+
+        if (oldStatus is TicketStatus.PendingCustomer)
+        {
+            var openPending = await pendingRecordRepository.GetOpenAsync(ticketId, cancellationToken);
+            openPending?.Resume(integrationEmployeeId, now);
+        }
+
+        await ticketResolutionRepository.AddAsync(
+            new TicketResolution(ticketId, outcome, reason, reasonCode: null, duplicateOfTicketId: null, integrationEmployeeId, now),
+            cancellationToken);
+
+        var correlationId = Guid.NewGuid();
+
+        await SyncSlaPauseAsync(ticket, now, actorEmployeeId: null, correlationId, cancellationToken);
+        await statusHistoryRepository.AddAsync(
+            new TicketStatusHistory(
+                ticketId, TicketStatusDimension.TicketStatus, (byte)oldStatus, (byte)TicketStatus.Resolved,
+                actorEmployeeId: null, actorIsSystem: true, note, correlationId, now),
+            cancellationToken);
+        await statusHistoryRepository.AddAsync(
+            new TicketStatusHistory(
+                ticketId, TicketStatusDimension.ResolutionOutcome, oldValue: null, (byte)outcome,
+                actorEmployeeId: null, actorIsSystem: true, note, correlationId, now),
+            cancellationToken);
+        await statusHistoryRepository.AddAsync(
+            new TicketStatusHistory(
+                ticketId, TicketStatusDimension.TicketStatus, (byte)TicketStatus.Resolved, (byte)TicketStatus.Closed,
+                actorEmployeeId: null, actorIsSystem: true, note, correlationId, now),
+            cancellationToken);
+
+        await auditWriter.WriteAsync(
+            integrationEmployeeId, auditAction, "Ticket", ticketId.ToString(),
+            beforeValue: oldStatus.ToString(),
+            afterValue: $"{TicketStatus.Closed};ResolutionOutcome={outcome};Reason={reason};{detail};AtUtc={now:O}",
+            correlationId, cancellationToken);
+
+        if (outcome == ResolutionOutcome.Resolved)
+        {
+            await EnqueueLifecycleEventAsync(
+                OutboxEventTypes.TicketResolved, OutboxEventTypes.TicketResolvedVersion,
+                ticket, integrationEmployeeId, correlationId, now, cancellationToken);
+            foreach (var deadlineType in new[] { SlaDeadlineType.FirstResponse, SlaDeadlineType.Resolution })
+            {
+                await breachProcessor.ProcessDeadlineAsync(ticket, deadlineType, now, correlationId, cancellationToken);
+            }
+        }
+
+        await EnqueueLifecycleEventAsync(
+            OutboxEventTypes.TicketClosed, OutboxEventTypes.TicketClosedVersion,
+            ticket, integrationEmployeeId, correlationId, now, cancellationToken);
+
+        beforeCommit?.Invoke(now);
+
+        try
+        {
+            await unitOfWork.SaveChangesAsync(cancellationToken);
+        }
+        catch (Exception ex) when (ex is TicketConcurrentlyModifiedException or DuplicateWriteException)
+        {
+            return TicketMutationResult.Failure(TicketMutationOutcome.ConcurrencyConflict);
+        }
+
+        await transaction.CommitAsync(cancellationToken);
+        return TicketMutationResult.Success(TicketQueryAppService.ToDetailDto(ticket));
+    }
+
+    /// <summary>
     /// Records a customer-facing lifecycle event in the transactional Outbox
     /// (ADR-0013) — the same mechanism <c>TicketCreationAppService</c> uses
     /// for <c>TicketCreated</c>. Added to the caller's unit of work, so the

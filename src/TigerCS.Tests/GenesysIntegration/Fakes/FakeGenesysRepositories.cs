@@ -79,6 +79,16 @@ public sealed class FakeGenesysConversationRepository(FakeTicketInteractionRepos
                 .Take(batchSize)
                 .ToList());
 
+    public Task<IReadOnlyList<long>> ListCustomerInactiveOlderThanAsync(
+        DateTime cutoffUtc, int batchSize, CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyList<long>>(
+            interactions.All
+                .Where(i => i.LastCustomerInteractionAtUtc is { } last && last < cutoffUtc && i.InactivityClosedAtUtc is null && i.EndedAtUtc is null)
+                .OrderBy(i => i.LastCustomerInteractionAtUtc)
+                .Select(i => i.TicketInteractionId)
+                .Take(batchSize)
+                .ToList());
+
     public Task<IReadOnlyList<TicketInteractionMessage>> ListMessagesAsync(
         long ticketInteractionId, CancellationToken cancellationToken = default) =>
         Task.FromResult<IReadOnlyList<TicketInteractionMessage>>(

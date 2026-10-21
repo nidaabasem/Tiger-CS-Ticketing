@@ -4,6 +4,7 @@ using TigerCS.Application.Modules.IdentityAndAccess.Abstractions;
 using TigerCS.Application.Modules.Ticketing.Abstractions;
 using TigerCS.Application.Modules.Notifications;
 using TigerCS.Application.Modules.Notifications.Dto;
+using TigerCS.Application.Modules.Reporting.Services;
 using TigerCS.Application.Modules.SlaAndEscalation.Services;
 using TigerCS.Application.Modules.Ticketing.Dto;
 using TigerCS.Application.Modules.WorkflowConfiguration.Abstractions;
@@ -261,6 +262,13 @@ public sealed class TicketCreationAppService(
                     request.ManualProjectName, request.ManualUnitNumber)
             };
 
+            // Call Center tickets are worked from the start. Keyed off the department the ticket originates in (the same
+            // department it is created in, so OriginatingDepartmentId is untouched); every other department keeps Open.
+            if (string.Equals(department.Code, TeamPerformanceAppService.CallCenterDepartmentCode, StringComparison.OrdinalIgnoreCase))
+            {
+                ticket.StartInProgressAtCreation();
+            }
+
             if (requestType is not null && workflowVersion is not null)
             {
                 ticket.ClassifyRequestType(requestType.RequestTypeId);
@@ -323,6 +331,14 @@ public sealed class TicketCreationAppService(
                 customerName: genesys.CustomerName, customerEmail: genesys.CustomerEmail)
             : TicketInteraction.CreateLocal(
                 ticket.TicketId, intakeRecord.ChannelId, intakeRecord.PhoneNumber, now, isOriginatingInteraction: true);
+        // A Website/Chatbot conversation starts its "customer inactive" clock now: the customer opening it is the first interaction.
+        // Call Center tickets are outside that rule and never tracked.
+        if (originatingInteraction.IsWebsiteOrChatbotConversation
+            && !string.Equals(department.Code, TeamPerformanceAppService.CallCenterDepartmentCode, StringComparison.OrdinalIgnoreCase))
+        {
+            originatingInteraction.StartTrackingCustomerInteraction(now, callerEmployeeId);
+        }
+
         await interactionRepository.AddAsync(originatingInteraction, cancellationToken);
 
         // Workflow/Automation phase 2 — Department + Request Type resolve

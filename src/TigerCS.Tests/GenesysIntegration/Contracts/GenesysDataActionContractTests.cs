@@ -83,7 +83,7 @@ public sealed partial class GenesysDataActionContractTests
                 new CollectionsEdsmTransactionDto(null, "Formatted", null, null, null, null, null))),
             ("none", PaymentTransactions())
         ]),
-        new("10", "PATCH", "api/genesys/tickets/{ticketId}", typeof(GenesysTicketUpdateRequest), ["ticketId", "conversationId", "awaiting"], () =>
+        new("10", "PATCH", "api/genesys/tickets/{ticketId}", typeof(GenesysTicketUpdateRequest), ["ticketId", "conversationId"], () =>
         [
             ("running", Applied with { AwaitingCustomerReply = true, InactivityDeadlineUtc = new DateTime(2026, 10, 8, 10, 5, 0, DateTimeKind.Utc) }),
             ("notStarted", Applied with { AwaitingCustomerReply = false, AwaitingCustomerReplyNote = "A human follow-up is pending." })
@@ -570,7 +570,7 @@ public sealed partial class GenesysDataActionContractTests
     /// <summary>String inputs the DTO reads as a typed value (GUID, date, number), where a hostile string is rightly rejected.</summary>
     private static readonly HashSet<string> TypedStrings = new(StringComparer.Ordinal)
     {
-        "ticketId", "startedAtUtc", "endedAtUtc", "confirmedAtUtc", "verificationSessionId", "challengeId", "crmLeadId", "unitId"
+        "ticketId", "startedAtUtc", "endedAtUtc", "confirmedAtUtc", "verificationSessionId", "challengeId", "crmLeadId", "unitId", "awaiting", "closedByAi"
     };
 
     private static Dictionary<string, object?> Baseline(JsonElement schemaProperties)
@@ -585,7 +585,7 @@ public sealed partial class GenesysDataActionContractTests
                 "channel" => "Phone",
                 "startedAtUtc" or "endedAtUtc" or "confirmedAtUtc" => "2026-10-08T10:00:00Z",
                 "unitId" => 41230,
-                "awaiting" => true,
+                "awaiting" or "closedByAi" => true,
                 "companyId" => 4,
                 "type" => "Paid",
                 "customerKey" => "ext:Pact:3001",
