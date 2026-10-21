@@ -1115,9 +1115,8 @@
         </member>
         <member name="P:TigerCS.Application.Modules.Collections.CollectionsCrmOwnersOptions.EligibleLeadStatuses">
             <summary>
-            FALLBACK ONLY. A sale counts when CRM's status NAME is Sold or Contract and not cancelled (<see cref="T:TigerCS.Domain.Modules.Collections.CrmSaleEligibility"/>); these numbers
-            (<b>4 = Contract</b>, <b>8 = Sold</b>, observed in production responses, NOT verified against CRM's own LeadStatus enum) are consulted only for a row that arrives with no status
-            name. A cancelled lead is refused by name; its number is deliberately not hard-coded.
+            CRM's LeadStatus values, confirmed by the CRM owners: <b>Sold = 8</b>, <b>Contract = 9</b>; NOT eligible: <b>Approved = 4</b>, <b>Cancelled = 6</b>. A sale counts when its status NAME is Sold or
+            Contract (<see cref="T:TigerCS.Domain.Modules.Collections.CrmSaleEligibility"/>); this list is consulted only for a row that arrives with no status name. Default <c>[8, 9]</c>.
             </summary>
         </member>
         <member name="P:TigerCS.Application.Modules.Collections.CollectionsCrmOwnersOptions.BuyerCustomerType">
@@ -2115,7 +2114,7 @@
         <member name="P:TigerCS.Application.Modules.Collections.ReceivablesSnapshotOptions.AccountDirectoryComplete">
             <summary>
             Accept the unit/account directory (every unit PACT's receivables procedure returned per tenant, fully paid ones included) as COMPLETE scope evidence for the payment statement. Default false: the procedure
-            omits units without a payment plan / ledger row, and EDSM's tenant scope has not been compared with it. Switch on only after the live comparison (tools/verify_account_directory.sql). While false, a statement is shown
+            omits units without a payment plan / ledger row, and EDSM's tenant scope has not been compared with it. Switch on only once it is CONFIRMED (by PACT or a full reconciliation, not a few samples) that the source lists every unit and contract of each account. While false, a statement is shown
             only when PACT's contract list for the customer's phone proves the account.
             </summary>
         </member>
@@ -3530,7 +3529,7 @@
             <summary>The documents CRM holds of <paramref name="type"/> for this customer and lead. An empty list is a normal answer (nothing on record, or CRM 404).</summary>
             <exception cref="T:TigerCS.Application.Modules.CrmDocuments.Abstractions.CrmDocumentSourceException">CRM refused, failed, or returned something unusable.</exception>
         </member>
-        <member name="M:TigerCS.Application.Modules.CrmDocuments.Abstractions.ICrmDocumentGateway.DownloadAsync(TigerCS.Application.Modules.CrmDocuments.Abstractions.CrmDocumentRecord,System.Threading.CancellationToken)">
+        <member name="M:TigerCS.Application.Modules.CrmDocuments.Abstractions.ICrmDocumentGateway.DownloadAsync(TigerCS.Domain.Modules.CustomerVerification.CrmDocumentType,System.Int32,System.Int32,TigerCS.Application.Modules.CrmDocuments.Abstractions.CrmDocumentRecord,System.Threading.CancellationToken)">
             <summary>
             The bytes of one listed record, fetched with the server-side CRM
             credential — <see cref="P:TigerCS.Application.Modules.CrmDocuments.Abstractions.CrmDocumentRecord.FileReference"/> is a storage
@@ -3617,17 +3616,56 @@
         <member name="T:TigerCS.Application.Modules.CrmDocuments.Abstractions.IDocumentDeliveryChannelSender">
             <summary>Delivers one document copy over one channel. Only an email implementation exists; WhatsApp and SMS have none.</summary>
         </member>
+        <member name="P:TigerCS.Application.Modules.CrmDocuments.Abstractions.IDocumentDeliveryChannelSender.SendsRealMail">
+            <summary>
+            True when a <c>Sent</c> outcome from this channel means a real provider accepted the message. False for a recording /
+            stand-in adapter that reports success without contacting anyone — the agent desk then refuses to send rather than
+            show a customer-facing "accepted" that is not true.
+            </summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.CrmDocuments.Abstractions.IDocumentDeliveryChannelSender.BlockedReason">
+            <summary>
+            Non-null when this channel must refuse every delivery right now (e.g. verification test mode is enabled but invalid).
+            Checked before a request is claimed or a document fetched, so a blocked environment creates no delivery row and downloads nothing.
+            </summary>
+        </member>
         <member name="F:TigerCS.Application.Modules.CrmDocuments.Abstractions.DocumentDeliveryOutcome.TransientFailure">
             <summary>Worth retrying later (a transport hiccup).</summary>
         </member>
         <member name="F:TigerCS.Application.Modules.CrmDocuments.Abstractions.DocumentDeliveryOutcome.PermanentFailure">
             <summary>Will not work as asked (rejected address, channel switched off).</summary>
         </member>
+        <member name="T:TigerCS.Application.Modules.CrmDocuments.Abstractions.DocumentDeliveryResult">
+            <param name="Outcome">How the attempt ended.</param>
+            <param name="Code">Machine-readable reason for a failure.</param>
+            <param name="TestRedirected">True when verification test mode sent the message to the test mailbox instead of the customer's address.</param>
+        </member>
+        <member name="M:TigerCS.Application.Modules.CrmDocuments.Abstractions.DocumentDeliveryResult.#ctor(TigerCS.Application.Modules.CrmDocuments.Abstractions.DocumentDeliveryOutcome,System.String,System.Boolean)">
+            <param name="Outcome">How the attempt ended.</param>
+            <param name="Code">Machine-readable reason for a failure.</param>
+            <param name="TestRedirected">True when verification test mode sent the message to the test mailbox instead of the customer's address.</param>
+        </member>
+        <member name="P:TigerCS.Application.Modules.CrmDocuments.Abstractions.DocumentDeliveryResult.Outcome">
+            <summary>How the attempt ended.</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.CrmDocuments.Abstractions.DocumentDeliveryResult.Code">
+            <summary>Machine-readable reason for a failure.</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.CrmDocuments.Abstractions.DocumentDeliveryResult.TestRedirected">
+            <summary>True when verification test mode sent the message to the test mailbox instead of the customer's address.</summary>
+        </member>
         <member name="T:TigerCS.Application.Modules.CrmDocuments.Abstractions.ICrmDocumentDeliveryRepository">
             <summary>The repository over <see cref="T:TigerCS.Domain.Modules.CustomerVerification.CrmDocumentDeliveryRequest"/>.</summary>
         </member>
         <member name="M:TigerCS.Application.Modules.CrmDocuments.Abstractions.ICrmDocumentDeliveryRepository.FindRecentSentAsync(System.Guid,TigerCS.Domain.Modules.CustomerVerification.CrmDocumentType,System.String,TigerCS.Domain.Modules.CustomerVerification.DocumentDeliveryChannel,System.DateTime,System.Threading.CancellationToken)">
-            <summary>A request that already SENT this same record for this session and channel since <paramref name="sinceUtc"/> — the second line of duplicate defence, for a retry that arrives under a new idempotency key.</summary>
+            <summary>
+            A request that already SENT this same record for this session and channel since <paramref name="sinceUtc"/> — or that was
+            handed to the channel (<see cref="F:TigerCS.Domain.Modules.CustomerVerification.DocumentDeliveryStatus.Dispatching"/>) in that window and never recorded as failed: either
+            way the document may be in the mailbox. The second line of duplicate defence, for a retry under a new idempotency key.
+            </summary>
+        </member>
+        <member name="M:TigerCS.Application.Modules.CrmDocuments.Abstractions.ICrmDocumentDeliveryRepository.FindRecentSentForAgentAsync(System.Int32,System.Int32,TigerCS.Domain.Modules.CustomerVerification.CrmDocumentType,System.String,TigerCS.Domain.Modules.CustomerVerification.DocumentDeliveryChannel,System.DateTime,System.Threading.CancellationToken)">
+            <summary>The agent-desk counterpart of <see cref="M:TigerCS.Application.Modules.CrmDocuments.Abstractions.ICrmDocumentDeliveryRepository.FindRecentSentAsync(System.Guid,TigerCS.Domain.Modules.CustomerVerification.CrmDocumentType,System.String,TigerCS.Domain.Modules.CustomerVerification.DocumentDeliveryChannel,System.DateTime,System.Threading.CancellationToken)"/>: scoped by CRM customer + lead, never by a verification session.</summary>
         </member>
         <member name="T:TigerCS.Application.Modules.CrmDocuments.CrmDocumentOptions">
             <summary>
@@ -3648,11 +3686,32 @@
             contracts — and so is any method a caller could assert on its own.
             </summary>
         </member>
+        <member name="P:TigerCS.Application.Modules.CrmDocuments.CrmDocumentOptions.AgentSendRoles">
+            <summary>
+            Roles granted the agent desk's <b>Send to customer</b> (Customer Details → Documents). This is a separate grant from being
+            able to see the customer or open their files: a role not listed can do both of those and still cannot send. The System
+            Administrator override (ADR-0024) applies as everywhere else. Unset (null) means the shipped default
+            (<see cref="F:TigerCS.Application.Modules.CrmDocuments.CrmDocumentOptions.DefaultAgentSendRoles"/>); when configured the list <b>replaces</b> the default (the configuration binder would otherwise
+            append to it and a role could never be taken away).
+            </summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.CrmDocuments.CrmDocumentOptions.EffectiveAgentSendRoles">
+            <summary>The roles that hold the send grant, after applying the default.</summary>
+        </member>
         <member name="P:TigerCS.Application.Modules.CrmDocuments.CrmDocumentOptions.MaxAttachmentBytes">
             <summary>Largest document sent as an attachment. Bigger answers DELIVERY_FAILED/DOCUMENT_TOO_LARGE rather than risking a mailbox rejection.</summary>
         </member>
         <member name="P:TigerCS.Application.Modules.CrmDocuments.CrmDocumentOptions.InProgressStaleAfterMinutes">
             <summary>An unfinished send older than this is treated as abandoned and may be retaken by a retry.</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.CrmDocuments.CrmDocumentOptions.PostSendSaveAttempts">
+            <summary>
+            How many times the "Sent" record is saved after the provider has accepted the email. The email cannot be taken back, so the save
+            is retried rather than abandoned; if every attempt fails the request is left <c>Dispatching</c> and answers "unconfirmed".
+            </summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.CrmDocuments.CrmDocumentOptions.PostSendSaveRetryDelayMilliseconds">
+            <summary>Pause before the n-th retry of that save is n × this many milliseconds.</summary>
         </member>
         <member name="P:TigerCS.Application.Modules.CrmDocuments.CrmDocumentOptions.DuplicateSuppressionMinutes">
             <summary>The same document, session and channel is not sent again within this window even under a new idempotency key.</summary>
@@ -3788,6 +3847,12 @@
         <member name="F:TigerCS.Application.Modules.CrmDocuments.Dto.CrmDocumentCopyStatus.Queued">
             <summary>An identical request is already being processed; nothing new was sent. Ask again with the same key.</summary>
         </member>
+        <member name="F:TigerCS.Application.Modules.CrmDocuments.Dto.CrmDocumentCopyStatus.DeliveryUnconfirmed">
+            <summary>
+            The document was handed to the email provider (or may have been) but TigerCS could not record the outcome. It may already be in the
+            customer's mailbox: nothing is sent again, under this key or a new one inside the duplicate window. Not an error to retry.
+            </summary>
+        </member>
         <member name="F:TigerCS.Application.Modules.CrmDocuments.Dto.CrmDocumentCopyStatus.SelectionRequired">
             <summary>More than one record matches; <c>choices</c> lists them. Nothing was sent.</summary>
         </member>
@@ -3796,6 +3861,9 @@
         </member>
         <member name="F:TigerCS.Application.Modules.CrmDocuments.Dto.CrmDocumentCopyStatus.DeliveryFailed">
             <summary>The document was found but could not be delivered.</summary>
+        </member>
+        <member name="F:TigerCS.Application.Modules.CrmDocuments.Dto.CrmDocumentCopyStatus.NotPermitted">
+            <summary>Agent desk only: the signed-in agent holds no document-send permission (<c>CrmDocuments:AgentSendRoles</c>). Nothing was fetched or sent.</summary>
         </member>
         <member name="T:TigerCS.Application.Modules.CrmDocuments.Dto.CrmDocumentChoice">
             <summary>
@@ -3826,6 +3894,12 @@
         <member name="T:TigerCS.Application.Modules.CrmDocuments.Dto.CrmDocumentCodes">
             <summary>Machine-readable codes carried in <see cref="P:TigerCS.Application.Modules.CrmDocuments.Dto.CrmDocumentCopyResult.Code"/>.</summary>
         </member>
+        <member name="F:TigerCS.Application.Modules.CrmDocuments.Dto.CrmDocumentCodes.DeliveryUnconfirmed">
+            <summary>The document may have been delivered but the outcome was not recorded (see <see cref="F:TigerCS.Application.Modules.CrmDocuments.Dto.CrmDocumentCopyStatus.DeliveryUnconfirmed"/>).</summary>
+        </member>
+        <member name="F:TigerCS.Application.Modules.CrmDocuments.Dto.CrmDocumentCodes.DeliveryStateUnavailable">
+            <summary>The database could not record that the send was starting, so nothing was sent.</summary>
+        </member>
         <member name="F:TigerCS.Application.Modules.CrmDocuments.Dto.CrmDocumentCodes.CrmRequestRejected">
             <summary>CRM answered 400 to GetCustomerDocuments.</summary>
         </member>
@@ -3840,6 +3914,148 @@
         </member>
         <member name="F:TigerCS.Application.Modules.CrmDocuments.Dto.CrmDocumentCodes.CrmCustomerNotResolved">
             <summary>The verified contact cannot be resolved to exactly one CRM buyer (no phone on record, not a buyer, or ambiguous).</summary>
+        </member>
+        <member name="F:TigerCS.Application.Modules.CrmDocuments.Dto.CrmDocumentCodes.EmailTransportNotReal">
+            <summary>The configured mail provider only records messages (no real SMTP); nothing was sent.</summary>
+        </member>
+        <member name="F:TigerCS.Application.Modules.CrmDocuments.Dto.CrmDocumentCodes.TestModeMisconfigured">
+            <summary>VerificationTesting is enabled but invalid / not allowed here; nothing was sent.</summary>
+        </member>
+        <member name="F:TigerCS.Application.Modules.CrmDocuments.Dto.CrmDocumentCodes.DocumentSendNotPermitted">
+            <summary>The agent has no document-send permission.</summary>
+        </member>
+        <member name="T:TigerCS.Application.Modules.CrmDocuments.Dto.AgentDocumentRecipient">
+            <summary>
+            Who an agent-initiated copy is for, resolved server-side from CRM (never typed by the agent). The address is CRM's.
+            </summary>
+        </member>
+        <member name="M:TigerCS.Application.Modules.CrmDocuments.Dto.AgentDocumentRecipient.#ctor(System.Int32,System.Int32,System.String,System.String,System.String)">
+            <summary>
+            Who an agent-initiated copy is for, resolved server-side from CRM (never typed by the agent). The address is CRM's.
+            </summary>
+        </member>
+        <member name="T:TigerCS.Application.Modules.CrmDocuments.Dto.CustomerDocumentsDto">
+            <summary>What the Customer Details Documents tab shows for one customer and unit.</summary>
+            <param name="Status">
+            <c>Ready</c> (documents below), <c>UnitSelectionRequired</c> (several units, none chosen — nothing is guessed),
+            <c>NoUnits</c>, <c>NotCrmCustomer</c> (documents live in Tiger CRM, so only a CRM-identified customer has any) or
+            <c>CustomerNotResolved</c> (TigerCS holds no phone that CRM resolves to this customer).
+            </param>
+            <param name="Message">Why there is nothing to show, when <paramref name="Status"/> is not <c>Ready</c>.</param>
+            <param name="Units">The customer's CRM units (the unit selector), each with the CRM lead id documents are filed under.</param>
+            <param name="SelectedLeadId">The unit the documents belong to; null until one is chosen.</param>
+            <param name="Groups">One group per document type (Reservation Form 4, Tiger Contract 5, Registration Receipt 6) — each succeeds or fails on its own.</param>
+            <param name="Send">Whether "Send to customer" can work for this unit, and the reason when it cannot.</param>
+        </member>
+        <member name="M:TigerCS.Application.Modules.CrmDocuments.Dto.CustomerDocumentsDto.#ctor(System.String,System.String,System.Collections.Generic.IReadOnlyList{TigerCS.Application.Modules.CrmDocuments.Dto.CustomerDocumentUnitDto},System.Nullable{System.Int32},System.Collections.Generic.IReadOnlyList{TigerCS.Application.Modules.CrmDocuments.Dto.CustomerDocumentGroupDto},TigerCS.Application.Modules.CrmDocuments.Dto.CustomerDocumentSendDto)">
+            <summary>What the Customer Details Documents tab shows for one customer and unit.</summary>
+            <param name="Status">
+            <c>Ready</c> (documents below), <c>UnitSelectionRequired</c> (several units, none chosen — nothing is guessed),
+            <c>NoUnits</c>, <c>NotCrmCustomer</c> (documents live in Tiger CRM, so only a CRM-identified customer has any) or
+            <c>CustomerNotResolved</c> (TigerCS holds no phone that CRM resolves to this customer).
+            </param>
+            <param name="Message">Why there is nothing to show, when <paramref name="Status"/> is not <c>Ready</c>.</param>
+            <param name="Units">The customer's CRM units (the unit selector), each with the CRM lead id documents are filed under.</param>
+            <param name="SelectedLeadId">The unit the documents belong to; null until one is chosen.</param>
+            <param name="Groups">One group per document type (Reservation Form 4, Tiger Contract 5, Registration Receipt 6) — each succeeds or fails on its own.</param>
+            <param name="Send">Whether "Send to customer" can work for this unit, and the reason when it cannot.</param>
+        </member>
+        <member name="P:TigerCS.Application.Modules.CrmDocuments.Dto.CustomerDocumentsDto.Status">
+            <summary>
+            <c>Ready</c> (documents below), <c>UnitSelectionRequired</c> (several units, none chosen — nothing is guessed),
+            <c>NoUnits</c>, <c>NotCrmCustomer</c> (documents live in Tiger CRM, so only a CRM-identified customer has any) or
+            <c>CustomerNotResolved</c> (TigerCS holds no phone that CRM resolves to this customer).
+            </summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.CrmDocuments.Dto.CustomerDocumentsDto.Message">
+            <summary>Why there is nothing to show, when <paramref name="Status"/> is not <c>Ready</c>.</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.CrmDocuments.Dto.CustomerDocumentsDto.Units">
+            <summary>The customer's CRM units (the unit selector), each with the CRM lead id documents are filed under.</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.CrmDocuments.Dto.CustomerDocumentsDto.SelectedLeadId">
+            <summary>The unit the documents belong to; null until one is chosen.</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.CrmDocuments.Dto.CustomerDocumentsDto.Groups">
+            <summary>One group per document type (Reservation Form 4, Tiger Contract 5, Registration Receipt 6) — each succeeds or fails on its own.</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.CrmDocuments.Dto.CustomerDocumentsDto.Send">
+            <summary>Whether "Send to customer" can work for this unit, and the reason when it cannot.</summary>
+        </member>
+        <member name="T:TigerCS.Application.Modules.CrmDocuments.Dto.CustomerDocumentGroupDto">
+            <param name="Label">The name shown to the agent.</param>
+            <param name="DocumentType">The public type name (<c>ReservationForm</c>, <c>Contract</c>, <c>RegistrationReceipt</c>) — what the file and send routes take.</param>
+            <param name="CrmAttachmentType">CRM's attachment type number: 4, 5 or 6.</param>
+            <param name="Status"><c>Ok</c> or <c>Unavailable</c> (CRM refused or failed for this type only).</param>
+            <param name="Message">Why the type is unavailable.</param>
+            <param name="Documents">The documents CRM lists for this customer, unit and type.</param>
+        </member>
+        <member name="M:TigerCS.Application.Modules.CrmDocuments.Dto.CustomerDocumentGroupDto.#ctor(System.String,System.String,System.Int32,System.String,System.String,System.Collections.Generic.IReadOnlyList{TigerCS.Application.Modules.CrmDocuments.Dto.CustomerDocumentDto})">
+            <param name="Label">The name shown to the agent.</param>
+            <param name="DocumentType">The public type name (<c>ReservationForm</c>, <c>Contract</c>, <c>RegistrationReceipt</c>) — what the file and send routes take.</param>
+            <param name="CrmAttachmentType">CRM's attachment type number: 4, 5 or 6.</param>
+            <param name="Status"><c>Ok</c> or <c>Unavailable</c> (CRM refused or failed for this type only).</param>
+            <param name="Message">Why the type is unavailable.</param>
+            <param name="Documents">The documents CRM lists for this customer, unit and type.</param>
+        </member>
+        <member name="P:TigerCS.Application.Modules.CrmDocuments.Dto.CustomerDocumentGroupDto.DocumentType">
+            <summary>The public type name (<c>ReservationForm</c>, <c>Contract</c>, <c>RegistrationReceipt</c>) — what the file and send routes take.</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.CrmDocuments.Dto.CustomerDocumentGroupDto.Label">
+            <summary>The name shown to the agent.</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.CrmDocuments.Dto.CustomerDocumentGroupDto.CrmAttachmentType">
+            <summary>CRM's attachment type number: 4, 5 or 6.</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.CrmDocuments.Dto.CustomerDocumentGroupDto.Status">
+            <summary><c>Ok</c> or <c>Unavailable</c> (CRM refused or failed for this type only).</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.CrmDocuments.Dto.CustomerDocumentGroupDto.Message">
+            <summary>Why the type is unavailable.</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.CrmDocuments.Dto.CustomerDocumentGroupDto.Documents">
+            <summary>The documents CRM lists for this customer, unit and type.</summary>
+        </member>
+        <member name="T:TigerCS.Application.Modules.CrmDocuments.Dto.CustomerDocumentDto">
+            <param name="RecordId">CRM's attachment id. Never CRM's storage reference — files are fetched by TigerCS, not by the browser.</param>
+            <param name="Name">CRM's attachment name.</param>
+        </member>
+        <member name="M:TigerCS.Application.Modules.CrmDocuments.Dto.CustomerDocumentDto.#ctor(System.String,System.String)">
+            <param name="RecordId">CRM's attachment id. Never CRM's storage reference — files are fetched by TigerCS, not by the browser.</param>
+            <param name="Name">CRM's attachment name.</param>
+        </member>
+        <member name="P:TigerCS.Application.Modules.CrmDocuments.Dto.CustomerDocumentDto.RecordId">
+            <summary>CRM's attachment id. Never CRM's storage reference — files are fetched by TigerCS, not by the browser.</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.CrmDocuments.Dto.CustomerDocumentDto.Name">
+            <summary>CRM's attachment name.</summary>
+        </member>
+        <member name="T:TigerCS.Application.Modules.CrmDocuments.Dto.CustomerDocumentSendDto">
+            <summary>
+            Whether "Send to customer" can work right now, and if not, why. <c>MaskedDestination</c> is CRM's email for the
+            customer in masked form; the full address is never returned.
+            </summary>
+        </member>
+        <member name="M:TigerCS.Application.Modules.CrmDocuments.Dto.CustomerDocumentSendDto.#ctor(System.Boolean,System.String,System.String)">
+            <summary>
+            Whether "Send to customer" can work right now, and if not, why. <c>MaskedDestination</c> is CRM's email for the
+            customer in masked form; the full address is never returned.
+            </summary>
+        </member>
+        <member name="T:TigerCS.Application.Modules.CrmDocuments.Dto.CustomerDocumentSendRequestDto">
+            <summary>The body of the agent "Send to customer" request.</summary>
+        </member>
+        <member name="M:TigerCS.Application.Modules.CrmDocuments.Dto.CustomerDocumentSendRequestDto.#ctor(System.Nullable{System.Int32},System.String,System.String)">
+            <summary>The body of the agent "Send to customer" request.</summary>
+        </member>
+        <member name="F:TigerCS.Application.Modules.CrmDocuments.Dto.CustomerDocumentsOutcome.OwnershipMismatch">
+            <summary>The unit or record is not this customer's.</summary>
+        </member>
+        <member name="F:TigerCS.Application.Modules.CrmDocuments.Dto.CustomerDocumentsOutcome.SourceUnavailable">
+            <summary>CRM could not be reached or answered 5xx.</summary>
+        </member>
+        <member name="F:TigerCS.Application.Modules.CrmDocuments.Dto.CustomerDocumentsOutcome.SourceRejected">
+            <summary>CRM refused (400/401/403) or answered outside its contract: retrying will not fix it.</summary>
         </member>
         <member name="T:TigerCS.Application.Modules.CrmDocuments.Dto.BuyerLookupRequestDto">
             <param name="PhoneNumber">The number the customer is calling/chatting from — only the key CRM is searched by. It proves nothing; the code emailed to CRM's address does.</param>
@@ -3920,6 +4136,9 @@
             The SMS provider gave no verifiable answer (timeout / unreadable response). The SMS may have been sent, the
             challenge stays valid, and nothing is resent automatically.
             </summary>
+        </member>
+        <member name="F:TigerCS.Application.Modules.CrmDocuments.Dto.CustomerOtpStatus.TestModeMisconfigured">
+            <summary>VerificationTesting is enabled but invalid / not allowed here. Nothing was sent to anyone.</summary>
         </member>
         <member name="T:TigerCS.Application.Modules.CrmDocuments.Dto.CustomerOtpResult">
             <summary>
@@ -4141,11 +4360,163 @@
             </code>
             </remarks>
         </member>
-        <member name="M:TigerCS.Application.Modules.CrmDocuments.Services.CrmDocumentCopyAppService.ReplayOrNull(TigerCS.Domain.Modules.CustomerVerification.CrmDocumentDeliveryRequest,System.Guid,TigerCS.Domain.Modules.CustomerVerification.CrmDocumentType,System.String,TigerCS.Domain.Modules.CustomerVerification.DocumentDeliveryChannel,System.DateTime,System.TimeSpan)">
+        <member name="M:TigerCS.Application.Modules.CrmDocuments.Services.CrmDocumentCopyAppService.SendToCustomerAsync(System.Guid,TigerCS.Application.Modules.CrmDocuments.Dto.AgentDocumentRecipient,TigerCS.Domain.Modules.CustomerVerification.CrmDocumentType,System.String,System.String,System.Threading.CancellationToken)">
+             <summary>
+             The agent desk's "Send to customer": the same delivery core as the chatbot (record chosen only from CRM's own
+             listing for this customer and lead, idempotency claim, server-side download, one email attachment to CRM's address
+             for the customer, audit) — but the proof of who the customer is comes from the signed-in agent's access to that
+             customer, established by <see cref="T:TigerCS.Application.Modules.CrmDocuments.Services.CustomerDocumentsAppService"/>, instead of a customer OTP.
+            
+             <para>
+             The agent cannot choose the destination: it is CRM's email for the customer. The delivery record is explicit about its
+             origin (<see cref="F:TigerCS.Domain.Modules.CustomerVerification.DocumentDeliveryOrigin.AgentDesk"/>): it carries the CRM customer and lead, and its verification
+             session reference stays null — nothing is invented to fill a column meant for a real session. The idempotency key,
+             the replay rules and the 15-minute "same document already sent" suppression all work on that customer + lead scope.
+             </para>
+             </summary>
+             <remarks>The caller MUST have established that <paramref name="recipient"/> is a customer/lead the agent may act for.</remarks>
+        </member>
+        <member name="T:TigerCS.Application.Modules.CrmDocuments.Services.CrmDocumentCopyAppService.DeliveryScope">
+            <summary>What idempotency and duplicate checks are scoped to: a real verification session (Genesys), or the agent's CRM customer + lead.</summary>
+            <param name="SessionId">The real verification session; null for the agent desk.</param>
+            <param name="CustomerId">The CRM customer (agent desk only).</param>
+            <param name="LeadId">The CRM lead / unit (agent desk only).</param>
+        </member>
+        <member name="M:TigerCS.Application.Modules.CrmDocuments.Services.CrmDocumentCopyAppService.DeliveryScope.#ctor(System.Nullable{System.Guid},System.Nullable{System.Int32},System.Nullable{System.Int32})">
+            <summary>What idempotency and duplicate checks are scoped to: a real verification session (Genesys), or the agent's CRM customer + lead.</summary>
+            <param name="SessionId">The real verification session; null for the agent desk.</param>
+            <param name="CustomerId">The CRM customer (agent desk only).</param>
+            <param name="LeadId">The CRM lead / unit (agent desk only).</param>
+        </member>
+        <member name="P:TigerCS.Application.Modules.CrmDocuments.Services.CrmDocumentCopyAppService.DeliveryScope.SessionId">
+            <summary>The real verification session; null for the agent desk.</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.CrmDocuments.Services.CrmDocumentCopyAppService.DeliveryScope.CustomerId">
+            <summary>The CRM customer (agent desk only).</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.CrmDocuments.Services.CrmDocumentCopyAppService.DeliveryScope.LeadId">
+            <summary>The CRM lead / unit (agent desk only).</summary>
+        </member>
+        <member name="M:TigerCS.Application.Modules.CrmDocuments.Services.CrmDocumentCopyAppService.DeliveryScope.FingerprintOf(TigerCS.Domain.Modules.CustomerVerification.CrmDocumentType,System.String,TigerCS.Domain.Modules.CustomerVerification.DocumentDeliveryChannel)">
+            <summary>Genesys keeps its historical fingerprint (session-based); the agent desk's is customer + lead based.</summary>
+        </member>
+        <member name="T:TigerCS.Application.Modules.CrmDocuments.Services.CrmDocumentCopyAppService.DeliveryTarget">
+            <summary>
+            Where a document copy goes and what it is about, once ownership has been established by whichever door the
+            request came through (a verified chatbot session, or a signed-in agent on a customer the agent may see).
+            </summary>
+            <param name="Scope">The idempotency / duplicate scope.</param>
+            <param name="CustomerId">CRM's customer id.</param>
+            <param name="LeadId">CRM's lead id: the unit.</param>
+            <param name="UnitNumber">Shown in a selection list.</param>
+            <param name="DisplayName">The greeting name.</param>
+            <param name="Email">CRM's email for this customer — never anything the caller supplied.</param>
+            <param name="AuditContext">Written into the audit entry: which proof the send rode on.</param>
+        </member>
+        <member name="M:TigerCS.Application.Modules.CrmDocuments.Services.CrmDocumentCopyAppService.DeliveryTarget.#ctor(TigerCS.Application.Modules.CrmDocuments.Services.CrmDocumentCopyAppService.DeliveryScope,System.Int32,System.Int32,System.String,System.String,System.String,System.String)">
+            <summary>
+            Where a document copy goes and what it is about, once ownership has been established by whichever door the
+            request came through (a verified chatbot session, or a signed-in agent on a customer the agent may see).
+            </summary>
+            <param name="Scope">The idempotency / duplicate scope.</param>
+            <param name="CustomerId">CRM's customer id.</param>
+            <param name="LeadId">CRM's lead id: the unit.</param>
+            <param name="UnitNumber">Shown in a selection list.</param>
+            <param name="DisplayName">The greeting name.</param>
+            <param name="Email">CRM's email for this customer — never anything the caller supplied.</param>
+            <param name="AuditContext">Written into the audit entry: which proof the send rode on.</param>
+        </member>
+        <member name="P:TigerCS.Application.Modules.CrmDocuments.Services.CrmDocumentCopyAppService.DeliveryTarget.Scope">
+            <summary>The idempotency / duplicate scope.</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.CrmDocuments.Services.CrmDocumentCopyAppService.DeliveryTarget.CustomerId">
+            <summary>CRM's customer id.</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.CrmDocuments.Services.CrmDocumentCopyAppService.DeliveryTarget.LeadId">
+            <summary>CRM's lead id: the unit.</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.CrmDocuments.Services.CrmDocumentCopyAppService.DeliveryTarget.UnitNumber">
+            <summary>Shown in a selection list.</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.CrmDocuments.Services.CrmDocumentCopyAppService.DeliveryTarget.Email">
+            <summary>CRM's email for this customer — never anything the caller supplied.</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.CrmDocuments.Services.CrmDocumentCopyAppService.DeliveryTarget.DisplayName">
+            <summary>The greeting name.</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.CrmDocuments.Services.CrmDocumentCopyAppService.DeliveryTarget.AuditContext">
+            <summary>Written into the audit entry: which proof the send rode on.</summary>
+        </member>
+        <member name="M:TigerCS.Application.Modules.CrmDocuments.Services.CrmDocumentCopyAppService.DeliverAsync(System.Guid,System.String,TigerCS.Domain.Modules.CustomerVerification.CrmDocumentType,System.String,TigerCS.Domain.Modules.CustomerVerification.DocumentDeliveryChannel,TigerCS.Domain.Modules.CustomerVerification.CrmDocumentDeliveryRequest,System.DateTime,TigerCS.Application.Modules.CrmDocuments.Services.CrmDocumentCopyAppService.DeliveryTarget,System.Threading.CancellationToken)">
+            <summary>
+            Steps shared by every door: only a record CRM lists for this customer and lead is selected; the send is claimed
+            under the caller's idempotency key before anything is fetched; the file is fetched with the server-side CRM
+            credential; exactly one email goes out; the outcome is recorded and audited.
+            </summary>
+        </member>
+        <member name="M:TigerCS.Application.Modules.CrmDocuments.Services.CrmDocumentCopyAppService.ReplayOrNull(TigerCS.Domain.Modules.CustomerVerification.CrmDocumentDeliveryRequest,TigerCS.Application.Modules.CrmDocuments.Services.CrmDocumentCopyAppService.DeliveryScope,TigerCS.Domain.Modules.CustomerVerification.CrmDocumentType,System.String,TigerCS.Domain.Modules.CustomerVerification.DocumentDeliveryChannel,System.DateTime,System.TimeSpan)">
             <summary>The answer to a request whose key already has a row — or null when a failed/abandoned row should be retried.</summary>
+        </member>
+        <member name="M:TigerCS.Application.Modules.CrmDocuments.Services.CrmDocumentCopyAppService.RecordSentAsync(TigerCS.Domain.Modules.CustomerVerification.CrmDocumentDeliveryRequest,System.Guid,System.String)">
+            <summary>Marks the request Sent, writes its audit entry and saves — retried a bounded number of times. False when it could not be saved.</summary>
         </member>
         <member name="M:TigerCS.Application.Modules.CrmDocuments.Services.CrmDocumentCopyAppService.SourceFailure(TigerCS.Domain.Modules.CustomerVerification.CrmDocumentType,TigerCS.Application.Modules.CrmDocuments.Abstractions.CrmDocumentSourceFailure,TigerCS.Domain.Modules.CustomerVerification.CrmDocumentDeliveryRequest)">
             <summary>Each CRM failure has its own code; only the transient one is marked retryable.</summary>
+        </member>
+        <member name="T:TigerCS.Application.Modules.CrmDocuments.Services.CustomerDocumentsAppService">
+             <summary>
+             The Customer Details <b>Documents</b> tab: the customer's Reservation Form (CRM type 4), Tiger Contract (5) and
+             Registration Receipt (6) for the selected unit, the file behind each, and "Send to customer".
+            
+             <para>
+             <b>No parallel integration.</b> Documents come from the existing <see cref="T:TigerCS.Application.Modules.CrmDocuments.Abstractions.ICrmDocumentGateway"/>
+             (<c>TicketingSystem/GetCustomerDocuments</c> and the credentialed file fetch); the customer and unit from the
+             existing <see cref="T:TigerCS.Application.Modules.CustomerVerification.Services.CrmBuyerLookupAppService"/>; sending is <see cref="T:TigerCS.Application.Modules.CrmDocuments.Services.CrmDocumentCopyAppService"/> — the very
+             service behind <c>/api/genesys/documents/send-copy</c>.
+             </para>
+            
+             <para>
+             <b>Ownership, in order, on every call.</b> (1) The customer must be visible to the signed-in agent — the same
+             department-scoped check as the Customer Profile itself, so a customer key the agent cannot open yields nothing.
+             (2) It must be a CRM customer, and CRM must resolve one of the phones TigerCS holds for them to <i>that same CRM
+             customer</i>. (3) The unit (<c>crmLeadId</c>) must be one of that customer's CRM units — a lead id typed into the URL
+             is checked, never trusted. (4) A file or send names a record only if CRM has <i>just listed</i> it for that customer,
+             unit and type; CRM's storage reference never leaves the server, and the gateway refuses a listing that echoes another
+             customer or lead.
+             </para>
+             </summary>
+        </member>
+        <member name="M:TigerCS.Application.Modules.CrmDocuments.Services.CustomerDocumentsAppService.#ctor(TigerCS.Application.Modules.Ticketing.Services.CustomerDirectoryAppService,TigerCS.Application.Modules.CustomerVerification.Services.CrmBuyerLookupAppService,TigerCS.Application.Modules.CrmDocuments.Abstractions.ICrmDocumentGateway,TigerCS.Application.Modules.CrmDocuments.Services.CrmDocumentCopyAppService,System.Collections.Generic.IEnumerable{TigerCS.Application.Modules.CrmDocuments.Abstractions.IDocumentDeliveryChannelSender},TigerCS.Application.Modules.CrmDocuments.CrmDocumentOptions,TigerCS.Application.Modules.Notifications.CustomerNotificationPolicy,Microsoft.Extensions.Logging.ILogger{TigerCS.Application.Modules.CrmDocuments.Services.CustomerDocumentsAppService})">
+             <summary>
+             The Customer Details <b>Documents</b> tab: the customer's Reservation Form (CRM type 4), Tiger Contract (5) and
+             Registration Receipt (6) for the selected unit, the file behind each, and "Send to customer".
+            
+             <para>
+             <b>No parallel integration.</b> Documents come from the existing <see cref="T:TigerCS.Application.Modules.CrmDocuments.Abstractions.ICrmDocumentGateway"/>
+             (<c>TicketingSystem/GetCustomerDocuments</c> and the credentialed file fetch); the customer and unit from the
+             existing <see cref="T:TigerCS.Application.Modules.CustomerVerification.Services.CrmBuyerLookupAppService"/>; sending is <see cref="T:TigerCS.Application.Modules.CrmDocuments.Services.CrmDocumentCopyAppService"/> — the very
+             service behind <c>/api/genesys/documents/send-copy</c>.
+             </para>
+            
+             <para>
+             <b>Ownership, in order, on every call.</b> (1) The customer must be visible to the signed-in agent — the same
+             department-scoped check as the Customer Profile itself, so a customer key the agent cannot open yields nothing.
+             (2) It must be a CRM customer, and CRM must resolve one of the phones TigerCS holds for them to <i>that same CRM
+             customer</i>. (3) The unit (<c>crmLeadId</c>) must be one of that customer's CRM units — a lead id typed into the URL
+             is checked, never trusted. (4) A file or send names a record only if CRM has <i>just listed</i> it for that customer,
+             unit and type; CRM's storage reference never leaves the server, and the gateway refuses a listing that echoes another
+             customer or lead.
+             </para>
+             </summary>
+        </member>
+        <member name="F:TigerCS.Application.Modules.CrmDocuments.Services.CustomerDocumentsAppService.TabTypes">
+            <summary>The three types the tab shows, in display order.</summary>
+        </member>
+        <member name="M:TigerCS.Application.Modules.CrmDocuments.Services.CustomerDocumentsAppService.CanSend(System.Collections.Generic.IReadOnlyCollection{System.String})">
+            <summary>
+            The explicit document-send grant (<see cref="P:TigerCS.Application.Modules.CrmDocuments.CrmDocumentOptions.AgentSendRoles"/>), distinct from being able to see the
+            customer. The System Administrator override applies through <see cref="T:TigerCS.Application.Authorization.AuthorizationGate"/>, as everywhere else.
+            </summary>
         </member>
         <member name="T:TigerCS.Application.Modules.CrmDocuments.Services.CustomerOtpAppService">
              <summary>
@@ -4191,7 +4562,7 @@
              </para>
              </summary>
         </member>
-        <member name="M:TigerCS.Application.Modules.CrmDocuments.Services.CustomerOtpAppService.#ctor(TigerCS.Application.Modules.CrmDocuments.CrmDocumentOptions,TigerCS.Application.Modules.CustomerVerification.Services.CrmBuyerLookupAppService,TigerCS.Application.Modules.CrmDocuments.Services.CrmBuyerVerificationCache,TigerCS.Application.Modules.CrmDocuments.Abstractions.ICustomerOtpChallengeRepository,TigerCS.Application.Modules.CustomerVerification.Abstractions.IUnitReferenceRepository,TigerCS.Application.Modules.CustomerVerification.Abstractions.IContactReferenceRepository,TigerCS.Application.Modules.CustomerVerification.Services.VerificationSessionAppService,TigerCS.Application.Modules.CrmDocuments.Abstractions.IOtpCodeGenerator,TigerCS.Application.Modules.Notifications.Abstractions.IEmailSender,TigerCS.Application.Modules.Notifications.Abstractions.ISmsSender,TigerCS.Application.Modules.Notifications.CustomerNotificationPolicy,TigerCS.Application.Modules.CustomerVerification.Abstractions.ICustomerVerificationUnitOfWork,TigerCS.Application.Abstractions.IAuditEntryWriter,System.TimeProvider,Microsoft.Extensions.Logging.ILogger{TigerCS.Application.Modules.CrmDocuments.Services.CustomerOtpAppService})">
+        <member name="M:TigerCS.Application.Modules.CrmDocuments.Services.CustomerOtpAppService.#ctor(TigerCS.Application.Modules.CrmDocuments.CrmDocumentOptions,TigerCS.Application.Modules.CustomerVerification.Services.CrmBuyerLookupAppService,TigerCS.Application.Modules.CrmDocuments.Services.CrmBuyerVerificationCache,TigerCS.Application.Modules.CrmDocuments.Abstractions.ICustomerOtpChallengeRepository,TigerCS.Application.Modules.CustomerVerification.Abstractions.IUnitReferenceRepository,TigerCS.Application.Modules.CustomerVerification.Abstractions.IContactReferenceRepository,TigerCS.Application.Modules.CustomerVerification.Services.VerificationSessionAppService,TigerCS.Application.Modules.CrmDocuments.Abstractions.IOtpCodeGenerator,TigerCS.Application.Modules.Notifications.Abstractions.IEmailSender,TigerCS.Application.Modules.Notifications.Abstractions.ISmsSender,TigerCS.Application.Modules.Notifications.CustomerNotificationPolicy,TigerCS.Application.Modules.CrmDocuments.VerificationTestingPolicy,TigerCS.Application.Modules.CustomerVerification.Abstractions.ICustomerVerificationUnitOfWork,TigerCS.Application.Abstractions.IAuditEntryWriter,System.TimeProvider,Microsoft.Extensions.Logging.ILogger{TigerCS.Application.Modules.CrmDocuments.Services.CustomerOtpAppService})">
              <summary>
              Real customer verification for a CRM buyer reaching TigerCS through the
              chatbot: <b>look the buyer up in CRM → pick a unit → email a one-time code
@@ -4244,6 +4615,9 @@
         <member name="M:TigerCS.Application.Modules.CrmDocuments.Services.CustomerOtpAppService.VerifyAsync(System.Guid,System.Nullable{System.Guid},System.String,System.Threading.CancellationToken)">
             <summary>Step 3 — check the code; on success create the OTP-verified session, atomically with spending the challenge.</summary>
         </member>
+        <member name="M:TigerCS.Application.Modules.CrmDocuments.Services.CustomerOtpAppService.DeliveryGate">
+            <summary>Send/resend only: refuses (before any challenge is created or code generated) when test mode is on but unusable.</summary>
+        </member>
         <member name="M:TigerCS.Application.Modules.CrmDocuments.Services.CustomerOtpAppService.DeliverSmsAsync(System.String,System.String,TigerCS.Domain.Modules.CustomerVerification.CustomerOtpChallenge,System.Threading.CancellationToken)">
             <summary>
             Sends the SMS and records what is <i>known</i>. Success is reported only for a provider response the adapter verified;
@@ -4273,7 +4647,7 @@
             reports a permanent failure rather than pretending to have sent.
             </summary>
         </member>
-        <member name="M:TigerCS.Application.Modules.CrmDocuments.Services.EmailDocumentDeliveryChannelSender.#ctor(TigerCS.Application.Modules.Notifications.Abstractions.IEmailSender,TigerCS.Application.Modules.Notifications.CustomerNotificationPolicy)">
+        <member name="M:TigerCS.Application.Modules.CrmDocuments.Services.EmailDocumentDeliveryChannelSender.#ctor(TigerCS.Application.Modules.Notifications.Abstractions.IEmailSender,TigerCS.Application.Modules.Notifications.CustomerNotificationPolicy,TigerCS.Application.Modules.CrmDocuments.VerificationTestingPolicy)">
             <summary>
             The one document delivery channel that has an integration: the customer's
             own email address, over the existing <see cref="T:TigerCS.Application.Modules.Notifications.Abstractions.IEmailSender"/> (the
@@ -4282,6 +4656,100 @@
             Respects <c>EmailNotifications:Enabled</c>: with email switched off it
             reports a permanent failure rather than pretending to have sent.
             </summary>
+        </member>
+        <member name="T:TigerCS.Application.Modules.CrmDocuments.VerificationTestingOptions">
+            <summary>
+            <c>VerificationTesting</c> — the Local/UAT test mode for the Genesys OTP and document-copy flows. Real CRM customers are
+            still looked up and verified (identity, unit ownership, the challenge and the session are all untouched); only the
+            <b>outbound message</b> is redirected to the two test inboxes below, so no real customer receives a code or a document.
+            Off by default; never honoured in Production (see <see cref="T:TigerCS.Application.Modules.CrmDocuments.VerificationTestingPolicy"/>).
+            </summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.CrmDocuments.VerificationTestingOptions.SmsOverride">
+            <summary>International digits (no "+") every OTP SMS is sent to while test mode is on.</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.CrmDocuments.VerificationTestingOptions.EmailOverride">
+            <summary>Mailbox every OTP email and every document email is sent to while test mode is on.</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.CrmDocuments.VerificationTestingOptions.BlockRealCustomerDelivery">
+            <summary>Must be true while test mode is on: a test mode that may still reach real customers is refused.</summary>
+        </member>
+        <member name="T:TigerCS.Application.Modules.CrmDocuments.VerificationTestingSafety">
+            <summary>The only environments where customer-data test redirection may be switched on.</summary>
+        </member>
+        <member name="T:TigerCS.Application.Modules.CrmDocuments.TestDeliveryRoute">
+            <summary>The resolved destination of one outbound message under test mode.</summary>
+            <param name="Allowed">False when test mode is on but misconfigured: nothing may be sent.</param>
+            <param name="Destination">Where the message must actually go (the override when <paramref name="Redirected"/>).</param>
+            <param name="Redirected">True when <paramref name="Destination"/> replaced the customer's real contact detail.</param>
+        </member>
+        <member name="M:TigerCS.Application.Modules.CrmDocuments.TestDeliveryRoute.#ctor(System.Boolean,System.String,System.Boolean)">
+            <summary>The resolved destination of one outbound message under test mode.</summary>
+            <param name="Allowed">False when test mode is on but misconfigured: nothing may be sent.</param>
+            <param name="Destination">Where the message must actually go (the override when <paramref name="Redirected"/>).</param>
+            <param name="Redirected">True when <paramref name="Destination"/> replaced the customer's real contact detail.</param>
+        </member>
+        <member name="P:TigerCS.Application.Modules.CrmDocuments.TestDeliveryRoute.Allowed">
+            <summary>False when test mode is on but misconfigured: nothing may be sent.</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.CrmDocuments.TestDeliveryRoute.Destination">
+            <summary>Where the message must actually go (the override when <paramref name="Redirected"/>).</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.CrmDocuments.TestDeliveryRoute.Redirected">
+            <summary>True when <paramref name="Destination"/> replaced the customer's real contact detail.</summary>
+        </member>
+        <member name="T:TigerCS.Application.Modules.CrmDocuments.VerificationTestingPolicy">
+             <summary>
+             Decides, at the outbound delivery layer, where an OTP or document message really goes.
+            
+             <para>
+             <b>Test mode off</b> (the default, and the only state Production can be in): every route is the customer's own contact
+             detail, unchanged. <b>Test mode on</b>: every route is the configured override — and if the configuration is invalid,
+             incomplete or enabled in a non-allowed environment, <see cref="P:TigerCS.Application.Modules.CrmDocuments.VerificationTestingPolicy.IsBlocked"/> is true and <i>nothing</i> is routable, so a
+             real customer can never be messaged by a half-configured test mode. There is no fallback to the real address.
+             </para>
+             </summary>
+        </member>
+        <member name="M:TigerCS.Application.Modules.CrmDocuments.VerificationTestingPolicy.EmailPattern">
+            <remarks>
+            Pattern:<br/>
+            <code>^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$</code><br/>
+            Explanation:<br/>
+            <code>
+            ○ Match if at the beginning of the string.<br/>
+            ○ Match a character in the set [^@\s] atomically at least once.<br/>
+            ○ Match '@'.<br/>
+            ○ Match a character in the set [^@\s] greedily at least once.<br/>
+            ○ Match '.'.<br/>
+            ○ Match a character in the set [^@\s] atomically at least once.<br/>
+            ○ Match if at the end of the string or if before an ending newline.<br/>
+            </code>
+            </remarks>
+        </member>
+        <member name="M:TigerCS.Application.Modules.CrmDocuments.VerificationTestingPolicy.SmsPattern">
+            <remarks>
+            Pattern:<br/>
+            <code>^[1-9]\\d{7,14}$</code><br/>
+            Explanation:<br/>
+            <code>
+            ○ Match if at the beginning of the string.<br/>
+            ○ Match a character in the set [1-9].<br/>
+            ○ Match a Unicode digit atomically at least 7 and at most 14 times.<br/>
+            ○ Match if at the end of the string or if before an ending newline.<br/>
+            </code>
+            </remarks>
+        </member>
+        <member name="P:TigerCS.Application.Modules.CrmDocuments.VerificationTestingPolicy.ConfigurationError">
+            <summary>Why test mode cannot be used; null when it is off or valid.</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.CrmDocuments.VerificationTestingPolicy.IsBlocked">
+            <summary>Test mode is on but unusable — every delivery must be refused.</summary>
+        </member>
+        <member name="M:TigerCS.Application.Modules.CrmDocuments.VerificationTestingPolicy.RouteSms(System.String)">
+            <summary>Where an OTP SMS for <paramref name="customerMobile"/> must really go.</summary>
+        </member>
+        <member name="M:TigerCS.Application.Modules.CrmDocuments.VerificationTestingPolicy.RouteEmail(System.String)">
+            <summary>Where an email (OTP or document) for <paramref name="customerEmail"/> must really go.</summary>
         </member>
         <member name="T:TigerCS.Application.Modules.CustomerVerification.Abstractions.ConcurrentWriteException">
             <summary>
@@ -4872,7 +5340,8 @@
             <param name="ProjectArabicName">The project's name in Arabic.</param>
             <param name="CustomerType">1 = Buyer. This phase supports Buyer only.</param>
             <param name="CustomerTypeName">CRM's display name for <paramref name="CustomerType"/> (e.g. "Buyer").</param>
-            <param name="ProjectCode">The PACT unit-code prefix CRM holds for the project (<c>TP125</c>), when CRM publishes it (not yet part of the deployed <c>GetBuyerByPhone</c>). When present it is CRM's own statement of the project's PACT code and replaces any guess; null = not published.</param>
+            <param name="ProjectCode">The PACT unit-code prefix CRM holds for the project (<c>TP125</c>), as published by CRM's <c>GetBuyerByPhone</c> (present in the UAT response). It is CRM's own statement of the project's PACT code and replaces any guess; null when CRM omitted or left it blank for that project.</param>
+            <remarks>Also exposes the derived <see cref="P:TigerCS.Application.Modules.CustomerVerification.Dto.CrmBuyerUnitDto.UnitCode"/> (read-only).</remarks>
         </member>
         <member name="M:TigerCS.Application.Modules.CustomerVerification.Dto.CrmBuyerUnitDto.#ctor(System.Int32,System.Int32,System.String,System.Int32,System.String,System.Int32,System.Int32,System.Nullable{System.Int32},System.Int32,System.String,System.String,System.Int32,System.String,System.String)">
             <summary>
@@ -4899,7 +5368,8 @@
             <param name="ProjectArabicName">The project's name in Arabic.</param>
             <param name="CustomerType">1 = Buyer. This phase supports Buyer only.</param>
             <param name="CustomerTypeName">CRM's display name for <paramref name="CustomerType"/> (e.g. "Buyer").</param>
-            <param name="ProjectCode">The PACT unit-code prefix CRM holds for the project (<c>TP125</c>), when CRM publishes it (not yet part of the deployed <c>GetBuyerByPhone</c>). When present it is CRM's own statement of the project's PACT code and replaces any guess; null = not published.</param>
+            <param name="ProjectCode">The PACT unit-code prefix CRM holds for the project (<c>TP125</c>), as published by CRM's <c>GetBuyerByPhone</c> (present in the UAT response). It is CRM's own statement of the project's PACT code and replaces any guess; null when CRM omitted or left it blank for that project.</param>
+            <remarks>Also exposes the derived <see cref="P:TigerCS.Application.Modules.CustomerVerification.Dto.CrmBuyerUnitDto.UnitCode"/> (read-only).</remarks>
         </member>
         <member name="P:TigerCS.Application.Modules.CustomerVerification.Dto.CrmBuyerUnitDto.LeadId">
             <summary>The CRM Lead identifier this unit was matched through.</summary>
@@ -4941,7 +5411,24 @@
             <summary>CRM's display name for <paramref name="CustomerType"/> (e.g. "Buyer").</summary>
         </member>
         <member name="P:TigerCS.Application.Modules.CustomerVerification.Dto.CrmBuyerUnitDto.ProjectCode">
-            <summary>The PACT unit-code prefix CRM holds for the project (<c>TP125</c>), when CRM publishes it (not yet part of the deployed <c>GetBuyerByPhone</c>). When present it is CRM's own statement of the project's PACT code and replaces any guess; null = not published.</summary>
+            <summary>The PACT unit-code prefix CRM holds for the project (<c>TP125</c>), as published by CRM's <c>GetBuyerByPhone</c> (present in the UAT response). It is CRM's own statement of the project's PACT code and replaces any guess; null when CRM omitted or left it blank for that project.</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.CustomerVerification.Dto.CrmBuyerUnitDto.UnitCode">
+            <summary>
+            The PACT unit code of this unit (<c>TP130-902-B</c>): the CRM project code
+            and the unit number, suffix preserved — the same key
+            <c>CollectionsUnitKey.FromCrm</c> builds. Null when
+            <see cref="P:TigerCS.Application.Modules.CustomerVerification.Dto.CrmBuyerUnitDto.ProjectCode"/> is missing or is not a <c>TP</c>/numeric tower code, or
+            <see cref="P:TigerCS.Application.Modules.CustomerVerification.Dto.CrmBuyerUnitDto.UnitNumber"/> is blank: nothing is guessed, and it is never derived
+            from <see cref="P:TigerCS.Application.Modules.CustomerVerification.Dto.CrmBuyerUnitDto.ProjectId"/> (a CRM id is not a PACT tower number). Computed, so
+            it can never disagree with the fields it comes from; additive on the wire.
+            </summary>
+        </member>
+        <member name="T:TigerCS.Application.Modules.CustomerVerification.Dto.CrmUnitCode">
+            <summary>Builds the PACT-style unit code of a CRM unit, refusing any project code that is not a tower code.</summary>
+        </member>
+        <member name="M:TigerCS.Application.Modules.CustomerVerification.Dto.CrmUnitCode.From(System.String,System.String)">
+            <summary><c>projectCode + "-" + unitNumber</c>, normalized (upper case, one <c>TP</c> prefix); null when either part is missing or the project code is not <c>TP</c>+digits (or plain digits).</summary>
         </member>
         <member name="T:TigerCS.Application.Modules.CustomerVerification.Dto.CrmBuyerMatchDto">
             <summary>
@@ -6161,8 +6648,9 @@
              <param name="RecentTicketNumbers">The caller's recent ticket numbers, in <see cref="P:TigerCS.Application.Modules.GenesysIntegration.Dto.GenesysCustomerLookupResultDto.Tickets"/> order.</param>
              <param name="OpenTicketNumbers">The subset still being worked.</param>
              <param name="RecentTicketsText">The recent tickets as one display string ("TG-… (InProgress); TG-… (Closed)").</param>
+             <param name="SelectableUnits">Additive. The same de-duplicated units as <paramref name="Units"/>, structured: display label plus the resolved PACT unit code. Expired PACT contracts are never listed. Same order and count as <paramref name="Units"/>.</param>
         </member>
-        <member name="M:TigerCS.Application.Modules.GenesysIntegration.Dto.GenesysScreenPopDto.#ctor(System.String,System.String,System.String,System.String,System.Int32,System.Collections.Generic.IReadOnlyList{System.String},System.String,System.Collections.Generic.IReadOnlyList{System.String},System.Collections.Generic.IReadOnlyList{System.String},System.String)">
+        <member name="M:TigerCS.Application.Modules.GenesysIntegration.Dto.GenesysScreenPopDto.#ctor(System.String,System.String,System.String,System.String,System.Int32,System.Collections.Generic.IReadOnlyList{System.String},System.String,System.Collections.Generic.IReadOnlyList{System.String},System.Collections.Generic.IReadOnlyList{System.String},System.String,System.Collections.Generic.IReadOnlyList{TigerCS.Application.Modules.GenesysIntegration.Dto.GenesysSelectableUnitDto})">
              <summary>
              The lookup reduced to flat, display-ready values — what a Genesys Data
              Action maps straight onto Architect variables and participant data, which
@@ -6195,6 +6683,7 @@
              <param name="RecentTicketNumbers">The caller's recent ticket numbers, in <see cref="P:TigerCS.Application.Modules.GenesysIntegration.Dto.GenesysCustomerLookupResultDto.Tickets"/> order.</param>
              <param name="OpenTicketNumbers">The subset still being worked.</param>
              <param name="RecentTicketsText">The recent tickets as one display string ("TG-… (InProgress); TG-… (Closed)").</param>
+             <param name="SelectableUnits">Additive. The same de-duplicated units as <paramref name="Units"/>, structured: display label plus the resolved PACT unit code. Expired PACT contracts are never listed. Same order and count as <paramref name="Units"/>.</param>
         </member>
         <member name="P:TigerCS.Application.Modules.GenesysIntegration.Dto.GenesysScreenPopDto.CustomerName">
             <summary>The matched customer's display name, or empty.</summary>
@@ -6225,6 +6714,70 @@
         </member>
         <member name="P:TigerCS.Application.Modules.GenesysIntegration.Dto.GenesysScreenPopDto.RecentTicketsText">
             <summary>The recent tickets as one display string ("TG-… (InProgress); TG-… (Closed)").</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.GenesysIntegration.Dto.GenesysScreenPopDto.SelectableUnits">
+            <summary>Never null on the wire: an absent list is an empty one.</summary>
+        </member>
+        <member name="T:TigerCS.Application.Modules.GenesysIntegration.Dto.GenesysSelectableUnitDto">
+            <summary>
+            One unit the agent can pick on the screen pop. Selection alone proves
+            nothing about who is calling: a shared phone number is not verified
+            identity, so payment details still need the verification flow.
+            </summary>
+            <param name="Label">The display label ("Project - Unit"); the CRM label when CRM and PACT both confirm the unit by resolved unit code.</param>
+            <param name="UnitCode">The resolved PACT unit code (<c>TP130-902-B</c>), or empty when it could not be resolved — never guessed.</param>
+            <param name="PaymentLookupReady">True only when <paramref name="UnitCode"/> is resolved — a statement about the code, nothing more. It does not mean ownership, the tenant or the caller has been verified; that still needs the verification flow. False means the unit is shown for the agent but must not be sent to a payment lookup.</param>
+            <param name="Sources">Which sources confirm the unit: "Crm" and/or "Pact".</param>
+            <param name="Customers">Every matched customer record this unit was found under. The unit is listed once, but the people are never merged: two customers sharing a phone number both appear here, each under their own source and id, matching <c>screenPop</c>'s customer records.</param>
+        </member>
+        <member name="M:TigerCS.Application.Modules.GenesysIntegration.Dto.GenesysSelectableUnitDto.#ctor(System.String,System.String,System.Boolean,System.Collections.Generic.IReadOnlyList{System.String},System.Collections.Generic.IReadOnlyList{TigerCS.Application.Modules.GenesysIntegration.Dto.GenesysUnitCustomerRefDto})">
+            <summary>
+            One unit the agent can pick on the screen pop. Selection alone proves
+            nothing about who is calling: a shared phone number is not verified
+            identity, so payment details still need the verification flow.
+            </summary>
+            <param name="Label">The display label ("Project - Unit"); the CRM label when CRM and PACT both confirm the unit by resolved unit code.</param>
+            <param name="UnitCode">The resolved PACT unit code (<c>TP130-902-B</c>), or empty when it could not be resolved — never guessed.</param>
+            <param name="PaymentLookupReady">True only when <paramref name="UnitCode"/> is resolved — a statement about the code, nothing more. It does not mean ownership, the tenant or the caller has been verified; that still needs the verification flow. False means the unit is shown for the agent but must not be sent to a payment lookup.</param>
+            <param name="Sources">Which sources confirm the unit: "Crm" and/or "Pact".</param>
+            <param name="Customers">Every matched customer record this unit was found under. The unit is listed once, but the people are never merged: two customers sharing a phone number both appear here, each under their own source and id, matching <c>screenPop</c>'s customer records.</param>
+        </member>
+        <member name="P:TigerCS.Application.Modules.GenesysIntegration.Dto.GenesysSelectableUnitDto.Label">
+            <summary>The display label ("Project - Unit"); the CRM label when CRM and PACT both confirm the unit by resolved unit code.</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.GenesysIntegration.Dto.GenesysSelectableUnitDto.UnitCode">
+            <summary>The resolved PACT unit code (<c>TP130-902-B</c>), or empty when it could not be resolved — never guessed.</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.GenesysIntegration.Dto.GenesysSelectableUnitDto.PaymentLookupReady">
+            <summary>True only when <paramref name="UnitCode"/> is resolved — a statement about the code, nothing more. It does not mean ownership, the tenant or the caller has been verified; that still needs the verification flow. False means the unit is shown for the agent but must not be sent to a payment lookup.</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.GenesysIntegration.Dto.GenesysSelectableUnitDto.Sources">
+            <summary>Which sources confirm the unit: "Crm" and/or "Pact".</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.GenesysIntegration.Dto.GenesysSelectableUnitDto.Customers">
+            <summary>Every matched customer record this unit was found under. The unit is listed once, but the people are never merged: two customers sharing a phone number both appear here, each under their own source and id, matching <c>screenPop</c>'s customer records.</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.GenesysIntegration.Dto.GenesysSelectableUnitDto.SourcesText">
+            <summary><see cref="P:TigerCS.Application.Modules.GenesysIntegration.Dto.GenesysSelectableUnitDto.Sources"/> as one string (<c>Crm,Pact</c>) — the flat form the Data Action maps, since Architect cannot take nested arrays.</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.GenesysIntegration.Dto.GenesysSelectableUnitDto.CustomersText">
+            <summary><see cref="P:TigerCS.Application.Modules.GenesysIntegration.Dto.GenesysSelectableUnitDto.Customers"/> as one string (<c>Crm:4001;Pact:T1</c>, <c>Source:ExternalCustomerId</c> joined with ';') — the flat form the Data Action maps. Never empty: a unit is always listed under at least one record.</summary>
+        </member>
+        <member name="T:TigerCS.Application.Modules.GenesysIntegration.Dto.GenesysUnitCustomerRefDto">
+            <summary>A reference to one matched customer record (<c>verificationSource</c>/<c>externalCustomerId</c> style) that a unit was found under. A reference only: it says the source listed the unit for this customer, not that the caller is this customer.</summary>
+            <param name="Source">"Crm", "Pact" or "Tasleeh".</param>
+            <param name="ExternalCustomerId">The customer's id in that source.</param>
+        </member>
+        <member name="M:TigerCS.Application.Modules.GenesysIntegration.Dto.GenesysUnitCustomerRefDto.#ctor(System.String,System.String)">
+            <summary>A reference to one matched customer record (<c>verificationSource</c>/<c>externalCustomerId</c> style) that a unit was found under. A reference only: it says the source listed the unit for this customer, not that the caller is this customer.</summary>
+            <param name="Source">"Crm", "Pact" or "Tasleeh".</param>
+            <param name="ExternalCustomerId">The customer's id in that source.</param>
+        </member>
+        <member name="P:TigerCS.Application.Modules.GenesysIntegration.Dto.GenesysUnitCustomerRefDto.Source">
+            <summary>"Crm", "Pact" or "Tasleeh".</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.GenesysIntegration.Dto.GenesysUnitCustomerRefDto.ExternalCustomerId">
+            <summary>The customer's id in that source.</summary>
         </member>
         <member name="T:TigerCS.Application.Modules.GenesysIntegration.Dto.GenesysCustomerUnitDetailsResponse">
             <summary>
@@ -8400,12 +8953,33 @@
         <member name="M:TigerCS.Application.Modules.GenesysIntegration.Services.GenesysCustomerLookupAppService.LookUpAsync(System.String,System.Threading.CancellationToken)">
             <summary>Null when the Genesys integration is switched off — the caller is answered 503, exactly as every other Genesys endpoint is.</summary>
         </member>
+        <member name="M:TigerCS.Application.Modules.GenesysIntegration.Services.GenesysCustomerLookupAppService.WithoutExpiredPactUnits(TigerCS.Application.Modules.Ticketing.Dto.CustomerLookupSourceResultDto)">
+            <summary>
+            Drops PACT units whose contract expired (the Dubai-date rule already
+            applied by the lookup, which flags rather than hides them). Contracts
+            ending today or with no readable end date are not flagged and stay.
+            Customers are never removed, so matched-customer counts are unchanged.
+            </summary>
+        </member>
         <member name="M:TigerCS.Application.Modules.GenesysIntegration.Services.GenesysCustomerLookupAppService.ToScreenPop(System.Collections.Generic.IReadOnlyList{TigerCS.Application.Modules.CustomerVerification.Dto.CrmBuyerMatchDto},System.Collections.Generic.IReadOnlyList{TigerCS.Application.Modules.Ticketing.Dto.CustomerLookupSourceResultDto},System.Collections.Generic.IReadOnlyList{TigerCS.Application.Modules.GenesysIntegration.Dto.GenesysCustomerTicketDto})">
             <summary>
             The flat screen-pop projection of the full result: CRM first, then
             PACT, then Tasleeh — the order the New Ticket wizard presents them in.
             Nothing here is looked up again; it only reshapes what the sources
             already answered.
+            </summary>
+        </member>
+        <member name="M:TigerCS.Application.Modules.GenesysIntegration.Services.GenesysCustomerLookupAppService.DeduplicateUnits(System.Collections.Generic.IEnumerable{System.ValueTuple{TigerCS.Application.Modules.GenesysIntegration.Services.GenesysCustomerLookupAppService.ScreenPopCustomer,TigerCS.Application.Modules.GenesysIntegration.Services.GenesysCustomerLookupAppService.ScreenPopUnit}})">
+            <summary>
+            One entry per physical unit. Identity is the resolved unit code (CRM
+            project code + number, or PACT's own code) — two sources agree on a unit
+            only when their codes are equal. Never the unit number alone, never
+            similar tower names and never an identical display label. A unit with no
+            resolved code is never merged with anything: each such record stays its
+            own entry with its own source and customer reference, and is reported as
+            not ready for payment lookup. For a resolved unit, CRM's label wins, and
+            every customer record it was found under stays attached — units are
+            merged, people never are.
             </summary>
         </member>
         <member name="M:TigerCS.Application.Modules.GenesysIntegration.Services.GenesysCustomerLookupAppService.IsOpen(TigerCS.Domain.Modules.Ticketing.Ticket)">
@@ -9856,6 +10430,12 @@
              classifying is the contract.
              </para>
              </summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.Notifications.Abstractions.IEmailSender.SendsRealMail">
+            <summary>
+            False for an adapter that records instead of sending (<c>EmailNotifications:Provider = "Recording"</c>): its "Sent" means
+            "kept in memory", not "accepted by a mail server". Callers that tell a person a message was accepted check this first.
+            </summary>
         </member>
         <member name="T:TigerCS.Application.Modules.Notifications.Abstractions.EmailMessage">
             <summary>
@@ -14488,8 +15068,9 @@
             <param name="ContractEndDate">The contract's end date, when the source has a readable one on file (PACT only); null otherwise.</param>
             <param name="IsContractExpired">True when <paramref name="ContractEndDate"/> falls before today's Dubai calendar date. Both lookup paths retain the contract for identity and historical reads; New Ticket excludes it from selectable units.</param>
             <param name="CompanyId">The PACT company associated with this contract, retained alongside the tenant for verified financial mapping.</param>
+            <param name="UnitCode">PACT's own unit code for the contract, normalized (<c>TP130-902-B</c>), when PACT issued a listable one (PACT only); null otherwise. Used as unit identity — never derived from names.</param>
         </member>
-        <member name="M:TigerCS.Application.Modules.Ticketing.Dto.CustomerLookupUnitDto.#ctor(System.String,System.String,System.String,System.String,System.String,System.Nullable{System.Int32},System.Nullable{System.Int32},System.Nullable{System.DateOnly},System.Boolean,System.Nullable{System.Int32})">
+        <member name="M:TigerCS.Application.Modules.Ticketing.Dto.CustomerLookupUnitDto.#ctor(System.String,System.String,System.String,System.String,System.String,System.Nullable{System.Int32},System.Nullable{System.Int32},System.Nullable{System.DateOnly},System.Boolean,System.Nullable{System.Int32},System.String)">
             <summary>
             One unit associated with a matched customer, inside a
             <see cref="T:TigerCS.Application.Modules.Ticketing.Dto.CustomerLookupCustomerDto"/>. Business-rule change: a customer
@@ -14510,6 +15091,7 @@
             <param name="ContractEndDate">The contract's end date, when the source has a readable one on file (PACT only); null otherwise.</param>
             <param name="IsContractExpired">True when <paramref name="ContractEndDate"/> falls before today's Dubai calendar date. Both lookup paths retain the contract for identity and historical reads; New Ticket excludes it from selectable units.</param>
             <param name="CompanyId">The PACT company associated with this contract, retained alongside the tenant for verified financial mapping.</param>
+            <param name="UnitCode">PACT's own unit code for the contract, normalized (<c>TP130-902-B</c>), when PACT issued a listable one (PACT only); null otherwise. Used as unit identity — never derived from names.</param>
         </member>
         <member name="P:TigerCS.Application.Modules.Ticketing.Dto.CustomerLookupUnitDto.ExternalUnitId">
             <summary>The source's own immutable identifier for the unit — for Crm, its CrmUnitId.</summary>
@@ -14540,6 +15122,9 @@
         </member>
         <member name="P:TigerCS.Application.Modules.Ticketing.Dto.CustomerLookupUnitDto.CompanyId">
             <summary>The PACT company associated with this contract, retained alongside the tenant for verified financial mapping.</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.Ticketing.Dto.CustomerLookupUnitDto.UnitCode">
+            <summary>PACT's own unit code for the contract, normalized (<c>TP130-902-B</c>), when PACT issued a listable one (PACT only); null otherwise. Used as unit identity — never derived from names.</summary>
         </member>
         <member name="T:TigerCS.Application.Modules.Ticketing.Dto.CustomerLookupCustomerDto">
             <summary>
@@ -19510,6 +20095,38 @@
             <returns>true if a possible match was found; false if no more matches are possible.</returns>
         </member>
         <member name="M:System.Text.RegularExpressions.Generated.EmailPattern_1.RunnerFactory.Runner.TryMatchAtCurrentPosition(System.ReadOnlySpan{System.Char})">
+            <summary>Determine whether <paramref name="inputSpan"/> at base.runtextpos is a match for the regular expression.</summary>
+            <param name="inputSpan">The text being scanned by the regular expression.</param>
+            <returns>true if the regular expression matches at the current position; otherwise, false.</returns>
+        </member>
+        <member name="T:System.Text.RegularExpressions.Generated.SmsPattern_2">
+            <summary>Custom <see cref="T:System.Text.RegularExpressions.Regex"/>-derived type for the SmsPattern method.</summary>
+        </member>
+        <member name="F:System.Text.RegularExpressions.Generated.SmsPattern_2.Instance">
+            <summary>Cached, thread-safe singleton instance.</summary>
+        </member>
+        <member name="M:System.Text.RegularExpressions.Generated.SmsPattern_2.#ctor">
+            <summary>Initializes the instance.</summary>
+        </member>
+        <member name="T:System.Text.RegularExpressions.Generated.SmsPattern_2.RunnerFactory">
+            <summary>Provides a factory for creating <see cref="T:System.Text.RegularExpressions.RegexRunner"/> instances to be used by methods on <see cref="T:System.Text.RegularExpressions.Regex"/>.</summary>
+        </member>
+        <member name="M:System.Text.RegularExpressions.Generated.SmsPattern_2.RunnerFactory.CreateInstance">
+            <summary>Creates an instance of a <see cref="T:System.Text.RegularExpressions.RegexRunner"/> used by methods on <see cref="T:System.Text.RegularExpressions.Regex"/>.</summary>
+        </member>
+        <member name="T:System.Text.RegularExpressions.Generated.SmsPattern_2.RunnerFactory.Runner">
+            <summary>Provides the runner that contains the custom logic implementing the specified regular expression.</summary>
+        </member>
+        <member name="M:System.Text.RegularExpressions.Generated.SmsPattern_2.RunnerFactory.Runner.Scan(System.ReadOnlySpan{System.Char})">
+            <summary>Scan the <paramref name="inputSpan"/> starting from base.runtextstart for the next match.</summary>
+            <param name="inputSpan">The text being scanned by the regular expression.</param>
+        </member>
+        <member name="M:System.Text.RegularExpressions.Generated.SmsPattern_2.RunnerFactory.Runner.TryFindNextPossibleStartingPosition(System.ReadOnlySpan{System.Char})">
+            <summary>Search <paramref name="inputSpan"/> starting from base.runtextpos for the next location a match could possibly start.</summary>
+            <param name="inputSpan">The text being scanned by the regular expression.</param>
+            <returns>true if a possible match was found; false if no more matches are possible.</returns>
+        </member>
+        <member name="M:System.Text.RegularExpressions.Generated.SmsPattern_2.RunnerFactory.Runner.TryMatchAtCurrentPosition(System.ReadOnlySpan{System.Char})">
             <summary>Determine whether <paramref name="inputSpan"/> at base.runtextpos is a match for the regular expression.</summary>
             <param name="inputSpan">The text being scanned by the regular expression.</param>
             <returns>true if the regular expression matches at the current position; otherwise, false.</returns>

@@ -347,6 +347,12 @@
         <member name="F:TigerCS.Domain.Modules.Collections.CollectionsCampaignFlags.CrmUnavailable">
             <summary>CRM contact data is enabled but could not be used (never loaded, stale, or unreadable): the contact may be incomplete, so the unit is not treated as ready. This is NOT "CRM holds no value".</summary>
         </member>
+        <member name="F:TigerCS.Domain.Modules.Collections.CollectionsCampaignFlags.NoQualifyingBalance">
+            <summary>The stage rule finds no qualifying balance for the unit (nothing inside its eligibility scope). The unit stays listed with its real balances; it is simply not ready to send.</summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.Collections.CollectionsCampaignFlags.BelowThreshold">
+            <summary>The stage amount does not exceed the stage threshold. Same as above: listed, not ready.</summary>
+        </member>
         <member name="T:TigerCS.Domain.Modules.Collections.CollectionsCampaignPolicy">
             <summary>The 7 October 2026 communication table, with thresholds evaluated per unit.
             Values are the source's remaining principal, never the original plan or the customer's total balance.</summary>
@@ -650,10 +656,8 @@
             The single rule for a CRM sale that counts as a unit's owner (Collections lists, the CRM owner feed, phone lookup and ticket creation): a buyer's lead whose status is
             <b>Sold</b> or <b>Contract</b> and is not cancelled.
             <para>
-            The status NAME that CRM sends decides. The numeric lead-status values are NOT verified anywhere in this repository (the only definition is the test stub
-            <c>docs/Genesys/crm-insertion/harness/Stubs.cs</c>: Contract = 4, Sold = 8, Cancelled = 9, written for the CRM insertion harness; CRM's own enum and whether
-            <c>LeadStatus.Contract</c> exists are open question A7 in <c>docs/Genesys/CRM-GetUnitDetails-Field-Mapping.md</c>), so a number is consulted only when CRM sent no name at all, and
-            then only the configured fallback list. A cancelled lead is refused by name and its number is deliberately not hard-coded.
+            The status NAME that CRM sends decides. CRM's confirmed numbers are Sold = 8, Contract = 9, Approved = 4 (not a sale), Cancelled = 6; a number is consulted only when CRM sent no name at all,
+            and then only the configured fallback list (default 8, 9). A cancelled lead is refused by name. (The harness stub in <c>docs/Genesys/crm-insertion/harness/Stubs.cs</c> has different numbers and is NOT CRM's enum.)
             </para>
             </summary>
         </member>
@@ -1281,14 +1285,54 @@
         <member name="P:TigerCS.Domain.Modules.CustomerVerification.CrmDocumentDeliveryRequest.Fingerprint">
             <summary>SHA-256 over the request's meaning (session, type, record, channel). The same key with a different fingerprint is a client bug and is refused.</summary>
         </member>
+        <member name="P:TigerCS.Domain.Modules.CustomerVerification.CrmDocumentDeliveryRequest.Origin">
+            <summary>Which door asked: a customer proven by a verified OTP session (Genesys), or a signed-in agent on Customer Details.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.CustomerVerification.CrmDocumentDeliveryRequest.VerificationSessionId">
+            <summary>
+            The real verification session that proved the customer — <b>set for <see cref="F:TigerCS.Domain.Modules.CustomerVerification.DocumentDeliveryOrigin.GenesysVerifiedSession"/>
+            and null for <see cref="F:TigerCS.Domain.Modules.CustomerVerification.DocumentDeliveryOrigin.AgentDesk"/></b>, which has no verification session and must never be given
+            an invented one.
+            </summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.CustomerVerification.CrmDocumentDeliveryRequest.CrmCustomerId">
+            <summary>CRM customer the copy is for — set for <see cref="F:TigerCS.Domain.Modules.CustomerVerification.DocumentDeliveryOrigin.AgentDesk"/> (the agent route's only scope).</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.CustomerVerification.CrmDocumentDeliveryRequest.CrmLeadId">
+            <summary>CRM lead (the unit) the copy is for — set for <see cref="F:TigerCS.Domain.Modules.CustomerVerification.DocumentDeliveryOrigin.AgentDesk"/>.</summary>
+        </member>
         <member name="P:TigerCS.Domain.Modules.CustomerVerification.CrmDocumentDeliveryRequest.CrmRecordId">
             <summary>The CRM record that was (or is being) sent. Always a record the verified customer owns.</summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.CustomerVerification.CrmDocumentDeliveryRequest.#ctor(System.Guid,System.String,System.String,System.Guid,TigerCS.Domain.Modules.CustomerVerification.CrmDocumentType,System.String,TigerCS.Domain.Modules.CustomerVerification.DocumentDeliveryChannel,System.String,System.DateTime)">
+            <summary>A Genesys-origin delivery: proven by a real, verified OTP session.</summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.CustomerVerification.CrmDocumentDeliveryRequest.ForAgentDesk(System.Guid,System.String,System.String,System.Int32,System.Int32,TigerCS.Domain.Modules.CustomerVerification.CrmDocumentType,System.String,TigerCS.Domain.Modules.CustomerVerification.DocumentDeliveryChannel,System.String,System.DateTime)">
+            <summary>
+            An agent-desk delivery: scoped to the CRM customer and lead the agent acted for, with <b>no</b> verification session
+            (the column stays null — an invented id there would look like a session reference to every consumer of it).
+            </summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.CustomerVerification.CrmDocumentDeliveryRequest.IsAgentScope(System.Int32,System.Int32)">
+            <summary>True when this row was made for exactly this agent scope (customer + lead).</summary>
         </member>
         <member name="M:TigerCS.Domain.Modules.CustomerVerification.CrmDocumentDeliveryRequest.IsStale(System.DateTime,System.TimeSpan)">
             <summary>An in-progress claim whose worker evidently died: older than <paramref name="staleAfter"/>, so a retry may take it over.</summary>
         </member>
+        <member name="P:TigerCS.Domain.Modules.CustomerVerification.CrmDocumentDeliveryRequest.MayHaveBeenDelivered">
+            <summary>
+            True when the document may already be in the customer's mailbox: it was accepted (<see cref="F:TigerCS.Domain.Modules.CustomerVerification.DocumentDeliveryStatus.Sent"/>) or
+            it was handed to the channel and the outcome was never recorded (<see cref="F:TigerCS.Domain.Modules.CustomerVerification.DocumentDeliveryStatus.Dispatching"/>).
+            </summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.CustomerVerification.CrmDocumentDeliveryRequest.MarkDispatching(System.DateTime)">
+            <summary>
+            Records — and the caller must SAVE this before calling the delivery channel — that the document is about to be handed over.
+            From here a crash or a failed save can no longer make the request look like it never reached the provider.
+            </summary>
+        </member>
         <member name="M:TigerCS.Domain.Modules.CustomerVerification.CrmDocumentDeliveryRequest.Restart(System.DateTime)">
-            <summary>Claims a retry of a failed (or abandoned) attempt. Refused for a Sent request — that one is final.</summary>
+            <summary>Claims a retry of a failed (or abandoned) attempt. Refused for a Sent or Dispatching request — those may already have been delivered.</summary>
         </member>
         <member name="T:TigerCS.Domain.Modules.CustomerVerification.CrmDocumentType">
             <summary>
@@ -1300,6 +1344,15 @@
         <member name="T:TigerCS.Domain.Modules.CustomerVerification.DocumentDeliveryChannel">
             <summary>How a document copy reaches the customer. Only <see cref="F:TigerCS.Domain.Modules.CustomerVerification.DocumentDeliveryChannel.Email"/> has an integration; the others are recognised so the API can say precisely what is missing.</summary>
         </member>
+        <member name="T:TigerCS.Domain.Modules.CustomerVerification.DocumentDeliveryOrigin">
+            <summary>Which door asked for a document copy. Stored explicitly so a row never has to be guessed from which columns are null.</summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.CustomerVerification.DocumentDeliveryOrigin.GenesysVerifiedSession">
+            <summary>The Genesys chatbot, proven by a real OTP-verified <c>VerificationSession</c> (the default for every row that existed before agent sends).</summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.CustomerVerification.DocumentDeliveryOrigin.AgentDesk">
+            <summary>A signed-in agent on Customer Details → Documents; no verification session exists.</summary>
+        </member>
         <member name="F:TigerCS.Domain.Modules.CustomerVerification.DocumentDeliveryStatus.InProgress">
             <summary>A send has been claimed and is running (or its process died — see <see cref="M:TigerCS.Domain.Modules.CustomerVerification.CrmDocumentDeliveryRequest.IsStale(System.DateTime,System.TimeSpan)"/>).</summary>
         </member>
@@ -1308,6 +1361,14 @@
         </member>
         <member name="F:TigerCS.Domain.Modules.CustomerVerification.DocumentDeliveryStatus.Failed">
             <summary>The attempt failed. A retry with the same key may try again.</summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.CustomerVerification.DocumentDeliveryStatus.Dispatching">
+            <summary>
+            Written (and saved) <b>before</b> the document is handed to the delivery channel. A row left here means the message may
+            already have been accepted by the provider while the outcome was never recorded (database timeout, crash, cancelled
+            request). Unlike <see cref="F:TigerCS.Domain.Modules.CustomerVerification.DocumentDeliveryStatus.InProgress"/> it is never retaken automatically: a retry answers "unconfirmed" and sends nothing.
+            Stored as a plain byte — no schema change.
+            </summary>
         </member>
         <member name="F:TigerCS.Domain.Modules.CustomerVerification.OtpChallengeStatus.Pending">
             <summary>A code has been sent and may still be entered.</summary>

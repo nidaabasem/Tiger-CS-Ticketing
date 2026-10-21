@@ -573,6 +573,73 @@
             <response code="409">CRM returned more than one distinct customer for this phone number — a CRM data-integrity conflict. No customer/unit was selected; fall back to manual Project/Unit Number entry.</response>
             <response code="502">Tiger CRM could not be reached.</response>
         </member>
+        <member name="T:TigerCS.Api.Controllers.CrmDocumentCopyResponses">
+            <summary>
+            The one HTTP shape of a document-copy outcome, shared by the Genesys <c>send-copy</c> route and the agent desk's
+            "Send to customer" route: same statuses, same stable <c>code</c>, same identifiers — so both doors report what the
+            delivery service actually did, and neither can drift from the other.
+            </summary>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.CrmDocumentCopyResponses.Coded(Microsoft.AspNetCore.Mvc.ControllerBase,TigerCS.Application.Modules.CrmDocuments.Dto.CrmDocumentCopyResult,System.Int32,System.String)">
+            <summary>The standard ProblemDetails body plus the stable machine-readable <c>code</c> and the same relevant identifiers the success body carries.</summary>
+        </member>
+        <member name="T:TigerCS.Api.Controllers.CustomerDocumentsController">
+             <summary>
+             The Customer Details <b>Documents</b> tab: a customer's Reservation Form, Tiger Contract and Registration Receipt
+             for one unit, the authorized file behind each, and "Send to customer".
+            
+             <para>
+             Same door as the Customer Profile: signed-in staff (<c>AuthenticatedStaff</c>), the customer must be visible to the
+             caller, and every unit and record is checked against Tiger CRM's own answer for that customer
+             (<see cref="T:TigerCS.Application.Modules.CrmDocuments.Services.CustomerDocumentsAppService"/>). The file route streams the bytes TigerCS fetched with the server-side CRM
+             credential — the browser never receives CRM's storage reference or credential. Sending reuses the delivery service
+             behind the Genesys <c>send-copy</c> route and reports its outcome unchanged (<see cref="T:TigerCS.Api.Controllers.CrmDocumentCopyResponses"/>).
+             </para>
+             </summary>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.CustomerDocumentsController.#ctor(TigerCS.Application.Modules.CrmDocuments.Services.CustomerDocumentsAppService)">
+             <summary>
+             The Customer Details <b>Documents</b> tab: a customer's Reservation Form, Tiger Contract and Registration Receipt
+             for one unit, the authorized file behind each, and "Send to customer".
+            
+             <para>
+             Same door as the Customer Profile: signed-in staff (<c>AuthenticatedStaff</c>), the customer must be visible to the
+             caller, and every unit and record is checked against Tiger CRM's own answer for that customer
+             (<see cref="T:TigerCS.Application.Modules.CrmDocuments.Services.CustomerDocumentsAppService"/>). The file route streams the bytes TigerCS fetched with the server-side CRM
+             credential — the browser never receives CRM's storage reference or credential. Sending reuses the delivery service
+             behind the Genesys <c>send-copy</c> route and reports its outcome unchanged (<see cref="T:TigerCS.Api.Controllers.CrmDocumentCopyResponses"/>).
+             </para>
+             </summary>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.CustomerDocumentsController.List(System.String,System.Nullable{System.Int32},System.Threading.CancellationToken)">
+            <summary>The customer's documents for one unit (<c>crmLeadId</c>), or the unit list when several units exist and none is chosen.</summary>
+            <param name="customerKey">The directory key, <c>crm:{customerId}</c>. Only CRM customers have documents.</param>
+            <param name="crmLeadId">The CRM lead of the selected unit. Must be one of the customer's units (403 otherwise).</param>
+            <param name="cancellationToken">Cancellation token.</param>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.CustomerDocumentsController.GetFile(System.String,System.Int32,System.String,System.String,System.Boolean,System.Threading.CancellationToken)">
+            <summary>
+            The file of one listed document. <c>download=true</c> asks the browser to save it; otherwise it is offered inline.
+            The record must be one CRM lists right now for this customer, unit and type.
+            </summary>
+            <param name="customerKey">The directory key, <c>crm:{customerId}</c>.</param>
+            <param name="crmLeadId">The unit's CRM lead id.</param>
+            <param name="documentType"><c>ReservationForm</c>, <c>Contract</c> or <c>RegistrationReceipt</c>.</param>
+            <param name="recordId">CRM's attachment id from the listing.</param>
+            <param name="download">True to send as an attachment (save), false to open inline.</param>
+            <param name="cancellationToken">Cancellation token.</param>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.CustomerDocumentsController.Send(System.String,TigerCS.Application.Modules.CrmDocuments.Dto.CustomerDocumentSendRequestDto,System.String,System.Threading.CancellationToken)">
+            <summary>
+            Email one listed document to the customer, as an attachment, to the address CRM holds for them. Same delivery
+            service and idempotency rules as <c>POST /api/genesys/documents/send-copy</c>; <c>Sent</c> means the mail
+            server accepted the message — not that the customer received or opened it.
+            </summary>
+            <param name="customerKey">The directory key, <c>crm:{customerId}</c>.</param>
+            <param name="request">The unit, document type and record to send.</param>
+            <param name="idempotencyKey">Required. Reuse it on a retry of the same click; a new send needs a new key.</param>
+            <param name="cancellationToken">Cancellation token.</param>
+        </member>
         <member name="T:TigerCS.Api.Controllers.CustomerHistoryController">
             <summary>
             Customer → Previous Ticket History for a CRM-verified customer, keyed by
@@ -2329,9 +2396,6 @@
              <response code="501">DELIVERY_CHANNEL_NOT_INTEGRATED — WhatsApp/SMS were requested; only Email is integrated.</response>
              <response code="502">Either DELIVERY_FAILED / DOCUMENT_TOO_LARGE (the document was found but not delivered; <c>retryable</c> says whether to retry with the same key), or an upstream CRM refusal that retrying will not fix: CRM_REQUEST_REJECTED (CRM 400), CRM_AUTHENTICATION_FAILED (CRM 401), CRM_ACCESS_DENIED (CRM 403), CRM_INVALID_RESPONSE.</response>
              <response code="503">DOCUMENT_SOURCE_UNAVAILABLE (CRM unreachable, timed out, 500 or 503 — retryable) or DOCUMENT_COPY_DISABLED.</response>
-        </member>
-        <member name="M:TigerCS.Api.Controllers.GenesysDocumentsController.Coded(TigerCS.Application.Modules.CrmDocuments.Dto.CrmDocumentCopyResult,System.Int32,System.String)">
-            <summary>The standard ProblemDetails body plus the stable machine-readable <c>code</c> and the same relevant identifiers the success body carries.</summary>
         </member>
         <member name="T:TigerCS.Api.Controllers.GenesysVerificationController">
              <summary>
