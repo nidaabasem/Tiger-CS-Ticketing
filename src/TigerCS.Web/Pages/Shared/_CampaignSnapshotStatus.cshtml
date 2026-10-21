@@ -1,0 +1,19 @@
+@using TigerCS.Web.Pages.Collections
+@model CampaignsModel
+@* The financial snapshot status of the last preview: load problems (with Retry), CRM state, source reconciliation and age. It is independent of the customer table, so filters
+   changing or the table being cleared never hide a refresh or reconciliation problem. *@
+@if (Model.Report is { } report)
+{
+    <div class="campaign-snapshot__body" data-snapshot-status>
+        @if (report.Snapshot is { } snapshot) { <partial name="_LoadProblem" model="snapshot" /> }
+        <partial name="_CrmContactNotice" model="report.Crm" />
+        @if (!report.FinancialSourceValidated)
+        {
+            <div class="receivables-notice receivables-notice--warning" role="alert" data-source-status="NotReconciled">The financial source has not been reconciled against PACT for the configured procedure, so nothing can be approved or sent.</div>
+        }
+        <p class="receivables-meta">
+            <span data-source-state>Financial source: <strong>@(report.FinancialSourceValidated ? "Reconciled" : "Not reconciled")</strong></span>
+            @if (report.Snapshot?.OldestSuccessUtc is { } updated) { <text> · </text><span data-updated>Updated @CollectionsDisplay.DubaiTime(updated)</span> }
+        </p>
+    </div>
+}

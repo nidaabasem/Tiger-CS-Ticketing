@@ -1,0 +1,8 @@
+{
+  "name": "tigercs-ui-tests",
+  "private": true,
+  "type": "module",
+  "description": "Browser-script tests for the Collections Campaigns page (jsdom). Run: npm install && npm test",
+  "scripts": { "test": "node --test --test-force-exit" },
+  "devDependencies": { "jsdom": "24.1.0" }
+}
