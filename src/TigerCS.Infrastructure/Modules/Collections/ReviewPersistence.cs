@@ -136,8 +136,55 @@ public class CollectionsGenesysBatchConfiguration : IEntityTypeConfiguration<Col
     }
 }
 
-public sealed class ReviewStore(TigerCsDbContext db) : IReviewStore
+/// <summary>
+/// Which database failures are worth a bounded retry, and how long to wait. Only connection-level failures (a dropped or timed-out link, a failed-over server, a deadlock victim) qualify;
+/// a constraint violation or any logic error is never retried. Callers retry ONLY writes that are safe to repeat.
+/// </summary>
+public sealed class ReviewWriteRetryPolicy
 {
+    private static readonly HashSet<int> TransientNumbers =
+    [
+        -1,      // connection could not be established / transport error (the 10054 / 10060 family)
+        -2,      // command or connection timeout
+        20, 64, 233, 10053, 10054, 10060, 10061, 258,   // transport / network / "wait operation timed out"
+        121,     // semaphore timeout
+        1205,    // chosen as deadlock victim: the transaction was rolled back
+        4060, 40197, 40501, 40613, 49918, 49919, 49920, 40143  // failover / throttling
+    ];
+
+    public int MaxAttempts { get; init; } = 3;
+    public Func<int, TimeSpan> Delay { get; init; } = attempt => TimeSpan.FromSeconds(2 * attempt);
+    /// <summary>Extra classification (tests, providers other than SQL Server).</summary>
+    public Func<Exception, bool>? ExtraTransient { get; init; }
+
+    public bool IsTransient(Exception ex)
+    {
+        for (var e = ex; e is not null; e = e.InnerException!)
+        {
+            if (ExtraTransient?.Invoke(e) == true) return true;
+            if (e is TimeoutException) return true;
+            if (e is SqlException sql && sql.Errors.Count > 0 && sql.Errors.Cast<SqlError>().Any(x => TransientNumbers.Contains(x.Number))) return true;
+            if (e is SqlException { Number: var n } && TransientNumbers.Contains(n)) return true;
+            if (e.InnerException is null) break;
+        }
+        return false;
+    }
+
+    public static int? NumberOf(Exception ex)
+    {
+        for (var e = ex; e is not null; e = e.InnerException!)
+        {
+            if (e is SqlException sql) return sql.Number;
+            if (e.InnerException is null) break;
+        }
+        return null;
+    }
+}
+
+public sealed class ReviewStore(TigerCsDbContext db, ReviewWriteRetryPolicy? retryPolicy = null) : IReviewStore
+{
+    private readonly ReviewWriteRetryPolicy _retry = retryPolicy ?? new ReviewWriteRetryPolicy();
+
     private static readonly DispatchItemStatus[] LiveStatuses = [DispatchItemStatus.Approved, DispatchItemStatus.UploadedToGenesys, DispatchItemStatus.UnknownOutcome];
 
     // ---------------------------------------------------------------- runs
@@ -172,41 +219,91 @@ public sealed class ReviewStore(TigerCsDbContext db) : IReviewStore
             .ExecuteUpdateAsync(s => s.SetProperty(r => r.Phase, phase).SetProperty(r => r.ProgressPercent, percent)
                 .SetProperty(r => r.SourceRowCount, r => sourceRows ?? r.SourceRowCount), ct);
 
-    public async Task FailRunAsync(long runId, string error, DateTime nowUtc, CancellationToken ct)
+    /// <summary>
+    /// Runs an IDEMPOTENT write, retrying a bounded number of times on a transient connection failure with a fresh connection and a clean change tracker.
+    /// The result of a lost connection can be ambiguous (the commit may have happened), which is why only writes that converge on the same state when repeated are passed here.
+    /// </summary>
+    private async Task WriteWithRetryAsync(string what, Func<CancellationToken, Task> write, CancellationToken ct)
     {
-        await db.CollectionsReviewRecords.Where(r => r.CollectionsReviewRunId == runId).ExecuteDeleteAsync(ct);
-        await db.CollectionsReviewRuns.Where(r => r.CollectionsReviewRunId == runId)
-            .ExecuteUpdateAsync(s => s.SetProperty(r => r.Status, ReviewRunStatus.Failed).SetProperty(r => r.IsActive, false)
-                .SetProperty(r => r.Error, error.Length > 500 ? error[..500] : error).SetProperty(r => r.CompletedAtUtc, nowUtc)
-                .SetProperty(r => r.Phase, "Failed"), ct);
+        var attempts = Math.Clamp(_retry.MaxAttempts, 1, 5);
+        for (var attempt = 1; ; attempt++)
+        {
+            try { await write(ct); return; }
+            catch (Exception ex) when (!ct.IsCancellationRequested && ex is not OperationCanceledException && _retry.IsTransient(ex))
+            {
+                db.ChangeTracker.Clear();
+                await ResetConnectionAsync();
+                if (attempt >= attempts)
+                    throw new ReviewStorageException(
+                        $"Could not {what}: the database connection was lost or timed out after {attempt} attempt(s)" + (ReviewWriteRetryPolicy.NumberOf(ex) is { } n ? $" (SQL error {n})" : "")
+                        + ". Nothing was published; the previous review data is still in use. Retry.", true, ReviewWriteRetryPolicy.NumberOf(ex), ex);
+                await Task.Delay(_retry.Delay(attempt), ct);
+            }
+        }
     }
 
-    public async Task AddRecordsAsync(long runId, IReadOnlyList<CollectionsReviewRecord> records, CancellationToken ct)
+    /// <summary>Drops the (possibly dead) connection and its pool siblings so the next attempt opens a new one.</summary>
+    private async Task ResetConnectionAsync()
     {
-        foreach (var record in records) record.CollectionsReviewRunId = runId;
-        db.CollectionsReviewRecords.AddRange(records);
-        await db.SaveChangesAsync(ct);
-        db.ChangeTracker.Clear();
+        try
+        {
+            var connection = db.Database.GetDbConnection();
+            await db.Database.CloseConnectionAsync();
+            if (connection is SqlConnection sql) SqlConnection.ClearPool(sql);
+        }
+        catch (Exception) { /* the next attempt reports the real problem */ }
     }
 
-    public async Task PublishRunAsync(long runId, int recordCount, int sourceRows, DateTime sourceReadAtUtc, DateTime nowUtc, int runsToKeep, CancellationToken ct)
+    public Task FailRunAsync(long runId, string error, DateTime nowUtc, CancellationToken ct) =>
+        WriteWithRetryAsync("record the failure of the review refresh", async token =>
+        {
+            await db.CollectionsReviewRecords.Where(r => r.CollectionsReviewRunId == runId).ExecuteDeleteAsync(token);
+            await db.CollectionsReviewRuns.Where(r => r.CollectionsReviewRunId == runId)
+                .ExecuteUpdateAsync(s => s.SetProperty(r => r.Status, ReviewRunStatus.Failed).SetProperty(r => r.IsActive, false)
+                    .SetProperty(r => r.Error, error.Length > 500 ? error[..500] : error).SetProperty(r => r.CompletedAtUtc, nowUtc)
+                    .SetProperty(r => r.Phase, "Failed"), token);
+        }, ct);
+
+    /// <summary>
+    /// Writes one batch of records as ONE transaction that first removes any rows of the same keys for this run, then inserts them. Repeating it (after a lost connection whose
+    /// commit may or may not have happened) therefore converges on exactly the batch's rows: nothing duplicated (the unique run+key index would refuse that anyway), nothing skipped.
+    /// </summary>
+    public Task AddRecordsAsync(long runId, IReadOnlyList<CollectionsReviewRecord> records, CancellationToken ct)
     {
-        // A relational transaction can be unavailable on the InMemory provider used by some tests; the unique "current" index
-        // is what keeps two published runs from coexisting on a real database.
-        await using var tx = db.Database.IsRelational() ? await db.Database.BeginTransactionAsync(ct) : null;
-        await db.CollectionsReviewRuns.Where(r => r.IsCurrent).ExecuteUpdateAsync(s => s.SetProperty(r => r.IsCurrent, false), ct);
-        await db.CollectionsReviewRuns.Where(r => r.CollectionsReviewRunId == runId)
-            .ExecuteUpdateAsync(s => s.SetProperty(r => r.Status, ReviewRunStatus.Completed).SetProperty(r => r.IsCurrent, true)
-                .SetProperty(r => r.IsActive, false).SetProperty(r => r.CompletedAtUtc, nowUtc).SetProperty(r => r.SourceReadAtUtc, sourceReadAtUtc)
-                .SetProperty(r => r.RecordCount, recordCount).SetProperty(r => r.SourceRowCount, sourceRows)
-                .SetProperty(r => r.ProgressPercent, 100).SetProperty(r => r.Phase, "Completed"), ct);
-        var keep = await db.CollectionsReviewRuns.Where(r => r.Status == ReviewRunStatus.Completed)
-            .OrderByDescending(r => r.CollectionsReviewRunId).Select(r => r.CollectionsReviewRunId).Take(Math.Max(1, runsToKeep)).ToListAsync(ct);
-        await db.CollectionsReviewRecords.Where(r => !keep.Contains(r.CollectionsReviewRunId)
-            && db.CollectionsReviewRuns.Any(x => x.CollectionsReviewRunId == r.CollectionsReviewRunId && x.Status != ReviewRunStatus.Running && x.Status != ReviewRunStatus.Queued))
-            .ExecuteDeleteAsync(ct);
-        if (tx is not null) await tx.CommitAsync(ct);
+        if (records.Count == 0) return Task.CompletedTask;
+        var keys = records.Select(r => r.RecordKey).ToList();
+        return WriteWithRetryAsync("save the review records", async token =>
+        {
+            foreach (var record in records) { record.CollectionsReviewRunId = runId; record.CollectionsReviewRecordId = 0; }
+            await using var tx = db.Database.IsRelational() ? await db.Database.BeginTransactionAsync(token) : null;
+            await db.CollectionsReviewRecords.Where(r => r.CollectionsReviewRunId == runId && keys.Contains(r.RecordKey)).ExecuteDeleteAsync(token);
+            db.CollectionsReviewRecords.AddRange(records);
+            await db.SaveChangesAsync(token);
+            if (tx is not null) await tx.CommitAsync(token);
+            db.ChangeTracker.Clear();
+        }, ct);
     }
+
+    /// <summary>All set-based and ending in the same state however often it runs, so a repeat after an ambiguous commit is safe.</summary>
+    public Task PublishRunAsync(long runId, int recordCount, int sourceRows, DateTime sourceReadAtUtc, DateTime nowUtc, int runsToKeep, CancellationToken ct) =>
+        WriteWithRetryAsync("publish the review data", async token =>
+        {
+            // A relational transaction can be unavailable on the InMemory provider used by some tests; the unique "current" index
+            // is what keeps two published runs from coexisting on a real database.
+            await using var tx = db.Database.IsRelational() ? await db.Database.BeginTransactionAsync(token) : null;
+            await db.CollectionsReviewRuns.Where(r => r.IsCurrent && r.CollectionsReviewRunId != runId).ExecuteUpdateAsync(s => s.SetProperty(r => r.IsCurrent, false), token);
+            await db.CollectionsReviewRuns.Where(r => r.CollectionsReviewRunId == runId)
+                .ExecuteUpdateAsync(s => s.SetProperty(r => r.Status, ReviewRunStatus.Completed).SetProperty(r => r.IsCurrent, true)
+                    .SetProperty(r => r.IsActive, false).SetProperty(r => r.CompletedAtUtc, nowUtc).SetProperty(r => r.SourceReadAtUtc, sourceReadAtUtc)
+                    .SetProperty(r => r.RecordCount, recordCount).SetProperty(r => r.SourceRowCount, sourceRows)
+                    .SetProperty(r => r.ProgressPercent, 100).SetProperty(r => r.Phase, "Completed"), token);
+            var keep = await db.CollectionsReviewRuns.Where(r => r.Status == ReviewRunStatus.Completed)
+                .OrderByDescending(r => r.CollectionsReviewRunId).Select(r => r.CollectionsReviewRunId).Take(Math.Max(1, runsToKeep)).ToListAsync(token);
+            await db.CollectionsReviewRecords.Where(r => !keep.Contains(r.CollectionsReviewRunId)
+                && db.CollectionsReviewRuns.Any(x => x.CollectionsReviewRunId == r.CollectionsReviewRunId && x.Status != ReviewRunStatus.Running && x.Status != ReviewRunStatus.Queued))
+                .ExecuteDeleteAsync(token);
+            if (tx is not null) await tx.CommitAsync(token);
+        }, ct);
 
     // ---------------------------------------------------------------- review queries
 
