@@ -29,6 +29,7 @@ public enum TicketSortBy
 /// <item><see cref="BacklogAge"/> — active, aged (from CreatedAtUtc to <see cref="NowUtc"/>) into that bucket.</item>
 /// <item><see cref="PendingApprovalFor"/> — carries a current Pending approval this caller is authorized to action.</item>
 /// <item><see cref="CreatedFromUtc"/>/<see cref="CreatedToUtc"/> — created within [from, to).</item>
+/// <item><see cref="Unclassified"/> — no request type has been set on the ticket.</item>
 /// </list>
 /// <see cref="NowUtc"/> is the evaluation instant for the time-relative filters — supplied by the application service, never read from the clock inside the repository.
 /// </remarks>
@@ -55,7 +56,8 @@ public sealed record TicketQuery(
     ApprovalApproverScope? PendingApprovalFor = null,
     DateTime? CreatedFromUtc = null,
     DateTime? CreatedToUtc = null,
-    DateTime? NowUtc = null);
+    DateTime? NowUtc = null,
+    bool Unclassified = false);
 
 public sealed record TicketQueryResult(IReadOnlyList<Ticket> Items, int TotalCount);
 

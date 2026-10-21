@@ -321,7 +321,7 @@ public class GenesysController(
 
             GenesysTicketUpdateOutcome.ConcurrencyConflict => Problem(
                 type: "https://tigercs.internal/problems/concurrency-conflict",
-                title: "The ticket changed while it was being classified",
+                title: "The ticket or conversation changed while the request was applied",
                 detail: result.Detail,
                 statusCode: StatusCodes.Status409Conflict),
 

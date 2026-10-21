@@ -187,6 +187,33 @@ public sealed record GenesysIngestionResult(
         new(GenesysIngestionOutcome.TicketCreationFailed, TicketCreationOutcome: creationOutcome);
 }
 
+/// <summary>How an incremental transcript delivery landed.</summary>
+public enum GenesysTranscriptAppendOutcome
+{
+    /// <summary>New messages were stored.</summary>
+    Appended,
+
+    /// <summary>Every message was already stored (a retry, or the final transcript repeating live deliveries) — nothing written.</summary>
+    Unchanged,
+
+    IntegrationDisabled,
+    ConversationNotFound,
+
+    /// <summary>A message has an unrecognized sender or an empty body; nothing was stored.</summary>
+    InvalidTranscript,
+
+    /// <summary>A concurrent delivery stored at the same position; nothing from this request was kept and resending is safe.</summary>
+    Conflict
+}
+
+/// <summary>What an incremental transcript delivery did. <paramref name="Total"/> is the whole stored transcript's length afterwards.</summary>
+public sealed record GenesysTranscriptAppendResult(
+    GenesysTranscriptAppendOutcome Outcome, int Appended = 0, int Total = 0, string? Detail = null)
+{
+    public static GenesysTranscriptAppendResult Failure(GenesysTranscriptAppendOutcome outcome, string? detail = null) =>
+        new(outcome, 0, 0, detail);
+}
+
 /// <summary>How a conversation-end report landed.</summary>
 public enum GenesysConversationEndOutcome
 {

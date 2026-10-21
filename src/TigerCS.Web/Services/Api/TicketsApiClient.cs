@@ -28,6 +28,7 @@ public sealed class TicketsApiClient(HttpClient httpClient, ILogger<TicketsApiCl
         if (request.DueToday == true) query["dueToday"] = "true";
         if (!string.IsNullOrWhiteSpace(request.BacklogAge)) query["backlogAge"] = request.BacklogAge;
         if (request.PendingApproval == true) query["pendingApproval"] = "true";
+        if (request.Unclassified == true) query["unclassified"] = "true";
         if (request.CreatedFrom is DateOnly createdFrom) query["createdFrom"] = createdFrom.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
         if (request.CreatedTo is DateOnly createdTo) query["createdTo"] = createdTo.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
         query["page"] = request.Page.ToString();
@@ -41,6 +42,9 @@ public sealed class TicketsApiClient(HttpClient httpClient, ILogger<TicketsApiCl
 
     public Task<ApiResult<TicketDetailDto>> AssignAsync(long ticketId, AssignTicketRequestDto request, CancellationToken cancellationToken) =>
         PostAsync<AssignTicketRequestDto, TicketDetailDto>($"api/tickets/{ticketId}/assignment", request, cancellationToken);
+
+    public Task<ApiResult<TicketDetailDto>> ClassifyAsync(long ticketId, ClassifyTicketRequestDto request, CancellationToken cancellationToken) =>
+        PostAsync<ClassifyTicketRequestDto, TicketDetailDto>($"api/tickets/{ticketId}/classification", request, cancellationToken);
 
     public Task<ApiResult<TicketDetailDto>> TransferAsync(long ticketId, TransferTicketRequestDto request, CancellationToken cancellationToken) =>
         PostAsync<TransferTicketRequestDto, TicketDetailDto>($"api/tickets/{ticketId}/transfer", request, cancellationToken);

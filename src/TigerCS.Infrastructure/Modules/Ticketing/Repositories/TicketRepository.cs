@@ -104,6 +104,11 @@ public sealed class TicketRepository(TigerCsDbContext dbContext) : ITicketReposi
             filtered = filtered.Where(t => t.RequestTypeId == requestTypeId);
         }
 
+        if (query.Unclassified)
+        {
+            filtered = filtered.Where(t => t.RequestTypeId == null);
+        }
+
         if (query.ActiveOnly || query.InDepartmentQueue || query.SlaBreached || query.DueToday || query.BacklogAge is not null)
         {
             filtered = filtered.Active();

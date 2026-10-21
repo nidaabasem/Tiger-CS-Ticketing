@@ -1,6 +1,8 @@
 using System.ComponentModel.DataAnnotations;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
+using TigerCS.Application.Modules.Administration.Dto;
+using TigerCS.Application.Modules.ClassificationAndRouting.Dto;
 using TigerCS.Application.Modules.IdentityAndAccess.Dto;
 using TigerCS.Application.Modules.SlaAndEscalation.Dto;
 using TigerCS.Application.Modules.Ticketing.Dto;
@@ -29,7 +31,9 @@ public sealed class TicketDetailsModel(
     TicketsApiClient ticketsApiClient,
     TicketSlaApiClient slaApiClient,
     UsersApiClient usersApiClient,
-    TicketNameResolver nameResolver) : PageModel
+    TicketNameResolver nameResolver,
+    CategoriesApiClient? categoriesApiClient = null,
+    RequestTypesApiClient? requestTypesApiClient = null) : PageModel
 {
     public long TicketId { get; private set; }
 
@@ -233,6 +237,20 @@ public sealed class TicketDetailsModel(
 
     [BindProperty] public AssignInput Assign { get; set; } = new();
     [BindProperty] public TransferInput Transfer { get; set; } = new();
+    [BindProperty] public ClassifyInput Classify { get; set; } = new();
+
+    /// <summary>
+    /// Whether the Classify control is offered: the ticket has no Category yet (the Api's own "already classified" test), is not closed, and
+    /// the viewer is not a read-only role. Display only — the Api still decides (department visibility, role set) and can answer 403/422.
+    /// Classifying never creates a human handoff.
+    /// </summary>
+    public bool CanClassify { get; private set; }
+    public IReadOnlyList<CategoryDto> ClassifyCategories { get; private set; } = [];
+    public IReadOnlyList<RequestTypeOptionDto> ClassifyRequestTypes { get; private set; } = [];
+
+    /// <summary>The priorities the Classify form offers: the ticket's current one and anything more urgent — a lower urgency is a downgrade, which only an approved request may do.</summary>
+    public IReadOnlyList<byte> ClassifyPriorities { get; private set; } = [];
+    public bool ClassifyOptionsUnavailable { get; private set; }
     [BindProperty] public StatusInput Status { get; set; } = new();
     [BindProperty] public ResolveInput Resolve { get; set; } = new();
     [BindProperty] public RowVersionInput Close { get; set; } = new();
@@ -343,6 +361,25 @@ public sealed class TicketDetailsModel(
         var result = await ticketsApiClient.TransferAsync(
             id, new TransferTicketRequestDto(Transfer.TargetDepartmentId, Transfer.Reason, rowVersion), cancellationToken);
         return await HandleMutationAsync(result, "transfer", "Ticket transferred.", cancellationToken);
+    }
+
+    public async Task<IActionResult> OnPostClassifyAsync(long id, CancellationToken cancellationToken)
+    {
+        TicketId = id;
+        if (!TryDecodeRowVersion(Classify.RowVersionBase64, out var rowVersion))
+        {
+            return await ReloadWithErrorAsync("classify", "Could not read the ticket's current version. Reloading.", cancellationToken);
+        }
+
+        if (Classify.CategoryId < 1 || Classify.PriorityId < 1 || (!Classify.RequestTypeAlreadySet && Classify.RequestTypeId < 1))
+        {
+            return await ReloadWithErrorAsync("classify", "Choose a category, a priority and a request type.", cancellationToken);
+        }
+
+        var result = await ticketsApiClient.ClassifyAsync(
+            id, new ClassifyTicketRequestDto(
+                Classify.CategoryId, Classify.PriorityId, Classify.RequestTypeAlreadySet ? null : Classify.RequestTypeId, rowVersion), cancellationToken);
+        return await HandleMutationAsync(result, "classify", "Ticket classified.", cancellationToken);
     }
 
     public async Task<IActionResult> OnPostChangeStatusAsync(long id, CancellationToken cancellationToken)
@@ -695,6 +732,40 @@ public sealed class TicketDetailsModel(
         }
     }
 
+    /// <summary>Loads the Classify form's choices — the ticket's own department's active categories and request types — only when the control will be shown.</summary>
+    private async Task LoadClassifyOptionsAsync(TicketDetailDto ticket, CancellationToken cancellationToken)
+    {
+        CanClassify =
+            categoriesApiClient is not null && requestTypesApiClient is not null
+            && ticket.CategoryId is null
+            && !string.Equals(ticket.TicketStatus, nameof(TicketStatus.Closed), StringComparison.Ordinal)
+            && Viewer is not null
+            && !TigerCS.Domain.Modules.IdentityAndAccess.Roles.IsReadOnlyCaller(Viewer.Roles);
+        if (!CanClassify)
+        {
+            return;
+        }
+
+        var categoriesTask = categoriesApiClient!.GetCategoriesAsync(ticket.CurrentDepartmentId, cancellationToken);
+        var requestTypesTask = requestTypesApiClient!.GetOptionsAsync(ticket.CurrentDepartmentId, cancellationToken);
+        await Task.WhenAll(categoriesTask, requestTypesTask);
+
+        ClassifyOptionsUnavailable = !categoriesTask.Result.IsSuccess || !requestTypesTask.Result.IsSuccess;
+        ClassifyCategories = categoriesTask.Result.Value?.Where(c => c.DepartmentId == ticket.CurrentDepartmentId).ToList() ?? [];
+        ClassifyRequestTypes = requestTypesTask.Result.Value?.Where(r => r.DepartmentId == ticket.CurrentDepartmentId && r.HasPublishedWorkflow).ToList() ?? [];
+
+        var current = ticket.PriorityId ?? 4;
+        ClassifyPriorities = Enumerable.Range(1, current).Select(p => (byte)p).ToList();
+        Classify = new ClassifyInput
+        {
+            RowVersionBase64 = ticket.RowVersion,
+            CategoryId = ClassifyCategories.FirstOrDefault()?.CategoryId ?? 0,
+            PriorityId = current,
+            RequestTypeId = ClassifyRequestTypes.FirstOrDefault()?.RequestTypeId ?? 0,
+            RequestTypeAlreadySet = ticket.RequestTypeId is not null,
+        };
+    }
+
     private static string DescribeError(ApiOutcome outcome, string? detail) => outcome switch
     {
         ApiOutcome.Conflict => "This ticket changed since you loaded it. The latest version is now shown — please retry.",
@@ -775,6 +846,7 @@ public sealed class TicketDetailsModel(
             : null;
 
         LoadActionAffordances(Ticket);
+        await LoadClassifyOptionsAsync(Ticket, cancellationToken);
         await LoadTransferTargetsAsync(Ticket, cancellationToken);
         await LoadReopenTargetsAsync(Ticket, cancellationToken);
 
@@ -1133,6 +1205,17 @@ public sealed class TicketDetailsModel(
 
         /// <summary>Required only when the chosen department is not the ticket's current one (it becomes the transfer reason).</summary>
         public string? Reason { get; set; }
+        public string? RowVersionBase64 { get; set; }
+    }
+
+    public sealed class ClassifyInput
+    {
+        public int CategoryId { get; set; }
+        public byte PriorityId { get; set; }
+        public int RequestTypeId { get; set; }
+
+        /// <summary>The ticket already has a request type (the Genesys AI set it): classification then only adds the category and priority.</summary>
+        public bool RequestTypeAlreadySet { get; set; }
         public string? RowVersionBase64 { get; set; }
     }
 

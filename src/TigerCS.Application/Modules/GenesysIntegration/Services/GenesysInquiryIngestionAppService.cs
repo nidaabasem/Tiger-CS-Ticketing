@@ -545,6 +545,9 @@ public static class GenesysAuditActions
     public const string InquiryIngested = "GenesysInquiryIngested";
     public const string ConversationEnded = "GenesysConversationEnded";
 
+    /// <summary>Messages of a live conversation were stored before it ended (the incremental transcript).</summary>
+    public const string TranscriptAppended = "GenesysTranscriptAppended";
+
     /// <summary>The conversation moved to another queue or agent (a transfer, an agent connecting) — before/after carry the full routing, so the audit trail holds every queue and agent it passed through.</summary>
     public const string RoutingChanged = "GenesysRoutingChanged";
 

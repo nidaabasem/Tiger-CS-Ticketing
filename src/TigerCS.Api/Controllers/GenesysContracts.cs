@@ -180,6 +180,14 @@ public sealed record GenesysConversationEndResponse(
 /// owns the ticket, it is a Call Center ticket, or it is already closed (an earlier closure — including a document-delivery one — is never
 /// overwritten). Repeating it is harmless. Applied after every other part of the same update. <b>Omit it</b> (or false) to change nothing.
 /// </param>
+/// <param name="Transcript">
+/// Messages of the <b>live</b> conversation, sent as they happen (one or several per call). Each has <c>sender</c> (<c>Customer</c>,
+/// <c>VirtualAgent</c> or <c>HumanAgent</c>), <c>sentAtUtc</c> (the real time), <c>body</c> and — strongly recommended — a stable
+/// <c>externalMessageId</c> (the Genesys message id). Purely additive: messages are appended in the order delivered and never edited or removed;
+/// one already stored (same <c>externalMessageId</c>, or the same sender+time+body when none) is ignored, so retries and the final
+/// <c>ended.transcript</c> repeating them create no duplicates. It does not end the conversation. A human agent opening the ticket sees
+/// everything delivered so far. Only a <c>HumanAgent</c> line can record First Response — never <c>VirtualAgent</c>. <b>Omit it</b> when there is nothing new.
+/// </param>
 /// <param name="AwaitingCustomerReply">
 /// Chatbot inactivity timer. <c>true</c> = the chatbot just asked the customer
 /// something and is waiting for the reply: TigerCS starts a persistent timer
@@ -203,7 +211,8 @@ public sealed record GenesysTicketUpdateRequest(
     [property: JsonConverter(typeof(LenientNullableBoolConverter))] bool? AwaitingCustomerReply = null,
     GenesysRequestTypePart? RequestType = null,
     [property: JsonConverter(typeof(LenientNullableBoolConverter))] bool? CustomerActive = null,
-    [property: JsonConverter(typeof(LenientNullableBoolConverter))] bool? ClosedByAi = null);
+    [property: JsonConverter(typeof(LenientNullableBoolConverter))] bool? ClosedByAi = null,
+    IReadOnlyList<GenesysTranscriptMessageRequest>? Transcript = null);
 
 /// <summary>
 /// Reads a flag as <c>true</c>/<c>false</c>, the strings <c>"true"</c>/<c>"false"</c>, or blank/null → null ("not supplied"). A Genesys data
@@ -568,7 +577,10 @@ internal static class GenesysContractMapper
         request.AwaitingCustomerReply,
         Map(request.RequestType),
         request.CustomerActive,
-        request.ClosedByAi);
+        request.ClosedByAi,
+        request.Transcript?
+            .Select(m => new GenesysTranscriptMessageDto(m.Sender, m.SentAtUtc, m.Body, m.SenderName, m.SenderId, m.ExternalMessageId))
+            .ToList());
 
     private static GenesysRequestTypeDto? Map(GenesysRequestTypePart? part) =>
         part is null ? null : new GenesysRequestTypeDto(part.RequestTypeId, Absent(part.Name));

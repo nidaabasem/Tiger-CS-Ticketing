@@ -1,4 +1,5 @@
 using TigerCS.Application.Abstractions;
+using TigerCS.Application.Modules.CustomerVerification.Abstractions;
 using TigerCS.Application.Modules.GenesysIntegration.Abstractions;
 using TigerCS.Application.Modules.GenesysIntegration.Dto;
 using TigerCS.Application.Modules.SlaAndEscalation.Services;
@@ -120,31 +121,8 @@ public sealed class GenesysConversationEndAppService(
         interaction.RecordAgentIfAbsent(request.AgentId, request.AgentName);
 
         var stored = await conversationRepository.ListMessagesAsync(interaction.TicketInteractionId, cancellationToken);
-        var nextSequence = stored.Count + 1;
-        var appended = 0;
-        var pendingMessages = new List<TicketInteractionMessage>();
-
-        foreach (var message in messages)
-        {
-            if (IsAlreadyStored(message, stored))
-            {
-                continue;
-            }
-
-            var row = new TicketInteractionMessage(
-                interaction.TicketInteractionId,
-                nextSequence++,
-                message.Sender,
-                message.SenderName,
-                message.SenderId,
-                message.SentAtUtc,
-                message.Body,
-                message.ExternalMessageId);
-
-            await conversationRepository.AddMessageAsync(row, cancellationToken);
-            pendingMessages.Add(row);
-            appended++;
-        }
+        var pendingMessages = await AppendNewMessagesAsync(interaction, stored, messages, cancellationToken);
+        var appended = pendingMessages.Count;
 
         // The whole transcript as it now stands — this delivery's messages
         // included. Deciding on `stored` alone would miss the case the rule
@@ -189,6 +167,117 @@ public sealed class GenesysConversationEndAppService(
             // share of it — what the caller wants to know is how much is
             // stored.
             stored.Count + appended);
+    }
+
+    /// <summary>
+    /// Stores messages of a conversation that is still going on (or has just ended) — the incremental half of the transcript, so a human
+    /// who takes the interaction can read what the customer and the AI already said <i>before</i> replying.
+    ///
+    /// <para>
+    /// <b>Additive and idempotent.</b> Messages are only ever appended, in delivered order, and never edited or removed. A message is
+    /// recognised as already stored by Genesys' <c>messageId</c> when it has one, and otherwise by sender + timestamp + body; an id-bearing
+    /// message also matches a stored row that had no id (the same line first sent without one), so the final transcript on conversation end
+    /// reconciles with the incremental deliveries instead of duplicating them. A whole transcript is validated before anything is written.
+    /// </para>
+    ///
+    /// <para>
+    /// Nothing about the ticket moves: the interaction is not ended, no handoff is raised, status is untouched. Only a genuinely human line
+    /// can record First Response (same rule as the end event); bot lines never can.
+    /// </para>
+    /// </summary>
+    public async Task<GenesysTranscriptAppendResult> AppendTranscriptAsync(
+        Guid callerEmployeeId, string conversationId, IReadOnlyList<GenesysTranscriptMessageDto>? transcript,
+        CancellationToken cancellationToken = default)
+    {
+        if (!options.Enabled)
+        {
+            return GenesysTranscriptAppendResult.Failure(GenesysTranscriptAppendOutcome.IntegrationDisabled);
+        }
+
+        if (string.IsNullOrWhiteSpace(conversationId))
+        {
+            return GenesysTranscriptAppendResult.Failure(GenesysTranscriptAppendOutcome.ConversationNotFound);
+        }
+
+        var interaction = await conversationRepository.GetByConversationIdAsync(conversationId.Trim(), cancellationToken);
+        if (interaction is null)
+        {
+            return GenesysTranscriptAppendResult.Failure(GenesysTranscriptAppendOutcome.ConversationNotFound);
+        }
+
+        if (!TryNormalizeTranscript(transcript, out var messages, out var transcriptError))
+        {
+            return GenesysTranscriptAppendResult.Failure(GenesysTranscriptAppendOutcome.InvalidTranscript, transcriptError);
+        }
+
+        var ticket = await ticketRepository.GetByIdAsync(interaction.TicketId, cancellationToken);
+        var stored = await conversationRepository.ListMessagesAsync(interaction.TicketInteractionId, cancellationToken);
+
+        await using var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
+        var pending = await AppendNewMessagesAsync(interaction, stored, messages, cancellationToken);
+        if (pending.Count == 0)
+        {
+            return new GenesysTranscriptAppendResult(GenesysTranscriptAppendOutcome.Unchanged, 0, stored.Count);
+        }
+
+        var all = stored.Concat(pending).ToList();
+        var firstHumanAt = await TryRecordFirstHumanResponseAsync(callerEmployeeId, ticket, all, cancellationToken);
+
+        await auditWriter.WriteAsync(
+            callerEmployeeId,
+            GenesysAuditActions.TranscriptAppended,
+            GenesysAuditActions.ConversationEntityType,
+            interaction.GenesysConversationId ?? conversationId.Trim(),
+            beforeValue: $"TicketId={interaction.TicketId};Messages={stored.Count}",
+            afterValue:
+                $"TicketId={interaction.TicketId};Messages={all.Count};Appended={pending.Count};"
+                + $"FirstHumanResponseRecordedAtUtc={firstHumanAt?.ToString("O") ?? "(none)"}",
+            correlationId: Guid.NewGuid(),
+            cancellationToken);
+
+        try
+        {
+            await unitOfWork.SaveChangesAsync(cancellationToken);
+        }
+        catch (DuplicateWriteException)
+        {
+            // A concurrent delivery stored a message at the same position. Nothing of this delivery was kept; resending is safe because
+            // storage is idempotent.
+            return GenesysTranscriptAppendResult.Failure(
+                GenesysTranscriptAppendOutcome.Conflict,
+                "Another delivery for this conversation was being stored at the same moment. Nothing from this request was kept; send it again.");
+        }
+
+        await transaction.CommitAsync(cancellationToken);
+        return new GenesysTranscriptAppendResult(GenesysTranscriptAppendOutcome.Appended, pending.Count, all.Count);
+    }
+
+    /// <summary>Adds every message not already stored, in delivered order, continuing the stored sequence.</summary>
+    private async Task<List<TicketInteractionMessage>> AppendNewMessagesAsync(
+        TicketInteraction interaction, IReadOnlyList<TicketInteractionMessage> stored,
+        IReadOnlyList<NormalizedMessage> messages, CancellationToken cancellationToken)
+    {
+        var known = stored.ToList();
+        var nextSequence = stored.Count == 0 ? 1 : stored.Max(m => m.Sequence) + 1;
+        var added = new List<TicketInteractionMessage>();
+
+        foreach (var message in messages)
+        {
+            if (IsAlreadyStored(message, known))
+            {
+                continue;
+            }
+
+            var row = new TicketInteractionMessage(
+                interaction.TicketInteractionId, nextSequence++, message.Sender, message.SenderName, message.SenderId,
+                message.SentAtUtc, message.Body, message.ExternalMessageId);
+
+            await conversationRepository.AddMessageAsync(row, cancellationToken);
+            known.Add(row);   // the same message twice in ONE delivery is stored once
+            added.Add(row);
+        }
+
+        return added;
     }
 
     /// <summary>
@@ -392,15 +481,19 @@ public sealed class GenesysConversationEndAppService(
     {
         if (message.ExternalMessageId is { } externalId)
         {
-            return stored.Any(m => string.Equals(m.ExternalMessageId, externalId, StringComparison.Ordinal));
+            return stored.Any(m =>
+                string.Equals(m.ExternalMessageId, externalId, StringComparison.Ordinal)
+                // The same line first delivered without an id (a live push) and now carrying one (the final transcript).
+                || (m.ExternalMessageId is null && SameLine(m, message)));
         }
 
-        return stored.Any(m =>
-            m.ExternalMessageId is null
-            && m.Sender == message.Sender
-            && m.SentAtUtc == message.SentAtUtc
-            && string.Equals(m.Body, message.Body, StringComparison.Ordinal));
+        return stored.Any(m => m.ExternalMessageId is null && SameLine(m, message));
     }
+
+    private static bool SameLine(TicketInteractionMessage stored, NormalizedMessage message) =>
+        stored.Sender == message.Sender
+        && stored.SentAtUtc == message.SentAtUtc
+        && string.Equals(stored.Body, message.Body, StringComparison.Ordinal);
 
     /// <summary>
     /// Validates and normalizes every supplied message before a single row is
@@ -410,6 +503,9 @@ public sealed class GenesysConversationEndAppService(
     /// provider clock is not guaranteed monotonic and two messages may share
     /// a timestamp.
     /// </summary>
+    internal static bool IsValidTranscript(IReadOnlyList<GenesysTranscriptMessageDto>? transcript, out string? error) =>
+        TryNormalizeTranscript(transcript, out _, out error);
+
     private static bool TryNormalizeTranscript(
         IReadOnlyList<GenesysTranscriptMessageDto>? transcript,
         out IReadOnlyList<NormalizedMessage> messages,

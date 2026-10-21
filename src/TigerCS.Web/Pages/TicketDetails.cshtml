@@ -186,6 +186,68 @@ else
                         </details>
                         }
 
+                        @if (Model.CanClassify)
+                        {
+                            @* Classify an Unclassified ticket: category, priority and request type for the ticket's own department.
+                               This only classifies — it never requests a human handoff. *@
+                            <details class="disclosure" open="@(Model.OpenSection == "classify" ? "open" : null)">
+                                <summary class="btn btn-gold btn-sm">Classify</summary>
+                                <div class="disclosure__panel">
+                                    <form method="post" asp-page-handler="Classify" class="action-form">
+                                        <input type="hidden" asp-for="Classify.RowVersionBase64" />
+                                        <div class="field-group">
+                                            <label class="field-label" asp-for="Classify.CategoryId">Category</label>
+                                            <select class="field-select" asp-for="Classify.CategoryId">
+                                                @foreach (var c in Model.ClassifyCategories)
+                                                {
+                                                    <option value="@c.CategoryId">@c.Name</option>
+                                                }
+                                            </select>
+                                        </div>
+                                        <input type="hidden" asp-for="Classify.RequestTypeAlreadySet" />
+                                        @if (Model.Classify.RequestTypeAlreadySet)
+                                        {
+                                            <div class="field-group">
+                                                <span class="field-label">Request type</span>
+                                                <span>@(t.RequestTypeName ?? "Already set")</span>
+                                            </div>
+                                        }
+                                        else
+                                        {
+                                            <div class="field-group">
+                                                <label class="field-label" asp-for="Classify.RequestTypeId">Request type</label>
+                                                <select class="field-select" asp-for="Classify.RequestTypeId">
+                                                    @foreach (var r in Model.ClassifyRequestTypes)
+                                                    {
+                                                        <option value="@r.RequestTypeId">@r.Name</option>
+                                                    }
+                                                </select>
+                                            </div>
+                                        }
+                                        <div class="field-group">
+                                            <label class="field-label" asp-for="Classify.PriorityId">Priority</label>
+                                            <select class="field-select" asp-for="Classify.PriorityId">
+                                                @foreach (var p in Model.ClassifyPriorities)
+                                                {
+                                                    <option value="@p">@TicketDisplay.PriorityLabel(p)</option>
+                                                }
+                                            </select>
+                                            <span class="field-hint">Only the current priority or a more urgent one — lowering it needs an approved downgrade.</span>
+                                        </div>
+                                        @if (Model.ClassifyOptionsUnavailable)
+                                        {
+                                            <span class="field-hint field-hint--error">The category / request type lists could not be loaded. Reload the page.</span>
+                                        }
+                                        else if (Model.ClassifyCategories.Count == 0 || (!Model.Classify.RequestTypeAlreadySet && Model.ClassifyRequestTypes.Count == 0))
+                                        {
+                                            <span class="field-hint">This department has no active category or no request type with a published workflow to choose from.</span>
+                                        }
+                                        <div class="action-form__footer"><button type="submit" class="btn btn-gold btn-sm" disabled="@(Model.ClassifyCategories.Count == 0 || (!Model.Classify.RequestTypeAlreadySet && Model.ClassifyRequestTypes.Count == 0) ? "disabled" : null)">Classify</button></div>
+                                    </form>
+                                </div>
+                            </details>
+                        }
+
                         @if (Model.CanTransfer)
                         {
                             <details class="disclosure" open="@(Model.OpenSection == "transfer" ? "open" : null)">
@@ -907,7 +969,7 @@ else
                                     <p class="text-secondary">
                                         @(interaction.Status == "Ended"
                                             ? "No transcript was recorded for this interaction."
-                                            : "No transcript yet — this conversation has not ended.")
+                                            : "No messages have been recorded for this conversation yet.")
                                     </p>
                                 }
                                 else
