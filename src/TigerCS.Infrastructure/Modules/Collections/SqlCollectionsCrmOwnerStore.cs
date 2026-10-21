@@ -22,25 +22,49 @@ public sealed class SqlCollectionsCrmOwnerStore(IConfiguration configuration, Re
     public async Task<int> ReplaceAsync(IReadOnlyList<CrmOwnerRow> rows, CancellationToken cancellationToken, string? note = null)
     {
         var run = Guid.NewGuid();
-        await using var connection = new SqlConnection(ConnectionString);
-        await connection.OpenAsync(cancellationToken);
-        for (var offset = 0; offset < rows.Count; offset += Chunk)
+        var timer = System.Diagnostics.Stopwatch.StartNew();
+        var stage = "opening the connection";
+        string? procedure = null;
+        SqlConnection? connection = null;
+        try
         {
-            var json = JsonSerializer.Serialize(rows.Skip(offset).Take(Chunk).Select(r => new
+            connection = new SqlConnection(ConnectionString);
+            await connection.OpenAsync(cancellationToken);
+            var chunks = (rows.Count + Chunk - 1) / Chunk;
+            for (var offset = 0; offset < rows.Count; offset += Chunk)
             {
-                unitKey = r.UnitKey, projectCode = r.ProjectCode, unitNumber = r.UnitNumber, leadId = r.LeadId, leadStatus = r.LeadStatus, customerId = r.CustomerId,
-                unitId = r.UnitId, projectId = r.ProjectId, fullName = r.FullName, mobile = r.Mobile, email = r.Email, phoneNorm = r.PhoneNorm, emailNorm = r.EmailNorm, projectName = r.ProjectName
-            }));
-            await using var store = new SqlCommand("dbo.usp_Collections_StoreCrmUnitOwners", connection) { CommandType = CommandType.StoredProcedure, CommandTimeout = 300 };
-            store.Parameters.Add("@RunId", SqlDbType.UniqueIdentifier).Value = run;
-            store.Parameters.Add("@Json", SqlDbType.NVarChar, -1).Value = json;
-            await store.ExecuteNonQueryAsync(cancellationToken);
+                stage = $"staging chunk {offset / Chunk + 1} of {chunks}";
+                procedure = "usp_Collections_StoreCrmUnitOwners";
+                var json = JsonSerializer.Serialize(rows.Skip(offset).Take(Chunk).Select(r => new
+                {
+                    unitKey = r.UnitKey, projectCode = r.ProjectCode, unitNumber = r.UnitNumber, leadId = r.LeadId, leadStatus = r.LeadStatus, customerId = r.CustomerId,
+                    unitId = r.UnitId, projectId = r.ProjectId, fullName = r.FullName, mobile = r.Mobile, email = r.Email, phoneNorm = r.PhoneNorm, emailNorm = r.EmailNorm, projectName = r.ProjectName
+                }));
+                await using var store = new SqlCommand(procedure, connection) { CommandType = CommandType.StoredProcedure, CommandTimeout = 300 };
+                store.Parameters.Add("@RunId", SqlDbType.UniqueIdentifier).Value = run;
+                store.Parameters.Add("@Json", SqlDbType.NVarChar, -1).Value = json;
+                await store.ExecuteNonQueryAsync(cancellationToken);
+            }
+            stage = "publishing the run";
+            procedure = "usp_Collections_PublishCrmUnitOwners";
+            await using var publish = new SqlCommand(procedure, connection) { CommandType = CommandType.StoredProcedure, CommandTimeout = 300 };
+            publish.Parameters.Add("@RunId", SqlDbType.UniqueIdentifier).Value = run;
+            publish.Parameters.Add("@ExpectedRows", SqlDbType.Int).Value = rows.Count;
+            publish.Parameters.Add("@Note", SqlDbType.NVarChar, 1000).Value = (object?)(note is { Length: > 1000 } ? note[..1000] : note) ?? DBNull.Value;
+            return Convert.ToInt32(await publish.ExecuteScalarAsync(cancellationToken) ?? 0, System.Globalization.CultureInfo.InvariantCulture);
         }
-        await using var publish = new SqlCommand("dbo.usp_Collections_PublishCrmUnitOwners", connection) { CommandType = CommandType.StoredProcedure, CommandTimeout = 300 };
-        publish.Parameters.Add("@RunId", SqlDbType.UniqueIdentifier).Value = run;
-        publish.Parameters.Add("@ExpectedRows", SqlDbType.Int).Value = rows.Count;
-        publish.Parameters.Add("@Note", SqlDbType.NVarChar, 1000).Value = (object?)(note is { Length: > 1000 } ? note[..1000] : note) ?? DBNull.Value;
-        return Convert.ToInt32(await publish.ExecuteScalarAsync(cancellationToken) ?? 0, System.Globalization.CultureInfo.InvariantCulture);
+        catch (SqlException ex)
+        {
+            throw CrmOwnerStorageErrors.FromSql(ex, stage, procedure, connection?.Database, timer.ElapsedMilliseconds, rows.Count);
+        }
+        catch (InvalidOperationException ex)
+        {
+            throw CrmOwnerStorageErrors.FromOther(ex, stage, procedure, connection?.Database, timer.ElapsedMilliseconds, rows.Count);
+        }
+        finally
+        {
+            if (connection is not null) await connection.DisposeAsync();
+        }
     }
 
     public async Task<(int Resolved, int Ambiguous)> ResolveCompaniesAsync(CancellationToken cancellationToken)
@@ -54,11 +78,19 @@ public sealed class SqlCollectionsCrmOwnerStore(IConfiguration configuration, Re
 
     public async Task RecordFailureAsync(string message, CancellationToken cancellationToken)
     {
-        await using var connection = new SqlConnection(ConnectionString);
-        await connection.OpenAsync(cancellationToken);
-        await using var command = new SqlCommand("dbo.usp_Collections_RecordCrmOwnerFailure", connection) { CommandType = CommandType.StoredProcedure };
-        command.Parameters.Add("@Message", SqlDbType.NVarChar, 1000).Value = message.Length > 1000 ? message[..1000] : message;
-        await command.ExecuteNonQueryAsync(cancellationToken);
+        var timer = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            await using var connection = new SqlConnection(ConnectionString);
+            await connection.OpenAsync(cancellationToken);
+            await using var command = new SqlCommand("dbo.usp_Collections_RecordCrmOwnerFailure", connection) { CommandType = CommandType.StoredProcedure };
+            command.Parameters.Add("@Message", SqlDbType.NVarChar, 1000).Value = message.Length > 1000 ? message[..1000] : message;
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+        catch (SqlException ex)
+        {
+            throw CrmOwnerStorageErrors.FromSql(ex, "recording the failure", "usp_Collections_RecordCrmOwnerFailure", null, timer.ElapsedMilliseconds, 0);
+        }
     }
 
     public async Task<CrmOwnerState> GetStateAsync(CancellationToken cancellationToken)
@@ -101,4 +133,15 @@ public sealed class SqlCollectionsCrmOwnerStore(IConfiguration configuration, Re
             customers > 1 ? 0 : reader.GetInt32(reader.GetOrdinal("CustomerId")), reader.GetInt32(reader.GetOrdinal("CrmUnitId")), reader.GetInt32(reader.GetOrdinal("LeadId")),
             customers > 1 || companyAmbiguous ? SourceContact.Empty : new SourceContact(reader.GetString(reader.GetOrdinal("FullName")), reader.GetString(reader.GetOrdinal("PhoneNorm")), reader.GetString(reader.GetOrdinal("EmailNorm"))));
     }
+}
+
+/// <summary>Turns a database failure of the CRM owner store into the safe, detailed <see cref="CrmOwnerStorageException"/>. The database's own message text is never copied.</summary>
+public static class CrmOwnerStorageErrors
+{
+    public static CrmOwnerStorageException FromSql(SqlException ex, string stage, string? procedure, string? database, long elapsedMs, int rows) =>
+        new(CrmOwnerStorageException.BuildSafeMessage(stage, procedure, ex.Number, ex.Class, ex.State, ex.GetType().Name), stage, procedure, ex.Number, ex.Class, ex.State, ex.LineNumber,
+            ex.Server, database, ex.ClientConnectionId, elapsedMs, rows, ex.GetType().Name, ex);
+
+    public static CrmOwnerStorageException FromOther(Exception ex, string stage, string? procedure, string? database, long elapsedMs, int rows) =>
+        new(CrmOwnerStorageException.BuildSafeMessage(stage, procedure, null, null, null, ex.GetType().Name), stage, procedure, null, null, null, null, null, database, null, elapsedMs, rows, ex.GetType().Name, ex);
 }
