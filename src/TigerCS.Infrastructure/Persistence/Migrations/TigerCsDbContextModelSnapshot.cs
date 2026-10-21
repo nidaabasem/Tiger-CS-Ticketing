@@ -561,6 +561,26 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                     b.Property<bool>("AcknowledgedActiveCampaignRisk")
                         .HasColumnType("bit");
 
+                    b.Property<DateTime?>("AdminEmailAttemptedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<int>("AdminEmailAttempts")
+                        .HasColumnType("int");
+
+                    b.Property<string>("AdminEmailError")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<int>("AdminEmailRecipientCount")
+                        .HasColumnType("int");
+
+                    b.Property<string>("AdminEmailStatus")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(16)
+                        .HasColumnType("nvarchar(16)")
+                        .HasDefaultValue("None");
+
                     b.Property<int>("ApprovedCount")
                         .HasColumnType("int");
 

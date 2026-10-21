@@ -9,14 +9,16 @@
 }
 <link rel="stylesheet" href="~/css/collections-campaigns.css" asp-append-version="true" />
 <link rel="stylesheet" href="~/css/collections-snapshot.css" asp-append-version="true" />
+<link rel="stylesheet" href="~/css/collections-review.css" asp-append-version="true" />
 <div class="page receivables-workspace">
     <div class="page-header">
         <div>
             <p class="receivables-eyebrow">Collections</p>
             <h1 class="page-title">Collections Campaigns</h1>
         </div>
-        <div class="page-header__actions"><a class="btn btn-primary" href="@Model.ReviewUrl()" data-review-link>Review &amp; approve</a> <a class="btn" href="/Collections/Receivables">Due &amp; Overdue Customers</a></div>
+        <div class="page-header__actions"><a class="btn" href="/Collections/Receivables">Due &amp; Overdue Customers</a></div>
     </div>
+    <partial name="_CampaignApproval" model="Model" />
     <form class="filter-bar" method="get" action="/Collections/Campaigns" data-receivables-filter data-results-form>
         <div class="field-group">
             <label class="field-label" for="campaignStage">Stage</label>
@@ -75,3 +77,4 @@
 <script src="~/js/receivables.js" asp-append-version="true"></script>
 <script src="~/js/collections-towers.js" asp-append-version="true"></script>
 <script src="~/js/collections-campaign-dates.js" asp-append-version="true"></script>
+<script src="~/js/collections-campaign-approve.js" asp-append-version="true"></script>

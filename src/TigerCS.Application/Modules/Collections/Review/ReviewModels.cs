@@ -42,7 +42,8 @@ public sealed record ReviewPageDto(
 
 public sealed record SelectionRequest(
     ReviewFilter? Filter, string Mode, IReadOnlyList<string>? RecordKeys = null,
-    IReadOnlyList<string>? ExcludedKeys = null, int ContactPage = 1, int ContactPageSize = 50);
+    IReadOnlyList<string>? ExcludedKeys = null, int ContactPage = 1, int ContactPageSize = 50,
+    IReadOnlyList<string>? UnitKeys = null);
 
 public sealed record SelectionContactDto(
     string RecordKey, string ReminderType, string CustomerName, string Phone, string Email,
@@ -51,7 +52,8 @@ public sealed record SelectionContactDto(
 public sealed record SelectionSummaryDto(
     long RunId, int Count, string Fingerprint, IReadOnlyDictionary<string, decimal> TotalsByCurrency,
     IReadOnlyDictionary<string, int> CountByReminderType, int SharedPhoneRecordCount, int SharedPhoneNumberCount,
-    int Page, int PageSize, IReadOnlyList<SelectionContactDto> Contacts, IReadOnlyList<string> Notices);
+    int Page, int PageSize, IReadOnlyList<SelectionContactDto> Contacts, IReadOnlyList<string> Notices,
+    IReadOnlyDictionary<string, string>? ContactListByReminderType = null, bool SourceReconciled = true);
 
 public sealed record ConfirmDispatchRequest(
     SelectionRequest Selection, int ExpectedCount, string ExpectedFingerprint, string IdempotencyKey,
@@ -69,7 +71,9 @@ public sealed record DispatchDto(
     int FailedCount, int UnknownCount, IReadOnlyDictionary<string, decimal> ApprovedTotalsByCurrency,
     IReadOnlyList<DispatchBatchDto> Batches, string Disclaimer,
     string? Phase = null, long? RevalidationMs = null, int SuppressedCount = 0, int SuppressionFailedCount = 0,
-    int UploadedWithoutContactId = 0);
+    int UploadedWithoutContactId = 0,
+    string? ApprovedByName = null, string? AdminEmailStatus = null, string? AdminEmailError = null, DateTime? AdminEmailAttemptedAtUtc = null,
+    int AdminEmailRecipientCount = 0);
 
 public sealed record OverlapRowDto(string CustomerName, int CompanyId, string TenantId, string UnitCode, string ReminderType, decimal? RemainingAmount, string Currency);
 

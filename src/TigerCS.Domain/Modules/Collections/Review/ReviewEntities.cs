@@ -109,8 +109,34 @@ public class CollectionsDispatch
     /// <summary>Held by the worker that is revalidating/sending; an expired lease means that worker died and another may continue.</summary>
     public Guid? LeaseOwner { get; set; }
     public DateTime? LeaseExpiresAtUtc { get; set; }
+    public AdminEmailStatus AdminEmailStatus { get; set; }
+    public DateTime? AdminEmailAttemptedAtUtc { get; set; }
+    public int AdminEmailAttempts { get; set; }
+    public int AdminEmailRecipientCount { get; set; }
+    /// <summary>Safe diagnostic only (never an address or message body).</summary>
+    public string? AdminEmailError { get; set; }
     public List<CollectionsDispatchItem> Items { get; set; } = [];
     public List<CollectionsGenesysBatch> Batches { get; set; } = [];
+}
+
+/// <summary>
+/// Outcome of the administrator report of a finished send. Tracked apart from <see cref="DispatchStatus"/>: a mail failure never changes what Genesys received
+/// and is never repaired by sending the Genesys batch again.
+/// </summary>
+public enum AdminEmailStatus
+{
+    /// <summary>Not attempted yet (send still running, or the send ended without anything uploaded).</summary>
+    None = 0,
+    /// <summary>A worker has claimed the report and is sending it.</summary>
+    Sending = 1,
+    /// <summary>The mail provider accepted the report for every recipient.</summary>
+    Sent = 2,
+    /// <summary>The provider refused or failed for at least one recipient; retry sends the report only.</summary>
+    Failed = 3,
+    /// <summary>Notifications are on but no valid recipient (or a supported attachment format) is configured. Never reported as sent.</summary>
+    NotConfigured = 4,
+    /// <summary>Notifications are switched off by configuration.</summary>
+    Disabled = 5
 }
 
 public enum DispatchItemStatus

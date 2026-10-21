@@ -139,6 +139,7 @@ public class SwaggerDocumentTests(SwaggerDocumentFixture fixture) : IClassFixtur
         "GET /api/collections/review/runs/current",
         "GET /api/collections/review/runs/{runId}",
         "POST /api/collections/review/dispatches/{dispatchId}/cancel",
+        "POST /api/collections/review/dispatches/{dispatchId}/admin-email/retry",
         "GET /api/collections/review/overlaps",
         "GET /api/collections/review/dispatches/{dispatchId}/contacts",
         "POST /api/collections/review/suppression/sweep",

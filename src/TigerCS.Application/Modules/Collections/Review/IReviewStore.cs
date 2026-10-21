@@ -31,6 +31,8 @@ public interface IReviewStore
     Task<CollectionsReviewRun?> GetCurrentRunAsync(CancellationToken ct);
     Task<CollectionsReviewRun?> GetRunAsync(long runId, CancellationToken ct);
     Task<CollectionsReviewRun?> GetActiveRunAsync(CancellationToken ct);
+    /// <summary>The newest run of any status (so a failure that is newer than the published run can be shown).</summary>
+    Task<CollectionsReviewRun?> GetLatestRunAsync(CancellationToken ct);
     /// <summary>Adds a Queued run; false (and no row) when another run is already queued or running.</summary>
     Task<bool> TryAddRunAsync(CollectionsReviewRun run, CancellationToken ct);
     /// <summary>Atomic Queued to Running; false when another worker already claimed it.</summary>
@@ -47,7 +49,8 @@ public interface IReviewStore
     Task<bool> RunHasTowerDataAsync(long runId, CancellationToken ct);
     Task<ReviewCountsDto> CountAsync(long runId, ReviewQuerySpec specWithoutStatus, bool stale, CancellationToken ct);
     /// <summary>All Ready records matching the spec (Ready after the stale adjustment), ordered, capped at <paramref name="max"/> + 1.</summary>
-    Task<IReadOnlyList<ReviewRecordView>> ResolveAsync(long runId, ReviewQuerySpec spec, IReadOnlyCollection<string>? keys, bool stale, int max, CancellationToken ct);
+    Task<IReadOnlyList<ReviewRecordView>> ResolveAsync(long runId, ReviewQuerySpec spec, IReadOnlyCollection<string>? keys, bool stale, int max, CancellationToken ct,
+        IReadOnlyCollection<string>? unitKeys = null);
 
     // ---- dispatch (entities are returned detached; changes are written back with the Update methods)
     Task<CollectionsDispatch?> FindDispatchByKeyAsync(string idempotencyKey, CancellationToken ct);
@@ -73,6 +76,10 @@ public interface IReviewStore
     Task<IReadOnlyList<CollectionsDispatchItem>> GetItemsAsync(long dispatchId, CancellationToken ct);
     /// <summary>Uploaded contacts (with a Genesys id) uploaded since <paramref name="sinceUtc"/> that are not yet suppressed, oldest check first.</summary>
     Task<IReadOnlyList<UploadedContactView>> GetSuppressionCandidatesAsync(DateTime sinceUtc, int take, CancellationToken ct);
+    /// <summary>Atomically takes the right to send the administrator report: only from None, Failed or NotConfigured (or a Sending claim older than <paramref name="staleBeforeUtc"/>) of a finished send. False when another worker has it or it was already Sent.</summary>
+    Task<bool> TryClaimAdminEmailAsync(long dispatchId, DateTime nowUtc, DateTime staleBeforeUtc, CancellationToken ct);
+    /// <summary>Records the report outcome. Touches only the AdminEmail* columns, never the Genesys status.</summary>
+    Task RecordAdminEmailAsync(long dispatchId, AdminEmailStatus status, string? error, int recipientCount, DateTime nowUtc, CancellationToken ct);
     Task SetDispatchPhaseAsync(long dispatchId, string phase, CancellationToken ct);
     Task SetRevalidationMsAsync(long dispatchId, long ms, CancellationToken ct);
     /// <summary>Groups of records that share a phone across units or overlap reminder types today (blocked from dispatch).</summary>

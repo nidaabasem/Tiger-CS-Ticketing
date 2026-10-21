@@ -393,6 +393,7 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddScoped<ReviewRefreshService>();
         services.AddScoped<CurrentBalanceReader>();
         services.AddScoped<DispatchService>();
+        services.AddScoped<DispatchAdminReportService>();
         services.AddScoped<SuppressionService>();
         services.AddScoped<CollectionsAccountQueryAppService>();
         services.AddScoped<ICollectionsCustomerProfiles, CustomerDirectoryCollectionsProfiles>();
