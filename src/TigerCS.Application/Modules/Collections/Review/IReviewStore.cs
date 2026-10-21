@@ -83,6 +83,8 @@ public interface IReviewStore
 /// <summary>Enqueues the explicit background jobs. The Hangfire implementation lives in Infrastructure.</summary>
 public interface IReviewJobScheduler
 {
+    /// <summary>False when nothing will ever execute an enqueued job (background jobs switched off): a run must then fail visibly instead of waiting in Queued.</summary>
+    bool IsAvailable => true;
     void EnqueueRefresh(long runId);
     void EnqueueDispatch(long dispatchId);
     void EnqueueSuppressionSweep();

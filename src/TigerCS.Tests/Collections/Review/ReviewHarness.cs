@@ -97,9 +97,12 @@ public sealed class FakeGenesysClient : IGenesysOutboundClient
 
 public sealed class FakeJobScheduler : IReviewJobScheduler
 {
+    public bool Available { get; set; } = true;
+    public bool IsAvailable => Available;
+    public Exception? EnqueueFailure { get; set; }
     public List<long> Refreshes { get; } = [];
     public List<long> Dispatches { get; } = [];
-    public void EnqueueRefresh(long runId) => Refreshes.Add(runId);
+    public void EnqueueRefresh(long runId) { if (EnqueueFailure is not null) throw EnqueueFailure; Refreshes.Add(runId); }
     public void EnqueueDispatch(long dispatchId) => Dispatches.Add(dispatchId);
     public int Sweeps;
     public void EnqueueSuppressionSweep() => Sweeps++;

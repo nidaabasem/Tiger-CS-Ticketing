@@ -27,6 +27,13 @@ public sealed class ReviewQueryService(
             return CollectionsResult<ReviewRunDto?>.Fail(CollectionsOutcome.Forbidden);
         if (!options.Enabled) return CollectionsResult<ReviewRunDto?>.Fail(CollectionsOutcome.Disabled);
         var active = await store.GetActiveRunAsync(ct);
+        if (active is not null && TimeoutReason(active) is { } reason)
+        {
+            // The worker never picked the run up (or died): fail it so the page and its poll stop at "Failed" with the reason.
+            await store.FailRunAsync(active.CollectionsReviewRunId, reason, clock.UtcNow, ct);
+            active = await store.GetRunAsync(active.CollectionsReviewRunId, ct);
+            if (active is not null) return CollectionsResult<ReviewRunDto?>.Ok(ToDto(active));
+        }
         var run = active ?? await store.GetCurrentRunAsync(ct);
         return CollectionsResult<ReviewRunDto?>.Ok(run is null ? null : ToDto(run));
     }
@@ -180,6 +187,17 @@ public sealed class ReviewQueryService(
         return new(resolved.Run!.CollectionsReviewRunId, records.Count, Fingerprint(records), TotalsByCurrency(records),
             records.GroupBy(r => r.ReminderType.ToString()).OrderBy(g => g.Key, StringComparer.Ordinal).ToDictionary(g => g.Key, g => g.Count()),
             shared.Records, shared.Numbers, page, size, contacts, notices);
+    }
+
+    private string? TimeoutReason(CollectionsReviewRun run)
+    {
+        var now = clock.UtcNow;
+        if (run.Status == ReviewRunStatus.Queued && now - run.RequestedAtUtc > TimeSpan.FromMinutes(Math.Max(1, reviewOptions.QueuedTimeoutMinutes)))
+            return $"The refresh was not picked up by a background worker within {Math.Max(1, reviewOptions.QueuedTimeoutMinutes)} minutes. "
+                 + "Check that BackgroundJobs:Enabled is true and the API's Hangfire server is running, then retry.";
+        if (run.Status == ReviewRunStatus.Running && now - (run.StartedAtUtc ?? run.RequestedAtUtc) > TimeSpan.FromMinutes(Math.Max(1, reviewOptions.StuckRunMinutes)))
+            return "The refresh stopped responding and was marked failed. Retry.";
+        return null;
     }
 
     /// <summary>A review run is built from the local receivables snapshot, so it is stale when that snapshot is: the snapshot's own limit (<see cref="ReceivablesSnapshotOptions.MaxAgeMinutes"/>) applies.</summary>

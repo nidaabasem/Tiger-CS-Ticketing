@@ -110,7 +110,7 @@
     }
     <form method="post" class="review-refresh">
         @if (Model.CompanyId is { } c) { <input type="hidden" name="CompanyId" value="@c" /> }
-        <button class="btn btn-primary" type="submit" asp-page-handler="Refresh" disabled="@Model.RunActive">Refresh review data</button>
+        <button class="btn btn-primary" type="submit" asp-page-handler="Refresh" disabled="@Model.RunActive">@(Model.Run is { Status: "Failed" } ? "Retry refresh" : "Refresh review data")</button>
         <span class="review-note">Reads PACT once in the background (can take a few minutes) and shows progress. Browsing and filtering never read PACT.</span>
     </form>
 
