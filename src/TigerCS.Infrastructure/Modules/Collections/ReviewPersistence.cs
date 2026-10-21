@@ -149,7 +149,8 @@ public sealed class ReviewWriteRetryPolicy
         20, 64, 233, 10053, 10054, 10060, 10061, 258,   // transport / network / "wait operation timed out"
         121,     // semaphore timeout
         1205,    // chosen as deadlock victim: the transaction was rolled back
-        4060, 40197, 40501, 40613, 49918, 49919, 49920, 40143  // failover / throttling
+        4060, 40197, 40501, 40613, 49918, 49919, 49920, 40143, 10928, 10929, 10936,   // failover / throttling / resource limits (the numbers EF's SqlServer detector also treats as transient)
+        41301, 41302, 41305, 41325, 41839
     ];
 
     public int MaxAttempts { get; init; } = 3;
@@ -190,16 +191,16 @@ public sealed class ReviewStore(TigerCsDbContext db, ReviewWriteRetryPolicy? ret
     // ---------------------------------------------------------------- runs
 
     public Task<CollectionsReviewRun?> GetCurrentRunAsync(CancellationToken ct) =>
-        db.CollectionsReviewRuns.AsNoTracking().FirstOrDefaultAsync(r => r.IsCurrent, ct);
+        RunWithRetryAsync("read the current review run", token => db.CollectionsReviewRuns.AsNoTracking().FirstOrDefaultAsync(r => r.IsCurrent, token), ct);
 
     public Task<CollectionsReviewRun?> GetRunAsync(long runId, CancellationToken ct) =>
-        db.CollectionsReviewRuns.AsNoTracking().FirstOrDefaultAsync(r => r.CollectionsReviewRunId == runId, ct);
+        RunWithRetryAsync("read the review run", token => db.CollectionsReviewRuns.AsNoTracking().FirstOrDefaultAsync(r => r.CollectionsReviewRunId == runId, token), ct);
 
     public Task<CollectionsReviewRun?> GetLatestRunAsync(CancellationToken ct) =>
-        db.CollectionsReviewRuns.AsNoTracking().OrderByDescending(r => r.CollectionsReviewRunId).FirstOrDefaultAsync(ct);
+        RunWithRetryAsync("read the latest review run", token => db.CollectionsReviewRuns.AsNoTracking().OrderByDescending(r => r.CollectionsReviewRunId).FirstOrDefaultAsync(token), ct);
 
     public Task<CollectionsReviewRun?> GetActiveRunAsync(CancellationToken ct) =>
-        db.CollectionsReviewRuns.AsNoTracking().FirstOrDefaultAsync(r => r.IsActive, ct);
+        RunWithRetryAsync("read the active review run", token => db.CollectionsReviewRuns.AsNoTracking().FirstOrDefaultAsync(r => r.IsActive, token), ct);
 
     public async Task<bool> TryAddRunAsync(CollectionsReviewRun run, CancellationToken ct)
     {
@@ -209,15 +210,43 @@ public sealed class ReviewStore(TigerCsDbContext db, ReviewWriteRetryPolicy? ret
         catch (DbUpdateException ex) when (IsUniqueViolation(ex)) { db.ChangeTracker.Clear(); return false; }
     }
 
-    public async Task<bool> TryStartRunAsync(long runId, DateTime nowUtc, CancellationToken ct) =>
-        await db.CollectionsReviewRuns.Where(r => r.CollectionsReviewRunId == runId && r.Status == ReviewRunStatus.Queued)
-            .ExecuteUpdateAsync(s => s.SetProperty(r => r.Status, ReviewRunStatus.Running).SetProperty(r => r.StartedAtUtc, nowUtc)
-                .SetProperty(r => r.Phase, "Starting").SetProperty(r => r.ProgressPercent, 1), ct) == 1;
+    /// <summary>
+    /// Queued to Running is a compare-and-set, so it is NOT retried blindly: if the first attempt's answer is lost after the row really changed, a second attempt would report "already
+    /// claimed" and the run would be abandoned while Running. A transient failure is reported as a clear <see cref="ReviewStorageException"/> instead, and the caller fails the run visibly.
+    /// </summary>
+    public async Task<bool> TryStartRunAsync(long runId, DateTime nowUtc, CancellationToken ct)
+    {
+        try
+        {
+            return await db.CollectionsReviewRuns.Where(r => r.CollectionsReviewRunId == runId && r.Status == ReviewRunStatus.Queued)
+                .ExecuteUpdateAsync(s => s.SetProperty(r => r.Status, ReviewRunStatus.Running).SetProperty(r => r.StartedAtUtc, nowUtc)
+                    .SetProperty(r => r.Phase, "Starting").SetProperty(r => r.ProgressPercent, 1), ct) == 1;
+        }
+        catch (Exception ex) when (!ct.IsCancellationRequested && ex is not OperationCanceledException && _retry.IsTransient(ex))
+        {
+            db.ChangeTracker.Clear();
+            await ResetConnectionAsync();
+            throw TransientFailure("start the review refresh", 1, ex);
+        }
+    }
 
+    /// <summary>Sets absolute values, so repeating it after an ambiguous failure is harmless: it is retried like any other idempotent write.</summary>
     public Task UpdateRunProgressAsync(long runId, string phase, int percent, int? sourceRows, CancellationToken ct) =>
-        db.CollectionsReviewRuns.Where(r => r.CollectionsReviewRunId == runId)
+        WriteWithRetryAsync("update the review refresh progress", token => db.CollectionsReviewRuns.Where(r => r.CollectionsReviewRunId == runId)
             .ExecuteUpdateAsync(s => s.SetProperty(r => r.Phase, phase).SetProperty(r => r.ProgressPercent, percent)
-                .SetProperty(r => r.SourceRowCount, r => sourceRows ?? r.SourceRowCount), ct);
+                .SetProperty(r => r.SourceRowCount, r => sourceRows ?? r.SourceRowCount), token), ct);
+
+    private static ReviewStorageException TransientFailure(string what, int attempts, Exception ex) => new(
+        $"Could not {what}: the database connection was lost or timed out after {attempts} attempt(s)" + (ReviewWriteRetryPolicy.NumberOf(ex) is { } n ? $" (SQL error {n})" : "")
+        + ". Nothing was published; the previous review data is still in use. Retry.", true, ReviewWriteRetryPolicy.NumberOf(ex), ex);
+
+    /// <summary>A bounded retry for an idempotent READ or write that returns a value (same rules as <see cref="WriteWithRetryAsync"/>).</summary>
+    private async Task<T> RunWithRetryAsync<T>(string what, Func<CancellationToken, Task<T>> operation, CancellationToken ct)
+    {
+        T? result = default;
+        await WriteWithRetryAsync(what, async token => { result = await operation(token); }, ct);
+        return result!;
+    }
 
     /// <summary>
     /// Runs an IDEMPOTENT write, retrying a bounded number of times on a transient connection failure with a fresh connection and a clean change tracker.
@@ -233,10 +262,7 @@ public sealed class ReviewStore(TigerCsDbContext db, ReviewWriteRetryPolicy? ret
             {
                 db.ChangeTracker.Clear();
                 await ResetConnectionAsync();
-                if (attempt >= attempts)
-                    throw new ReviewStorageException(
-                        $"Could not {what}: the database connection was lost or timed out after {attempt} attempt(s)" + (ReviewWriteRetryPolicy.NumberOf(ex) is { } n ? $" (SQL error {n})" : "")
-                        + ". Nothing was published; the previous review data is still in use. Retry.", true, ReviewWriteRetryPolicy.NumberOf(ex), ex);
+                if (attempt >= attempts) throw TransientFailure(what, attempt, ex);
                 await Task.Delay(_retry.Delay(attempt), ct);
             }
         }

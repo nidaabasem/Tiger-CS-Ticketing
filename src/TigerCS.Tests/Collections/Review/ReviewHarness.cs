@@ -119,6 +119,9 @@ public sealed class WriteFaults : Microsoft.EntityFrameworkCore.Diagnostics.Save
     public int FailAfterCommit;
     public bool Persistent;
     public int RecordSaves;
+    public int FailProgress; public bool ProgressPersistent; public int ProgressAttempts;
+    public int FailStart; public int StartAttempts;
+    public int FailReads;
     public Func<Exception> Make { get; set; } = () => new TransientTestException();
 
     public override ValueTask<Microsoft.EntityFrameworkCore.Diagnostics.InterceptionResult<int>> SavingChangesAsync(
@@ -143,6 +146,44 @@ public sealed class CommitFaults(WriteFaults faults) : Microsoft.EntityFramework
 }
 
 public sealed class TransientTestException : Exception;
+
+/// <summary>
+/// Command-level faults. A failing WRITE is raised the way EF Core's non-retrying SQL Server strategy does: as an InvalidOperationException ("...likely due to a transient failure...")
+/// around the provider exception; a failing READ is the raw provider exception.
+/// </summary>
+public sealed class CommandFaults(WriteFaults faults) : Microsoft.EntityFrameworkCore.Diagnostics.DbCommandInterceptor
+{
+    public const string EfMessage = "An exception has been raised that is likely due to a transient failure. Consider enabling transient error resiliency by adding 'EnableRetryOnFailure' to the 'UseSqlServer' call.";
+
+    public override ValueTask<Microsoft.EntityFrameworkCore.Diagnostics.InterceptionResult<int>> NonQueryExecutingAsync(System.Data.Common.DbCommand command,
+        Microsoft.EntityFrameworkCore.Diagnostics.CommandEventData eventData, Microsoft.EntityFrameworkCore.Diagnostics.InterceptionResult<int> result, CancellationToken cancellationToken = default)
+    {
+        var text = command.CommandText;
+        if (text.Contains("UPDATE", StringComparison.Ordinal) && text.Contains("\"CollectionsReviewRuns\"", StringComparison.Ordinal))
+        {
+            if (text.Contains("StartedAtUtc", StringComparison.Ordinal) && !text.Contains("CompletedAtUtc", StringComparison.Ordinal))
+            {
+                faults.StartAttempts++;
+                if (Take(ref faults.FailStart)) throw new InvalidOperationException(EfMessage, faults.Make());
+            }
+            else if (text.Contains("ProgressPercent", StringComparison.Ordinal) && !text.Contains("IsCurrent", StringComparison.Ordinal))
+            {
+                faults.ProgressAttempts++;
+                if (faults.ProgressPersistent || Take(ref faults.FailProgress)) throw new InvalidOperationException(EfMessage, faults.Make());
+            }
+        }
+        return base.NonQueryExecutingAsync(command, eventData, result, cancellationToken);
+    }
+
+    public override ValueTask<Microsoft.EntityFrameworkCore.Diagnostics.InterceptionResult<System.Data.Common.DbDataReader>> ReaderExecutingAsync(System.Data.Common.DbCommand command,
+        Microsoft.EntityFrameworkCore.Diagnostics.CommandEventData eventData, Microsoft.EntityFrameworkCore.Diagnostics.InterceptionResult<System.Data.Common.DbDataReader> result, CancellationToken cancellationToken = default)
+    {
+        if (command.CommandText.Contains("FROM \"CollectionsReviewRuns\"", StringComparison.Ordinal) && Take(ref faults.FailReads)) throw faults.Make();
+        return base.ReaderExecutingAsync(command, eventData, result, cancellationToken);
+    }
+
+    private static bool Take(ref int counter) { if (counter <= 0) return false; counter--; return true; }
+}
 
 public sealed class FakeJobScheduler : IReviewJobScheduler
 {
@@ -219,7 +260,7 @@ internal sealed class ReviewHarness : IDisposable
         (_shared is not null
             ? new DbContextOptionsBuilder<TigerCsDbContext>().UseSqlite(_shared)
             : new DbContextOptionsBuilder<TigerCsDbContext>().UseSqlite($"Data Source={_file};Pooling=False;Default Timeout=60"))
-        .AddInterceptors(Faults, new CommitFaults(Faults)).Options);
+        .AddInterceptors(Faults, new CommitFaults(Faults), new CommandFaults(Faults)).Options);
 
     public sealed class Scope(TigerCsDbContext context, ReviewHarness h) : IDisposable
     {
