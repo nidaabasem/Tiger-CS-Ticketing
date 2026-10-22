@@ -29,6 +29,8 @@ public sealed class SmsRegistrationTests
 
     private static ServiceProvider Build(Dictionary<string, string?> settings, AllLogs? logs = null, StubHttpMessageHandler? handler = null)
     {
+        // Customer SMS passes the delivery guard only in Production mode; these tests are about provider selection, not the mode.
+        settings.TryAdd("CustomerNotifications:Mode", "Production");
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(settings).Build();
         var services = new ServiceCollection();
         services.AddLogging(b => { b.SetMinimumLevel(LogLevel.Trace); if (logs is not null) b.AddProvider(logs); });
@@ -41,6 +43,10 @@ public sealed class SmsRegistrationTests
         return services.BuildServiceProvider();
     }
 
+    /// <summary>Every registered sender sits behind the customer-delivery guard; the tests look at the provider behind it.</summary>
+    private static ISmsSender Provider(ISmsSender sender) =>
+        Assert.IsType<TigerCS.Application.Modules.Notifications.Services.CustomerDeliveryGuardSmsSender>(sender).Inner;
+
     [Fact]
     public void TheDefault_IsDisabled_NothingIsConfigured()
     {
@@ -49,7 +55,7 @@ public sealed class SmsRegistrationTests
 
         var sender = scope.ServiceProvider.GetRequiredService<ISmsSender>();
 
-        Assert.IsType<DisabledSmsSender>(sender);
+        Assert.IsType<DisabledSmsSender>(Provider(sender));
         Assert.False(sender.IsConfigured);
     }
 
@@ -62,7 +68,7 @@ public sealed class SmsRegistrationTests
         using var provider = Build(new() { ["Sms:Provider"] = name });
         using var scope = provider.CreateScope();
 
-        Assert.IsType(expected, scope.ServiceProvider.GetRequiredService<ISmsSender>());
+        Assert.IsType(expected, Provider(scope.ServiceProvider.GetRequiredService<ISmsSender>()));
     }
 
     [Fact]

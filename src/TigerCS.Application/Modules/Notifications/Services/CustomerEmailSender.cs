@@ -26,6 +26,7 @@ namespace TigerCS.Application.Modules.Notifications.Services;
 public sealed class CustomerEmailSender(
     IEmailSender emailSender,
     CustomerNotificationPolicy policy,
+    CustomerNotificationModePolicy modePolicy,
     ILogger<CustomerEmailSender> logger) : ICustomerEmailSender
 {
     public async Task<CustomerEmailSendResult> SendAsync(CustomerEmailRequest request, CancellationToken cancellationToken = default)
@@ -33,10 +34,21 @@ public sealed class CustomerEmailSender(
         ArgumentNullException.ThrowIfNull(request);
 
         CustomerEmailSendResult result;
+        var decision = modePolicy.Evaluate(request.NotificationType);
 
         if (!policy.Enabled)
         {
             result = CustomerEmailSendResult.Skipped(CustomerEmailSkipReasons.NotificationsDisabled);
+        }
+        else if (!decision.Deliver)
+        {
+            // CustomerNotifications:Mode forbids this message (Test mode, or no valid mode). Nothing is resolved or sent.
+            result = CustomerEmailSendResult.Skipped(decision.SuppressReason ?? CustomerEmailSkipReasons.CustomerNotificationModeInvalid);
+        }
+        else if (decision.Recipient is { } testRecipient)
+        {
+            // Test mode: the customer's own address is never consulted — it may be missing or invalid and the test mail still goes.
+            result = await DeliverAsync(testRecipient, request, decision, cancellationToken);
         }
         else if (CustomerEmailAddress.Normalize(request.RecipientAddress) is not { } recipient)
         {
@@ -48,22 +60,27 @@ public sealed class CustomerEmailSender(
         }
         else
         {
-            result = await DeliverAsync(recipient, request, cancellationToken);
+            result = await DeliverAsync(recipient, request, decision, cancellationToken);
         }
 
-        Log(request, result);
+        Log(request, decision, result);
         return result;
     }
 
     private async Task<CustomerEmailSendResult> DeliverAsync(
-        string recipient, CustomerEmailRequest request, CancellationToken cancellationToken)
+        string recipient, CustomerEmailRequest request, CustomerDeliveryDecision decision, CancellationToken cancellationToken)
     {
+        var subject = decision.IsTest && !request.Content.Subject.StartsWith(CustomerNotificationModePolicy.TestSubjectPrefix, StringComparison.Ordinal)
+            ? CustomerNotificationModePolicy.TestSubjectPrefix + request.Content.Subject
+            : request.Content.Subject;
+
         var message = new EmailMessage(
             recipient,
-            request.Content.Subject,
+            subject,
             request.Content.TextBody,
             request.CorrelationId,
-            request.Content.HtmlBody);
+            request.Content.HtmlBody,
+            Audience: decision.IsTest ? EmailAudience.TestMailbox : EmailAudience.Customer);
 
         EmailSendResult providerResult;
         try
@@ -79,6 +96,7 @@ public sealed class CustomerEmailSender(
         return providerResult.Outcome switch
         {
             EmailSendOutcome.Sent => CustomerEmailSendResult.Sent(),
+            EmailSendOutcome.Suppressed => CustomerEmailSendResult.Skipped(providerResult.Error ?? CustomerEmailSkipReasons.CustomerNotificationModeInvalid),
             EmailSendOutcome.PermanentFailure => CustomerEmailSendResult.Permanent(
                 providerResult.Error ?? "The email provider reported a permanent failure."),
             _ => CustomerEmailSendResult.Transient(
@@ -86,9 +104,10 @@ public sealed class CustomerEmailSender(
         };
     }
 
-    private void Log(CustomerEmailRequest request, CustomerEmailSendResult result)
+    private void Log(CustomerEmailRequest request, CustomerDeliveryDecision decision, CustomerEmailSendResult result)
     {
-        var masked = CustomerEmailAddress.Mask(request.RecipientAddress);
+        // In Test mode the recipient is the test mailbox, never the customer, so the customer's address is not logged at all.
+        var masked = decision.IsTest ? "(test mailbox)" : CustomerEmailAddress.Mask(request.RecipientAddress);
 
         switch (result.Outcome)
         {
@@ -96,6 +115,14 @@ public sealed class CustomerEmailSender(
                 logger.LogInformation(
                     "Customer email {NotificationType} for ticket {TicketNumber} sent to {MaskedRecipient}. CorrelationId {CorrelationId}.",
                     request.NotificationType, request.TicketNumber, masked, request.CorrelationId);
+                break;
+
+            case CustomerEmailSendOutcome.Skipped when result.Reason is CustomerEmailSkipReasons.TestEmailMissing
+                or CustomerEmailSkipReasons.CustomerNotificationModeInvalid:
+                logger.LogWarning(
+                    "Customer email {NotificationType} for ticket {TicketNumber} suppressed ({Reason}): {Warning} CorrelationId {CorrelationId}.",
+                    request.NotificationType, request.TicketNumber, result.Reason,
+                    modePolicy.ConfigurationWarning ?? "Customer notification mode forbids delivery.", request.CorrelationId);
                 break;
 
             case CustomerEmailSendOutcome.Skipped:

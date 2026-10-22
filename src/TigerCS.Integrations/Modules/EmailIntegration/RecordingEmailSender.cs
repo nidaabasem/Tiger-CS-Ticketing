@@ -53,7 +53,7 @@ public sealed class RecordingEmailSender(ILogger<RecordingEmailSender> logger) :
 
         _recorded.Enqueue(new RecordedEmail(
             message.ToAddress, message.Subject, message.Body, message.CorrelationId,
-            message.Attachments?.Select(a => a.FileName).ToList()));
+            message.Attachments?.Select(a => a.FileName).ToList(), message.HtmlBody));
 
         while (_recorded.Count > MaxRecordedDeliveries && _recorded.TryDequeue(out _))
         {
@@ -101,4 +101,5 @@ public sealed class RecordingEmailSender(ILogger<RecordingEmailSender> logger) :
 /// <param name="CorrelationId">ADR-0014's correlation ID.</param>
 /// <param name="AttachmentFileNames">Names of attached files (never their content), so a test can see a document copy was attached.</param>
 public sealed record RecordedEmail(
-    string ToAddress, string Subject, string Body, Guid CorrelationId, IReadOnlyList<string>? AttachmentFileNames = null);
+    string ToAddress, string Subject, string Body, Guid CorrelationId, IReadOnlyList<string>? AttachmentFileNames = null,
+    string? HtmlBody = null);

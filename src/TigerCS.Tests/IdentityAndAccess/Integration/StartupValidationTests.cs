@@ -21,6 +21,11 @@ namespace TigerCS.Tests.IdentityAndAccess.Integration;
 /// </summary>
 public class StartupValidationTests
 {
+    /// <summary>Every <see cref="IEmailSender"/> is wrapped in the customer-delivery guard; these tests are about which provider sits behind it.</summary>
+    private static IEmailSender ProviderBehindTheGuard(Microsoft.AspNetCore.Mvc.Testing.WebApplicationFactory<Program> factory) =>
+        Assert.IsType<TigerCS.Application.Modules.Notifications.Services.CustomerDeliveryGuardEmailSender>(
+            factory.Services.GetRequiredService<IEmailSender>()).Inner;
+
     private sealed class ConfiguredFactory(
         string environment, Dictionary<string, string?> overrides, bool useInMemoryDb = true)
         : WebApplicationFactory<Program>
@@ -233,7 +238,7 @@ public class StartupValidationTests
         var server = factory.Server;
 
         Assert.NotNull(server);
-        Assert.IsType<RecordingEmailSender>(factory.Services.GetRequiredService<IEmailSender>());
+        Assert.IsType<RecordingEmailSender>(ProviderBehindTheGuard(factory));
     }
 
     /// <summary>Same as the UAT case for a Production host: disabled delivery plus the recording adapter is allowed, and still delivers nothing.</summary>
@@ -250,7 +255,7 @@ public class StartupValidationTests
         var server = factory.Server;
 
         Assert.NotNull(server);
-        Assert.IsType<RecordingEmailSender>(factory.Services.GetRequiredService<IEmailSender>());
+        Assert.IsType<RecordingEmailSender>(ProviderBehindTheGuard(factory));
     }
 
     /// <summary>
@@ -296,7 +301,7 @@ public class StartupValidationTests
         var server = factory.Server;
 
         Assert.NotNull(server);
-        Assert.IsType<RecordingEmailSender>(factory.Services.GetRequiredService<IEmailSender>());
+        Assert.IsType<RecordingEmailSender>(ProviderBehindTheGuard(factory));
     }
 
     /// <summary>
@@ -352,7 +357,7 @@ public class StartupValidationTests
         using var factory = new ConfiguredFactory("Production", config);
 
         Assert.NotNull(factory.Server);
-        Assert.IsType<SmtpEmailSender>(factory.Services.GetRequiredService<IEmailSender>());
+        Assert.IsType<SmtpEmailSender>(ProviderBehindTheGuard(factory));
         Assert.IsType<CustomerEmailSender>(factory.Services.GetRequiredService<ICustomerEmailSender>());
         Assert.True(factory.Services.GetRequiredService<CustomerNotificationPolicy>().Enabled);
     }

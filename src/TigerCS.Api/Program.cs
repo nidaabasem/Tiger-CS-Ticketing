@@ -200,6 +200,28 @@ using (var verificationTestingScope = app.Services.CreateScope())
     }
 }
 
+// Customer notification mode. Unlike VerificationTesting this never stops the host: a missing or invalid mode simply sends no
+// customer message (the delivery boundary enforces that), and the reason is logged here once at startup.
+{
+    var customerNotifications = app.Services.GetRequiredService<TigerCS.Application.Modules.Notifications.CustomerNotificationModePolicy>();
+    if (customerNotifications.ConfigurationWarning is { } notificationWarning)
+    {
+        app.Logger.LogWarning("CustomerNotifications: {Warning}", notificationWarning);
+    }
+    else if (customerNotifications.IsTest)
+    {
+        app.Logger.LogWarning(
+            "CustomerNotifications is in TEST mode in {Environment}: only Resolved and Closed emails are sent, and only to the configured test mailbox; no customer is contacted.",
+            app.Environment.EnvironmentName);
+    }
+
+    if (customerNotifications.PublicBaseUrl is null)
+    {
+        app.Logger.LogWarning(
+            "CustomerNotifications:PublicBaseUrl is not configured; Resolved/Closed emails will carry no review section.");
+    }
+}
+
 // Fail fast if fixture Collections balances would be served outside
 // Development/Testing — a sample balance shown to an agent, or read by the
 // voice bot, as if it were a customer's real debt is the one failure this

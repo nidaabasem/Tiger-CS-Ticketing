@@ -1,9 +1,11 @@
 using TigerCS.Application.Modules.Collections;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using TigerCS.Application.Modules.Collections.Abstractions;
 using TigerCS.Application.Modules.Collections.Review;
+using TigerCS.Application.Modules.CrmDocuments;
 using TigerCS.Application.Modules.CrmDocuments.Abstractions;
 using TigerCS.Application.Modules.CrmDocuments.Services;
 using TigerCS.Application.Modules.CustomerVerification.CrmIntegration;
@@ -366,25 +368,36 @@ public static class IntegrationsServiceCollectionExtensions
         services.AddSingleton<ISmtpTransport, SmtpClientTransport>();
         services.AddSingleton<SmtpEmailSender>();
         services.AddSingleton<RecordingEmailSender>();
+        services.AddCustomerNotificationMode(configuration);
+
+        // Every IEmailSender consumer receives the provider wrapped in the customer-delivery guard, so
+        // CustomerNotifications:Mode is enforced at the final boundary no matter which flow or background job sends.
         services.AddSingleton<IEmailSender>(sp =>
-        {
-            var options = sp.GetRequiredService<IOptions<EmailNotificationOptions>>().Value;
-            if (options.IsSmtp)
-            {
-                return sp.GetRequiredService<SmtpEmailSender>();
-            }
-
-            if (options.IsRecording)
-            {
-                return sp.GetRequiredService<RecordingEmailSender>();
-            }
-
-            throw new NotSupportedException(
-                $"EmailNotifications:Provider '{options.Provider}' is not supported. Use \"Smtp\" (the Microsoft 365 "
-                + "SMTP account — the standard for UAT and Production) or \"Recording\" (the in-memory adapter for the "
-                + "automated test host and local development; never delivers anything).");
-        });
+            new CustomerDeliveryGuardEmailSender(
+                CreateProvider(sp),
+                sp.GetRequiredService<CustomerNotificationModePolicy>(),
+                sp.GetService<VerificationTestingPolicy>(),
+                sp.GetRequiredService<ILogger<CustomerDeliveryGuardEmailSender>>()));
 
         services.AddSingleton<ICustomerEmailSender, CustomerEmailSender>();
+    }
+
+    private static IEmailSender CreateProvider(IServiceProvider sp)
+    {
+        var options = sp.GetRequiredService<IOptions<EmailNotificationOptions>>().Value;
+        if (options.IsSmtp)
+        {
+            return sp.GetRequiredService<SmtpEmailSender>();
+        }
+
+        if (options.IsRecording)
+        {
+            return sp.GetRequiredService<RecordingEmailSender>();
+        }
+
+        throw new NotSupportedException(
+            $"EmailNotifications:Provider '{options.Provider}' is not supported. Use \"Smtp\" (the Microsoft 365 "
+            + "SMTP account — the standard for UAT and Production) or \"Recording\" (the in-memory adapter for the "
+            + "automated test host and local development; never delivers anything).");
     }
 }

@@ -47,7 +47,8 @@ public abstract class CustomerTicketEmailHandler(
     ICustomerEmailSender emailSender,
     IAuditEntryWriter auditWriter,
     CustomerNotificationPolicy policy,
-    TimeProvider timeProvider) : IOutboxEventHandler
+    TimeProvider timeProvider,
+    CustomerNotificationModePolicy modePolicy) : IOutboxEventHandler
 {
     public abstract string EventType { get; }
 
@@ -69,6 +70,8 @@ public abstract class CustomerTicketEmailHandler(
     }
 
     protected CustomerNotificationPolicy Policy => policy;
+
+    protected CustomerNotificationModePolicy ModePolicy => modePolicy;
 
     public async Task<OutboxHandlingResult> HandleAsync(OutboxMessage message, CancellationToken cancellationToken = default)
     {
@@ -106,6 +109,11 @@ public abstract class CustomerTicketEmailHandler(
         var nowUtc = timeProvider.GetUtcNow().UtcDateTime;
         var contact = await contactResolver.ResolveAsync(ticket, cancellationToken);
 
+        // CustomerNotifications:Mode: Production sends to the customer, Test redirects Resolved/Closed to the test mailbox and
+        // suppresses the rest, and an invalid mode sends nothing. The sender enforces the same rule again at the delivery
+        // boundary; deciding here as well lets the audit trail say why nothing was sent.
+        var decision = modePolicy.Evaluate(NotificationType);
+
         if (notification is null)
         {
             notification = new Notification(
@@ -114,7 +122,7 @@ public abstract class CustomerTicketEmailHandler(
                 // Always null: customer notifications go to the external
                 // requester, never to a staff mailbox.
                 recipientEmployeeId: null,
-                contact.EmailAddress,
+                decision.Recipient ?? contact.EmailAddress,
                 NotificationChannel.Email,
                 message.CorrelationId,
                 message.OutboxMessageId,
@@ -128,12 +136,20 @@ public abstract class CustomerTicketEmailHandler(
             return await SkipAsync(ticket, notification, message, CustomerEmailSkipReasons.NotificationsDisabled, cancellationToken);
         }
 
+        if (!decision.Deliver)
+        {
+            return await SkipAsync(
+                ticket, notification, message, decision.SuppressReason ?? CustomerEmailSkipReasons.CustomerNotificationModeInvalid, cancellationToken);
+        }
+
         if (policy.MaxEventAge > TimeSpan.Zero && nowUtc - message.OccurredAtUtc > policy.MaxEventAge)
         {
             return await SkipAsync(ticket, notification, message, CustomerEmailSkipReasons.EventTooOld, cancellationToken);
         }
 
-        if (!contact.IsDeliverable)
+        // In Test mode the customer's own address is irrelevant (the test mailbox receives the message), so a phone-only or
+        // unverified ticket can still be tested.
+        if (!contact.IsDeliverable && decision.Recipient is null)
         {
             return await SkipAsync(
                 ticket, notification, message, contact.SkipReason ?? CustomerEmailSkipReasons.NoCustomerEmail, cancellationToken);
@@ -143,7 +159,7 @@ public abstract class CustomerTicketEmailHandler(
 
         var result = await emailSender.SendAsync(
             new CustomerEmailRequest(
-                NotificationType, ticket.TicketId, ticket.TicketNumber, contact.EmailAddress, content, message.CorrelationId),
+                NotificationType, ticket.TicketId, ticket.TicketNumber, decision.Recipient ?? contact.EmailAddress, content, message.CorrelationId),
             cancellationToken);
 
         return result.Outcome switch

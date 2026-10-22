@@ -181,7 +181,7 @@ public sealed class EmailReminderDeliveryProvider(IEmailSender emailSender) : IR
         return result.Outcome switch
         {
             EmailSendOutcome.Sent => new ReminderDeliveryResult(ReminderDeliveryOutcome.Accepted),
-            EmailSendOutcome.PermanentFailure => new ReminderDeliveryResult(ReminderDeliveryOutcome.PermanentFailure, Error: result.Error),
+            EmailSendOutcome.PermanentFailure or EmailSendOutcome.Suppressed => new ReminderDeliveryResult(ReminderDeliveryOutcome.PermanentFailure, Error: result.Error),
             _ => new ReminderDeliveryResult(ReminderDeliveryOutcome.TransientFailure, Error: result.Error)
         };
     }

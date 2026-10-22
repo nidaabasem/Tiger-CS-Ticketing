@@ -28,7 +28,7 @@ public class TicketLifecycleNotificationHandlerTests
         Assert.Equal(OutboxHandlingOutcome.Succeeded, result.Outcome);
         var email = Assert.Single(f.Email.Sent);
         Assert.Equal("ahmed@example.com", email.ToAddress);
-        Assert.Equal("Your request has been resolved – Ticket TG-CS-20260822-0100", email.Subject);
+        Assert.Equal("Your Ticket #TG-CS-20260822-0100 Has Been Resolved", email.Subject);
         Assert.Contains("TG-CS-20260822-0100", email.Body, StringComparison.Ordinal);
         Assert.Contains("Status: Resolved", email.Body, StringComparison.Ordinal);
         Assert.Contains("Ahmed Al-Farsi", email.Body, StringComparison.Ordinal);
@@ -91,7 +91,7 @@ public class TicketLifecycleNotificationHandlerTests
 
         Assert.Equal(OutboxHandlingOutcome.Succeeded, result.Outcome);
         var email = Assert.Single(f.Email.Sent);
-        Assert.Equal("Your request has been closed – Ticket TG-CS-20260822-0101", email.Subject);
+        Assert.Equal("Your Ticket #TG-CS-20260822-0101 Has Been Closed", email.Subject);
         Assert.Equal(NotificationType.Closed, Assert.Single(f.Notifications.Notifications).NotificationType);
     }
 
@@ -247,8 +247,8 @@ public class TicketLifecycleNotificationHandlerTests
         Assert.Equal(0, result.DeadLettered);
         Assert.Collection(
             f.Email.Sent.OrderBy(e => e.Subject),
-            e => Assert.StartsWith("Your request has been closed", e.Subject, StringComparison.Ordinal),
-            e => Assert.StartsWith("Your request has been resolved", e.Subject, StringComparison.Ordinal));
+            e => Assert.EndsWith("Has Been Closed", e.Subject, StringComparison.Ordinal),
+            e => Assert.EndsWith("Has Been Resolved", e.Subject, StringComparison.Ordinal));
         Assert.All(f.OutboxMessages.Messages, m => Assert.Equal(OutboxMessageStatus.Processed, m.Status));
     }
 

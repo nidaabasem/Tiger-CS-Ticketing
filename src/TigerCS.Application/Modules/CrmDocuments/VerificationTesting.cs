@@ -97,6 +97,14 @@ public sealed partial class VerificationTestingPolicy
     /// <summary>Test mode is on but unusable — every delivery must be refused.</summary>
     public bool IsBlocked => Enabled && ConfigurationError is not null;
 
+    /// <summary>True when test mode is on and valid and <paramref name="address"/> is the configured test mailbox.</summary>
+    public bool IsApprovedEmailOverride(string? address) =>
+        Enabled && !IsBlocked && _emailOverride.Length > 0 && string.Equals(address?.Trim(), _emailOverride, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>True when test mode is on and valid and <paramref name="number"/> is the configured test number.</summary>
+    public bool IsApprovedSmsOverride(string? number) =>
+        Enabled && !IsBlocked && _smsOverride.Length > 0 && string.Equals(number?.Trim(), _smsOverride, StringComparison.Ordinal);
+
     /// <summary>Where an OTP SMS for <paramref name="customerMobile"/> must really go.</summary>
     public TestDeliveryRoute RouteSms(string customerMobile) => Route(customerMobile, _smsOverride);
 

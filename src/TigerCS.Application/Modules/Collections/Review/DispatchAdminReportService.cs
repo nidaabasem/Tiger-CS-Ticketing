@@ -107,7 +107,7 @@ public sealed class DispatchAdminReportService(
         foreach (var recipient in recipients)
         {
             EmailSendResult result;
-            try { result = await emailSender.SendAsync(new EmailMessage(recipient, report.Subject, report.Text, correlation, report.Html, report.Attachments), ct); }
+            try { result = await emailSender.SendAsync(new EmailMessage(recipient, report.Subject, report.Text, correlation, report.Html, report.Attachments, EmailAudience.Internal), ct); }
             catch (OperationCanceledException) { throw; }
             catch (Exception ex) { result = EmailSendResult.Transient($"Email provider threw {ex.GetType().Name}."); }
             if (result.Outcome != EmailSendOutcome.Sent)

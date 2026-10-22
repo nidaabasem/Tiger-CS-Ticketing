@@ -97,4 +97,13 @@ public static class CustomerEmailSkipReasons
     public const string InvalidCustomerEmail = "InvalidCustomerEmail";
 
     public const string EventTooOld = "EventTooOld";
+
+    /// <summary><c>CustomerNotifications:Mode</c> is Test, which delivers only Resolved and Closed.</summary>
+    public const string TestModeSuppressed = "TestModeSuppressed";
+
+    /// <summary>Test mode, but <c>CustomerNotifications:TestEmail</c> is missing or invalid. Never falls back to the customer.</summary>
+    public const string TestEmailMissing = "TestEmailMissing";
+
+    /// <summary><c>CustomerNotifications:Mode</c> is missing or unrecognised.</summary>
+    public const string CustomerNotificationModeInvalid = "CustomerNotificationModeInvalid";
 }

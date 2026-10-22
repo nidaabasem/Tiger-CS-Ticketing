@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging.Abstractions;
+using TigerCS.Application.Modules.CustomerReviews.Services;
 using TigerCS.Application.Modules.Notifications;
 using TigerCS.Application.Modules.Notifications.Abstractions;
 using TigerCS.Application.Modules.Notifications.Dto;
@@ -35,26 +36,45 @@ public sealed class NotificationServiceFixture
     public FakeTicketSlaInstanceRepository SlaInstances { get; } = new();
     public OutboxDispatchPolicy Policy { get; set; } = OutboxDispatchPolicy.Default;
     public CustomerNotificationPolicy NotificationPolicy { get; set; } = CustomerNotificationPolicy.EnabledDefault;
+    public FakeTicketReviewRepository Reviews { get; } = new();
+
+    /// <summary>Production by default — the pre-existing customer behaviour; tests switch to Test mode by replacing it.</summary>
+    public CustomerNotificationModePolicy ModePolicy { get; set; } = CustomerNotificationModePolicy.ProductionDefault(PublicBaseUrl);
+
+    public const string PublicBaseUrl = "https://tickets.example.com";
+
     public FakeTimeProvider Time { get; } = new(new DateTime(2026, 8, 22, 9, 0, 0, DateTimeKind.Utc));
 
     public CustomerContactResolver CreateContactResolver() => new(Snapshots, Interactions);
 
+    /// <summary>The recording provider wrapped in the real delivery guard — what every production sender sits behind.</summary>
+    public IEmailSender CreateGuardedProvider() =>
+        new CustomerDeliveryGuardEmailSender(Email, ModePolicy, null, NullLogger<CustomerDeliveryGuardEmailSender>.Instance);
+
     public ICustomerEmailSender CreateCustomerEmailSender() =>
-        new CustomerEmailSender(Email, NotificationPolicy, NullLogger<CustomerEmailSender>.Instance);
+        new CustomerEmailSender(CreateGuardedProvider(), NotificationPolicy, ModePolicy, NullLogger<CustomerEmailSender>.Instance);
+
+    public CustomerTicketSubjectResolver CreateSubjectResolver() => new(RequestTypes, Categories);
+
+    public TicketReviewInvitationService CreateInvitationService() =>
+        new(Reviews, ModePolicy, Time, NullLogger<TicketReviewInvitationService>.Instance);
+
+    public TicketReviewAppService CreateReviewService() => new(Reviews, Tickets, Time);
 
     public TicketAcknowledgementHandler CreateHandler() => new(
         Tickets, Notifications, CreateContactResolver(), CreateCustomerEmailSender(), Audit, NotificationPolicy, Time,
-        RequestTypes, Categories);
+        ModePolicy, RequestTypes, Categories);
 
     public TicketResolvedNotificationHandler CreateResolvedHandler() => new(
         Tickets, Notifications, CreateContactResolver(), CreateCustomerEmailSender(), Audit, NotificationPolicy, Time,
-        Resolutions);
+        ModePolicy, Resolutions, CreateSubjectResolver(), CreateInvitationService());
 
     public TicketClosedNotificationHandler CreateClosedHandler() => new(
-        Tickets, Notifications, CreateContactResolver(), CreateCustomerEmailSender(), Audit, NotificationPolicy, Time);
+        Tickets, Notifications, CreateContactResolver(), CreateCustomerEmailSender(), Audit, NotificationPolicy, Time,
+        ModePolicy, Resolutions, CreateSubjectResolver(), CreateInvitationService());
 
     public TicketReopenedNotificationHandler CreateReopenedHandler() => new(
-        Tickets, Notifications, CreateContactResolver(), CreateCustomerEmailSender(), Audit, NotificationPolicy, Time);
+        Tickets, Notifications, CreateContactResolver(), CreateCustomerEmailSender(), Audit, NotificationPolicy, Time, ModePolicy);
 
     public OutboxDispatcher CreateDispatcher(params IOutboxEventHandler[] handlers)
     {

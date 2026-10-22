@@ -12,13 +12,20 @@ public enum SmsSendOutcome
     Failed,
 
     /// <summary>Timeout or an unreadable/unrecognised response — the SMS may or may not have been sent.</summary>
-    Unconfirmed
+    Unconfirmed,
+
+    /// <summary>Deliberately not sent: the customer notification mode forbids it. Nothing reached the provider.</summary>
+    Suppressed
 }
 
 /// <param name="Destination">Recipient mobile as CRM holds it (any common form); the sender formats it for its provider.</param>
 /// <param name="Text">The full message, including the code — must never be logged.</param>
 /// <param name="Language">"en" or "ar"; the sender maps it to the provider's own value.</param>
-public sealed record SmsMessage(string Destination, string Text, string Language);
+/// <param name="TestRedirected">
+/// True only when <paramref name="Destination"/> is a configured test number (<c>VerificationTesting:SmsOverride</c>) standing in
+/// for the customer. In <c>CustomerNotifications:Mode = Test</c> an SMS that is not so marked is suppressed.
+/// </param>
+public sealed record SmsMessage(string Destination, string Text, string Language, bool TestRedirected = false);
 
 public sealed record SmsSendResult(SmsSendOutcome Outcome, string? ProviderReference = null);
 

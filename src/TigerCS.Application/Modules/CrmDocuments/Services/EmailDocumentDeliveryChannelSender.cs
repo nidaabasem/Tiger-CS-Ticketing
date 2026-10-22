@@ -59,13 +59,15 @@ public sealed class EmailDocumentDeliveryChannelSender(IEmailSender emailSender,
         var result = await emailSender.SendAsync(
             new EmailMessage(
                 route.Destination, subject, body, message.CorrelationId,
-                Attachments: [new EmailAttachment(message.FileName, message.ContentType, message.Content)]),
+                Attachments: [new EmailAttachment(message.FileName, message.ContentType, message.Content)],
+                Audience: route.Redirected ? EmailAudience.TestMailbox : EmailAudience.Customer),
             cancellationToken);
 
         return result.Outcome switch
         {
             EmailSendOutcome.Sent => new DocumentDeliveryResult(DocumentDeliveryOutcome.Sent, TestRedirected: route.Redirected),
             EmailSendOutcome.TransientFailure => new DocumentDeliveryResult(DocumentDeliveryOutcome.TransientFailure, "EMAIL_TRANSIENT_FAILURE"),
+            EmailSendOutcome.Suppressed => new DocumentDeliveryResult(DocumentDeliveryOutcome.PermanentFailure, "CUSTOMER_NOTIFICATIONS_SUPPRESSED"),
             _ => new DocumentDeliveryResult(DocumentDeliveryOutcome.PermanentFailure, "EMAIL_REJECTED")
         };
     }
