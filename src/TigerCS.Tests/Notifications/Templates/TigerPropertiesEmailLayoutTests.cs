@@ -121,7 +121,7 @@ public class TigerPropertiesEmailLayoutTests
         Assert.Equal("https://www.tigergroup.ae", policy.Branding.WebsiteUrl);
         Assert.Equal("contact@tigergroup.com", policy.Branding.ContactEmail);
         Assert.Equal("800 300 300", policy.Branding.ContactPhone);
-        Assert.Equal("https://tickets.example.com/img/tiger-logo.png", policy.Branding.LogoUrl);
+        Assert.Equal("https://www.tigergroup.ae/logos/TigerHead.jpg", policy.Branding.LogoUrl);
     }
 
     [Fact]
@@ -318,6 +318,6 @@ public class TigerPropertiesEmailLayoutTests
     public void Greeting_FallsBackWhenTheNameIsUnknown()
     {
         Assert.Contains("Dear Customer,", CustomerEmailTemplates.TicketResolved(Model(name: null)).TextBody, StringComparison.Ordinal);
-        Assert.Contains("عزيزي العميل،", CustomerEmailTemplates.TicketResolved(Model("ar", name: null)).TextBody, StringComparison.Ordinal);
+        Assert.Contains("عزيزنا العميل،", CustomerEmailTemplates.TicketResolved(Model("ar", name: null)).TextBody, StringComparison.Ordinal);
     }
 }

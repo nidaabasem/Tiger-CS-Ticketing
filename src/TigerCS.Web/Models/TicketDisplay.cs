@@ -12,6 +12,16 @@ namespace TigerCS.Web.Models;
 /// </summary>
 public static class TicketDisplay
 {
+    /// <summary>A UTC instant as UAE time (UTC+4, no daylight saving): "22 Oct 2026 21:40 (UAE)".</summary>
+    public static string UaeTime(DateTime utc) =>
+        DateTime.SpecifyKind(utc, DateTimeKind.Utc).AddHours(4).ToString("d MMM yyyy HH:mm", System.Globalization.CultureInfo.InvariantCulture) + " (UAE)";
+
+    /// <summary>Gold filled stars then grey empty ones for a 1–5 rating, as plain text characters.</summary>
+    public static string StarsFor(int rating) => new string('★', Math.Clamp(rating, 0, 5)) + new string('☆', 5 - Math.Clamp(rating, 0, 5));
+
+    /// <summary>"Original resolution" for cycle 0, "After reopen 1" … afterwards.</summary>
+    public static string ReviewCycleLabel(int cycle) => cycle <= 0 ? "Original resolution" : $"After reopen {cycle}";
+
     /// <summary>
     /// The responsible department — the ticket's PRIMARY assignment. Every
     /// operational ticket always has one, so this never renders a "none"

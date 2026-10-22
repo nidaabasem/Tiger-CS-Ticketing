@@ -420,6 +420,7 @@ public static class InfrastructureServiceCollectionExtensions
         // the voice bot is dialled by Genesys, not by TigerCS.
         services.AddScoped<IReminderDeliveryProvider, EmailReminderDeliveryProvider>();
         services.AddScoped<TicketInteractionQueryAppService>();
+        services.AddScoped<TigerCS.Application.Modules.CustomerReviews.Services.TicketReviewQueryAppService>();
         services.AddScoped<TicketClassificationAppService>();
         services.AddScoped<AgentHandoffAppService>();
 

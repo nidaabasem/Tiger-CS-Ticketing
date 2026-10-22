@@ -17,7 +17,7 @@ public class CustomerEmailTemplatesTests
         Assert.Contains("Dear Ahmed Al-Farsi,", content.TextBody, StringComparison.Ordinal);
         Assert.Contains("Ticket number: TG-CS-20260822-0042", content.TextBody, StringComparison.Ordinal);
         Assert.Contains("Request type: Maintenance Request", content.TextBody, StringComparison.Ordinal);
-        Assert.Contains("Received on: 22 August 2026, 09:30 UTC", content.TextBody, StringComparison.Ordinal);
+        Assert.Contains("Received on: 22 August 2026, 13:30 GST (UTC+4)", content.TextBody, StringComparison.Ordinal);
         Assert.Contains("has been received", content.TextBody, StringComparison.Ordinal);
         Assert.Contains(CustomerEmailTemplates.SignatureTeam, content.TextBody, StringComparison.Ordinal);
         Assert.Contains("Tiger Properties", content.HtmlBody, StringComparison.Ordinal);
@@ -45,7 +45,7 @@ public class CustomerEmailTemplatesTests
         Assert.Equal("Your Ticket #TG-CS-20260822-0042 Has Been Resolved", content.Subject);
         Assert.Contains("Status: Resolved", content.TextBody, StringComparison.Ordinal);
         Assert.Contains("Resolution: Thermostat replaced.", content.TextBody, StringComparison.Ordinal);
-        Assert.Contains("Resolved on: 22 August 2026, 09:30 UTC", content.TextBody, StringComparison.Ordinal);
+        Assert.Contains("Resolved on: 22 August 2026, 13:30 GST (UTC+4)", content.TextBody, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -88,7 +88,7 @@ public class CustomerEmailTemplatesTests
             "TG-CS-<b>1</b>", hostileName, When, ResolutionStatus: "Resolved", ResolutionMessage: hostileNote));
 
         Assert.DoesNotContain("<script>", content.HtmlBody, StringComparison.Ordinal);
-        Assert.DoesNotContain("<img", content.HtmlBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("<img src=x", content.HtmlBody, StringComparison.Ordinal);
         Assert.DoesNotContain("<b>1</b>", content.HtmlBody, StringComparison.Ordinal);
         Assert.Contains("&lt;script&gt;", content.HtmlBody, StringComparison.Ordinal);
         Assert.Contains("&lt;img", content.HtmlBody, StringComparison.Ordinal);

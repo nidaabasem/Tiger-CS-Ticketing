@@ -604,6 +604,59 @@ else
                     </dl>
                 </div>
 
+                <div class="facts-section" id="customer-satisfaction">
+                    <div class="facts-section__title">Customer Satisfaction</div>
+                    @if (Model.ReviewsUnavailable)
+                    {
+                        <p class="field-hint">Customer reviews are unavailable right now.</p>
+                    }
+                    else if (Model.Reviews.Count == 0)
+                    {
+                        <p class="field-hint">No review has been requested for this ticket yet.</p>
+                    }
+                    else
+                    {
+                        foreach (var review in Model.Reviews)
+                        {
+                            <dl class="review-cycle">
+                                @if (Model.Reviews.Count > 1 || review.ReopenCycle > 0)
+                                {
+                                    <div class="facts-row"><dt>Review cycle</dt><dd>@TicketDisplay.ReviewCycleLabel(review.ReopenCycle)</dd></div>
+                                }
+                                <div class="facts-row">
+                                    <dt>Review status</dt>
+                                    <dd>
+                                        <span class="badge @(review.Rating is null ? "badge-neutral" : "badge-active")">@review.Status</span>
+                                        @if (review.IsTest)
+                                        {
+                                            <span class="badge badge-warning" title="Submitted through a Test-mode link; excluded from production statistics.">Test review</span>
+                                        }
+                                    </dd>
+                                </div>
+                                @if (review.Rating is int rating)
+                                {
+                                    <div class="facts-row">
+                                        <dt>Rating</dt>
+                                        <dd><span class="review-stars" aria-label="@rating out of 5 stars">@TicketDisplay.StarsFor(rating)</span> @rating/5</dd>
+                                    </div>
+                                    @if (!string.IsNullOrWhiteSpace(review.Comment))
+                                    {
+                                        <div class="facts-row"><dt>Feedback</dt><dd>@review.Comment</dd></div>
+                                    }
+                                    @if (review.SubmittedAtUtc is { } submittedAt)
+                                    {
+                                        <div class="facts-row"><dt>Submitted</dt><dd>@TicketDisplay.UaeTime(submittedAt)</dd></div>
+                                    }
+                                }
+                                else if (review.RequestedAtUtc is { } requestedAt)
+                                {
+                                    <div class="facts-row"><dt>Requested</dt><dd>@TicketDisplay.UaeTime(requestedAt)</dd></div>
+                                }
+                            </dl>
+                        }
+                    }
+                </div>
+
                 <div class="facts-section">
                     <div class="facts-section__title">Verification &amp; Unit</div>
                     <dl>
