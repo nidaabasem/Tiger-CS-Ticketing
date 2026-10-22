@@ -5,7 +5,7 @@ using TigerCS.Application.Modules.Notifications.Templates;
 namespace TigerCS.Tests.Notifications.Templates;
 
 /// <summary>
-/// Renders the Resolved and Closed emails through the application's own template renderer and, when
+/// Renders the Created, Resolved and Closed emails through the application's own template renderer and, when
 /// <c>TIGER_EMAIL_PREVIEW_DIR</c> is set, writes them as HTML files for design review (docs/email-previews). Sample data only —
 /// nothing is sent. Without the variable the test just checks that rendering works.
 /// </summary>
@@ -37,11 +37,12 @@ public class EmailPreviewGenerator
 
             foreach (var (name, content) in new[]
             {
+                ("created", CustomerEmailTemplates.TicketCreated(model with { Review = null, RequestTypeName = language == "ar" ? "طلب صيانة" : "Maintenance Request" })),
                 ("resolved", CustomerEmailTemplates.TicketResolved(model)),
                 ("closed", CustomerEmailTemplates.TicketClosed(model))
             })
             {
-                Assert.Contains("&#9733;", content.HtmlBody, StringComparison.Ordinal);
+                Assert.Equal(name != "created", content.HtmlBody.Contains("&#9733;", StringComparison.Ordinal));
                 if (outputDir is null)
                 {
                     continue;

@@ -63,7 +63,7 @@ public sealed class NotificationServiceFixture
 
     public TicketAcknowledgementHandler CreateHandler() => new(
         Tickets, Notifications, CreateContactResolver(), CreateCustomerEmailSender(), Audit, NotificationPolicy, Time,
-        ModePolicy, RequestTypes, Categories);
+        ModePolicy, RequestTypes, Categories, CreateSubjectResolver());
 
     public TicketResolvedNotificationHandler CreateResolvedHandler() => new(
         Tickets, Notifications, CreateContactResolver(), CreateCustomerEmailSender(), Audit, NotificationPolicy, Time,

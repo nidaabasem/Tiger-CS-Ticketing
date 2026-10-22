@@ -124,6 +124,46 @@ public class TigerPropertiesEmailLayoutTests
         Assert.Equal("https://tickets.example.com/img/tiger-logo.png", policy.Branding.LogoUrl);
     }
 
+    [Theory]
+    [InlineData("en", "Your Support Ticket #TG-CS-20260822-0042 Has Been Created", "Dear Ahmed Al-Farsi,", "Created on", "22 August 2026, 13:30 UAE time", ">Open<")]
+    [InlineData("ar", "تم إنشاء تذكرة الدعم رقم #TG-CS-20260822-0042", "عزيزي/عزيزتي أحمد الفارسي،", "تاريخ الإنشاء", "22/08/2026 13:30 بتوقيت الإمارات", ">مفتوحة<")]
+    public void Created_UsesTheApprovedDesign_WithNoReview_InBothLanguages(
+        string language, string subject, string greeting, string createdLabel, string createdValue, string status)
+    {
+        var name = language == "ar" ? "أحمد الفارسي" : "Ahmed Al-Farsi";
+        var content = CustomerEmailTemplates.TicketCreated(Model(language, name: name) with { RequestTypeName = "Maintenance Request" });
+        var html = content.HtmlBody;
+
+        Assert.Equal(subject, content.Subject);
+        Assert.Contains(greeting, html, StringComparison.Ordinal);
+        Assert.Contains("TG-CS-20260822-0042", html, StringComparison.Ordinal);
+        Assert.Contains("Maintenance Request", html, StringComparison.Ordinal);
+        Assert.Contains(createdLabel, html, StringComparison.Ordinal);
+        Assert.Contains(createdValue, html, StringComparison.Ordinal);
+        Assert.Contains(status, html, StringComparison.Ordinal);
+        Assert.Contains(language == "ar" ? "dir=\"rtl\"" : "dir=\"ltr\"", html, StringComparison.Ordinal);
+
+        // Same shell as Resolved/Closed; the satisfaction review is never part of it, even when links are offered.
+        Assert.DoesNotContain("&#9733;", html, StringComparison.Ordinal);
+        Assert.DoesNotContain("/Review", html + content.TextBody, StringComparison.Ordinal);
+        Assert.Contains("border:1px solid #C1A562", html, StringComparison.Ordinal);
+        Assert.Contains("border-bottom:1px solid #e5e5e5", html, StringComparison.Ordinal);
+        Assert.Contains("<!--[if mso]>", html, StringComparison.Ordinal);
+        Assert.Equal(["#ffffff"], Regex.Matches(html, @"background-color:\s*(#[0-9a-fA-F]{3,6})").Select(m => m.Groups[1].Value.ToLowerInvariant()).Distinct().ToList());
+        Assert.Contains(language == "ar" ? "فريق خدمة عملاء Tiger" : "Tiger Customer Service Team", content.TextBody, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Created_Footer_DefaultBranding_HasPhoneWebsiteAndContactEmail()
+    {
+        var html = CustomerEmailTemplates.TicketCreated(Model() with { Branding = null }).HtmlBody;
+
+        Assert.Contains("800 300 300", html, StringComparison.Ordinal);
+        Assert.Contains("href=\"https://www.tigergroup.ae\"", html, StringComparison.Ordinal);
+        Assert.Contains("href=\"mailto:contact@tigergroup.com\"", html, StringComparison.Ordinal);
+        Assert.Contains("Tiger Customer Service Team", html, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void Structure_IsOutlookSafe_TableBased_InlineCss_650pxMax_NoScriptOrForms()
     {

@@ -13,12 +13,14 @@ public class CustomerEmailTemplatesTests
         var content = CustomerEmailTemplates.TicketCreated(new CustomerEmailTicketModel(
             "TG-CS-20260822-0042", "Ahmed Al-Farsi", When, RequestTypeName: "Maintenance Request"));
 
-        Assert.Equal("Your request has been received – Ticket TG-CS-20260822-0042", content.Subject);
+        Assert.Equal("Your Support Ticket #TG-CS-20260822-0042 Has Been Created", content.Subject);
         Assert.Contains("Dear Ahmed Al-Farsi,", content.TextBody, StringComparison.Ordinal);
         Assert.Contains("Ticket number: TG-CS-20260822-0042", content.TextBody, StringComparison.Ordinal);
-        Assert.Contains("Request type: Maintenance Request", content.TextBody, StringComparison.Ordinal);
-        Assert.Contains("Received on: 22 August 2026, 09:30 UTC", content.TextBody, StringComparison.Ordinal);
-        Assert.Contains("has been received", content.TextBody, StringComparison.Ordinal);
+        Assert.Contains("Request type / Subject: Maintenance Request", content.TextBody, StringComparison.Ordinal);
+        Assert.Contains("Created on: 22 August 2026, 13:30 UAE time", content.TextBody, StringComparison.Ordinal);
+        Assert.Contains("Status: Open", content.TextBody, StringComparison.Ordinal);
+        Assert.Contains("successfully received your request", content.TextBody, StringComparison.Ordinal);
+        Assert.Contains("Thank you for choosing Tiger Properties.", content.TextBody, StringComparison.Ordinal);
         Assert.Contains(CustomerEmailTemplates.SignatureTeam, content.TextBody, StringComparison.Ordinal);
         Assert.Contains("Tiger Properties", content.HtmlBody, StringComparison.Ordinal);
         Assert.Contains("TG-CS-20260822-0042", content.HtmlBody, StringComparison.Ordinal);
@@ -30,8 +32,8 @@ public class CustomerEmailTemplatesTests
         var content = CustomerEmailTemplates.TicketCreated(new CustomerEmailTicketModel("TG-CS-20260822-0001", null, When));
 
         Assert.Contains("Dear Customer,", content.TextBody, StringComparison.Ordinal);
-        Assert.DoesNotContain("Request type", content.TextBody, StringComparison.Ordinal);
-        Assert.DoesNotContain("Request type", content.HtmlBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("Request type / Subject", content.TextBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("Request type / Subject", content.HtmlBody, StringComparison.Ordinal);
     }
 
     [Fact]

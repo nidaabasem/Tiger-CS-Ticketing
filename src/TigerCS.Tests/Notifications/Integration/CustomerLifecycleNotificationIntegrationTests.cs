@@ -73,8 +73,8 @@ public class CustomerLifecycleNotificationIntegrationTests : LifecycleIntegratio
             .ToList();
         Assert.Equal(
             [
-                $"Your request has been received – Ticket {ticket.TicketNumber}",
                 $"Your request has been reopened – Ticket {ticket.TicketNumber}",
+                $"Your Support Ticket #{ticket.TicketNumber} Has Been Created",
                 $"Your Ticket #{ticket.TicketNumber} Has Been Closed",
                 $"Your Ticket #{ticket.TicketNumber} Has Been Resolved"
             ],

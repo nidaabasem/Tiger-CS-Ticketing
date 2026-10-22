@@ -40,7 +40,8 @@ public sealed class TicketAcknowledgementHandler(
     TimeProvider timeProvider,
     CustomerNotificationModePolicy modePolicy,
     IRequestTypeRepository requestTypeRepository,
-    ICategoryRepository categoryRepository)
+    ICategoryRepository categoryRepository,
+    CustomerTicketSubjectResolver subjectResolver)
     : CustomerTicketEmailHandler(
         ticketRepository, notificationRepository, contactResolver, emailSender, auditWriter, policy, timeProvider, modePolicy)
 {
@@ -77,6 +78,8 @@ public sealed class TicketAcknowledgementHandler(
             contact.DisplayName,
             ticket.CreatedAtUtc,
             RequestTypeName: requestTypeName,
+            // Only used when the ticket is unclassified (no request type or category): the customer's own request summary.
+            TicketSubject: await subjectResolver.ResolveAsync(ticket, cancellationToken),
             Language: contact.Language,
             Branding: ModePolicy.Branding,
             IsTest: ModePolicy.IsTest));

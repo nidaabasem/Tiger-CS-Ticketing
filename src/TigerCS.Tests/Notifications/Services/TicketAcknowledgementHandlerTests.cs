@@ -95,7 +95,7 @@ public class TicketAcknowledgementHandlerTests
         await f.CreateHandler().HandleAsync(message);
 
         var email = Assert.Single(f.Email.Sent);
-        Assert.Equal("Your request has been received – Ticket TG-CS-20260822-0042", email.Subject);
+        Assert.Equal("Your Support Ticket #TG-CS-20260822-0042 Has Been Created", email.Subject);
         Assert.Contains("TG-CS-20260822-0042", email.Body, StringComparison.Ordinal);
         Assert.Contains("22 August 2026", email.Body, StringComparison.Ordinal);
         Assert.Contains("Ahmed Al-Farsi", email.Body, StringComparison.Ordinal);

@@ -57,16 +57,19 @@ public static class CustomerEmailTemplates
         ArgumentNullException.ThrowIfNull(model);
         var t = Text.For(model.Language);
 
-        var details = new List<(string Label, string Value)>
-        {
-            (t.TicketNumber, model.TicketNumber),
-            (t.ReceivedOn, FormatDate(model.OccurredAtUtc))
-        };
+        var details = new List<(string Label, string Value)> { (t.TicketNumber, model.TicketNumber) };
 
-        if (!string.IsNullOrWhiteSpace(model.RequestTypeName))
+        // "Request type / subject": the request type (or category) when classified, else the customer-friendly subject.
+        var subject = !string.IsNullOrWhiteSpace(model.RequestTypeName) ? model.RequestTypeName
+            : !string.IsNullOrWhiteSpace(model.TicketSubject) ? model.TicketSubject
+            : null;
+        if (subject is not null)
         {
-            details.Insert(1, (t.RequestType, model.RequestTypeName));
+            details.Add((t.RequestTypeOrSubject, subject.Trim()));
         }
+
+        details.Add((t.CreatedOn, t.UaeTime(model.OccurredAtUtc)));
+        details.Add((t.Status, t.Open));
 
         return Render(
             model,
@@ -74,7 +77,8 @@ public static class CustomerEmailTemplates
             headline: t.CreatedHeadline,
             paragraphs: [t.CreatedBody1, t.CreatedBody2],
             details: details,
-            review: null);
+            review: null,
+            closing: [t.CreatedThanks]);
     }
 
     public static CustomerEmailContent TicketResolved(CustomerEmailTicketModel model)
@@ -173,7 +177,8 @@ public static class CustomerEmailTemplates
         string headline,
         IReadOnlyList<string> paragraphs,
         IReadOnlyList<(string Label, string Value)> details,
-        ReviewInvitationLinks? review)
+        ReviewInvitationLinks? review,
+        IReadOnlyList<string>? closing = null)
     {
         var t = Text.For(model.Language);
         var greeting = string.IsNullOrWhiteSpace(model.CustomerName) ? t.GreetingAnonymous : t.Greeting(model.CustomerName.Trim());
@@ -187,8 +192,8 @@ public static class CustomerEmailTemplates
 
         return new CustomerEmailContent(
             subject,
-            RenderText(model, t, greeting, paragraphs, details, safeReview, branding),
-            RenderHtml(model, t, subject, headline, greeting, paragraphs, details, safeReview, branding));
+            RenderText(model, t, greeting, paragraphs, details, safeReview, branding, closing ?? []),
+            RenderHtml(model, t, subject, headline, greeting, paragraphs, details, safeReview, branding, closing ?? []));
     }
 
     /// <summary>A review section is rendered only when every link is an absolute http(s) URL.</summary>
@@ -200,7 +205,8 @@ public static class CustomerEmailTemplates
 
     private static string RenderText(
         CustomerEmailTicketModel model, Text t, string greeting, IReadOnlyList<string> paragraphs,
-        IReadOnlyList<(string Label, string Value)> details, ReviewInvitationLinks? review, CustomerEmailBranding branding)
+        IReadOnlyList<(string Label, string Value)> details, ReviewInvitationLinks? review, CustomerEmailBranding branding,
+        IReadOnlyList<string> closing)
     {
         var lines = new List<string>();
 
@@ -222,6 +228,12 @@ public static class CustomerEmailTemplates
         foreach (var (label, value) in details)
         {
             lines.Add($"{label}: {value}");
+        }
+
+        foreach (var paragraph in closing)
+        {
+            lines.Add(string.Empty);
+            lines.Add(paragraph);
         }
 
         if (review is not null)
@@ -258,7 +270,7 @@ public static class CustomerEmailTemplates
     private static string RenderHtml(
         CustomerEmailTicketModel model, Text t, string title, string headline, string greeting,
         IReadOnlyList<string> paragraphs, IReadOnlyList<(string Label, string Value)> details,
-        ReviewInvitationLinks? review, CustomerEmailBranding branding)
+        ReviewInvitationLinks? review, CustomerEmailBranding branding, IReadOnlyList<string> closing)
     {
         var rtl = t.IsRtl;
         var dir = rtl ? "rtl" : "ltr";
@@ -329,6 +341,17 @@ public static class CustomerEmailTemplates
         }
 
         sb.Append("</table></td></tr>");
+
+        if (closing.Count > 0)
+        {
+            sb.Append("<tr><td align=\"").Append(align).Append("\" style=\"padding:0 36px 22px 36px;font-size:14px;line-height:22px;color:#1f2933;text-align:").Append(align).Append(";\">");
+            foreach (var paragraph in closing)
+            {
+                sb.Append("<p style=\"margin:0;\">").Append(E(paragraph)).Append("</p>");
+            }
+
+            sb.Append("</td></tr>");
+        }
 
         if (review is not null)
         {
@@ -419,8 +442,17 @@ public static class CustomerEmailTemplates
         public string Status => P("Status", "الحالة");
         public string RequestType => P("Request type", "نوع الطلب");
         public string Resolution => P("Resolution", "ملخص الحل");
-        public string ReceivedOn => P("Received on", "تاريخ الاستلام");
         public string ResolvedOn => P("Resolved on", "تاريخ الحل");
+        /// <summary>UAE time (UTC+4, no daylight saving), labelled so the customer need not guess the zone.</summary>
+        public string UaeTime(DateTime utc)
+        {
+            var local = utc.ToUniversalTime().AddHours(4);
+            return local.ToString(_ar ? "dd/MM/yyyy HH:mm" : "dd MMMM yyyy, HH:mm", CultureInfo.InvariantCulture) + (_ar ? " بتوقيت الإمارات" : " UAE time");
+        }
+
+        public string CreatedOn => P("Created on", "تاريخ الإنشاء");
+        public string RequestTypeOrSubject => P("Request type / Subject", "نوع الطلب / الموضوع");
+        public string Open => P("Open", "مفتوحة");
         public string ClosedOn => P("Closed on", "تاريخ الإغلاق");
         public string ReopenedOn => P("Reopened on", "تاريخ إعادة الفتح");
         public string Closed => P("Closed", "مغلقة");
@@ -437,14 +469,17 @@ public static class CustomerEmailTemplates
         public string ContactEmail => P("Email", "البريد الإلكتروني");
         public string ContactPhone => P("Phone", "الهاتف");
 
-        public string CreatedSubject(string n) => P($"Your request has been received – Ticket {n}", $"تم استلام طلبك – تذكرة {n}");
-        public string CreatedHeadline => P("We have received your request", "لقد استلمنا طلبك");
+        public string CreatedSubject(string n) => P($"Your Support Ticket #{n} Has Been Created", $"تم إنشاء تذكرة الدعم رقم #{n}");
+        public string CreatedHeadline => P("Your support ticket has been created", "تم إنشاء تذكرة الدعم الخاصة بك");
         public string CreatedBody1 => P(
-            "Thank you for contacting Tiger Properties. Your request has been received and logged with the reference below.",
-            "شكراً لتواصلك مع Tiger Properties. لقد تم استلام طلبك وتسجيله بالرقم المرجعي أدناه.");
+            "Thank you for contacting Tiger Properties.",
+            "شكراً لتواصلك مع Tiger Properties.");
         public string CreatedBody2 => P(
-            "Our team is reviewing it and will be in touch with you as soon as possible. Please quote the ticket number in any further correspondence.",
-            "يقوم فريقنا بمراجعته وسنتواصل معك في أقرب وقت ممكن. يرجى ذكر رقم التذكرة في أي مراسلات لاحقة.");
+            "We have successfully received your request and created a support ticket. Our Customer Service Team will review your request and keep you updated on its progress.",
+            "لقد استلمنا طلبك بنجاح وأنشأنا تذكرة دعم. سيقوم فريق خدمة العملاء لدينا بمراجعة طلبك وإبقائك على اطلاع بمستجداته.");
+        public string CreatedThanks => P(
+            "Thank you for choosing Tiger Properties.",
+            "نشكرك على اختيارك Tiger Properties.");
 
         public string ResolvedSubject(string n) => P($"Your Ticket #{n} Has Been Resolved", $"تم حل تذكرتك رقم #{n}");
         public string ResolvedHeadline => P("Your ticket has been resolved", "تم حل تذكرتك");
@@ -504,7 +539,7 @@ public static class CustomerEmailTemplates
 /// </summary>
 /// <param name="TicketNumber">The customer-facing ticket reference.</param>
 /// <param name="CustomerName">Greeting name, when known.</param>
-/// <param name="OccurredAtUtc">When the event happened (creation, resolution, closure, reopening).</param>
+/// <param name="OccurredAtUtc">When the event happened (creation, resolution, closure, reopening); always UTC — the Created email shows it in UAE time.</param>
 /// <param name="RequestTypeName">Request type or category name, when the ticket is classified.</param>
 /// <param name="ResolutionStatus">Customer wording for the resolution outcome (resolved email only).</param>
 /// <param name="ResolutionMessage">The resolution note, only when configuration allows sharing it.</param>
