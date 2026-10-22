@@ -795,7 +795,12 @@ jobs:
           # Behaviour on this SQL Server (the EF InMemory/SQLite providers cannot show it): the same index shape on a scratch table.
           # Expected: one (conversation, NULL) legacy row per conversation; several distinct service requests per conversation;
           # the same pair twice rejected; rows with no conversation unrestricted.
-          probe=$(sqlcmd -S localhost,1433 -U sa -P "$SA_PASSWORD" -C -d TigerCsTicketing_CI -h -1 -W -b -Q "
+          # sqlcmd connects with QUOTED_IDENTIFIER OFF by default, which SQL Server refuses for DML on a table with a filtered index
+          # (Msg 1934). -I turns it ON for the connection, and the SET options a filtered index requires are also stated explicitly in the
+          # batch so the probe does not depend on client defaults. The whole probe is ONE sqlcmd invocation (one connection / session).
+          probe=$(sqlcmd -I -S localhost,1433 -U sa -P "$SA_PASSWORD" -C -d TigerCsTicketing_CI -h -1 -W -b -Q "
+            SET ANSI_NULLS ON; SET ANSI_PADDING ON; SET ANSI_WARNINGS ON; SET ARITHABORT ON;
+            SET CONCAT_NULL_YIELDS_NULL ON; SET QUOTED_IDENTIFIER ON; SET NUMERIC_ROUNDABORT OFF;
             SET NOCOUNT ON;
             CREATE TABLE #p (Id int IDENTITY PRIMARY KEY, C nvarchar(64) NULL, S nvarchar(64) NULL);
             CREATE UNIQUE INDEX UX_p ON #p (C, S) WHERE C IS NOT NULL;
