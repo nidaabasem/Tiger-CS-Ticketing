@@ -119,6 +119,20 @@ public sealed class CampaignSnapshotTests
     }
 
     [Fact]
+    public async Task StaleSnapshot_KeepsTheCustomersFinanciallyEligible_ButNoneReadyToSend()
+    {
+        // "Eligible" (the stage rule found an amount) and "Ready" (also passes every send check) are different counts by design: stale data keeps the first and zeroes the second.
+        var h = new Harness(); Seed(h);
+        h.Source.Companies[4] = FakeSnapshotSource.Healthy(4, Now.AddMinutes(-91));
+        var report = (await h.Service.PreviewAsync(h.Manager, "CurrentMonthReminder", towerId: 1)).Value!;
+        var eligible = report.TotalCount - report.NotEligibleCount;
+        Assert.True(eligible > 0);
+        Assert.Equal(0, report.ReadyCount);
+        Assert.Equal(eligible, report.ReviewCount);                    // every eligible customer is "Needs review / blocked", none silently dropped
+        Assert.All(report.Items, c => Assert.Contains("StaleSource", c.Reason));
+    }
+
+    [Fact]
     public async Task ExportIsAllowedExactlyAtTheAgeLimit_AndRefusedOneMinuteLater()
     {
         var h = new Harness(); Seed(h);

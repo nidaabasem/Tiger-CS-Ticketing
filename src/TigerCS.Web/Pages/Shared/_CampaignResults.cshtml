@@ -15,22 +15,34 @@ else if (Model.Report is { } report)
     if (report.Snapshot is { NothingLoaded: true }) { <div class="panel"><p class="receivables-meta" data-nothing-loaded>No customers can be shown until the financial data has loaded. See the snapshot status above.</p></div> return; }
     <div class="panel" data-customer-results data-preview-current>
         <ul class="campaign-totals" data-campaign-totals>
-            <li>Eligible customers: <strong data-eligible-count>@((report.TotalCount - report.NotEligibleCount).ToString("N0"))</strong> of @report.TotalCount.ToString("N0") listed</li>
+            @{ var eligible = report.TotalCount - report.NotEligibleCount; var blockedCount = Math.Max(0, eligible - report.ReadyCount); }
+            <li>Financially eligible customers: <strong data-eligible-count>@eligible.ToString("N0")</strong> of @report.TotalCount.ToString("N0") listed <span class="receivables-meta">(the stage rule found an amount to collect)</span></li>
+            <li>Ready to send: <strong data-ready-count>@report.ReadyCount.ToString("N0")</strong> <span class="receivables-meta">(eligible and passing every send check)</span></li>
+            <li>Needs review / blocked: <strong data-blocked-count>@blockedCount.ToString("N0")</strong> <span class="receivables-meta">(eligible, but not yet safe to send)</span></li>
             @if (report.EligibleTotalAmount is { } qualifying) { <li>Total qualifying amount: <strong data-eligible-total>@(report.Items.FirstOrDefault()?.Currency ?? "AED") @qualifying.ToString("N2", System.Globalization.CultureInfo.InvariantCulture)</strong> <span class="receivables-meta">(stage amount of the eligible customers, as sent to Genesys)</span></li> }
             @if (report.EligibleOutstandingAmount is { } outstanding) { <li>Outstanding balance of the eligible customers: <strong data-eligible-outstanding>@(report.Items.FirstOrDefault()?.Currency ?? "AED") @outstanding.ToString("N2", System.Globalization.CultureInfo.InvariantCulture)</strong></li> }
             <li>Payment status: <strong>@(report.PaymentStatus == "Both" ? "Due and Overdue" : report.PaymentStatus)</strong></li>
             @if (Model.CampaignName is { } campaignName) { <li>Genesys campaign name when sent: <strong data-campaign-name>@campaignName</strong></li> }
         </ul>
-        @if (report.PaymentStatusNote is { } statusNote) { <p class="receivables-notice" role="status" data-payment-status-note>@statusNote</p> }
-        @* Exports stay blocked for incomplete or stale data: the buttons only exist when every company is loaded, fresh and covers the dates (the API refuses anyway). *@
-        @if (report.CanExportReview && report.Snapshot is not { IsReady: false })
+        @if (blockedCount > 0)
         {
-            <div class="campaign-actions">
-                <a class="btn" href="@Model.PageUrl(export: "review")">Export review CSV</a>
-                @if (report.ReadyCount > 0 && report.ReadyCount + report.NotEligibleCount == report.TotalCount)
-                { <a class="btn btn-primary" href="@Model.PageUrl(export: "genesys")">Export Genesys CSV</a> }
+            <div class="receivables-notice" role="status" data-not-ready-reasons>
+                <strong>Why @(report.ReadyCount == 0 ? "no customer is" : "some customers are not") Ready to send</strong>
+                <ul>
+                    @foreach (var reason in Model.NotReadyReasons()) { <li data-not-ready-reason>@reason</li> }
+                </ul>
             </div>
         }
+        @if (report.PaymentStatusNote is { } statusNote) { <p class="receivables-notice" role="status" data-payment-status-note>@statusNote</p> }
+        @* Review export is independent of Approve & Send. The safeguards are unchanged: it needs the export permission and fresh, fully covered data (the API refuses otherwise);
+           when it cannot run the button stays visible but disabled and says why, so nobody has to guess where it went. Genesys export keeps its stricter rule. *@
+        @{ var exportProblem = Model.ExportReviewProblem; }
+        <div class="campaign-actions">
+            @if (exportProblem is null) { <a class="btn" href="@Model.PageUrl(export: "review")" data-export-review>Export review CSV</a> }
+            else { <button class="btn" type="button" disabled aria-disabled="true" title="@exportProblem" data-export-review-unavailable>Export review CSV</button><span class="receivables-meta" data-export-review-reason>@exportProblem</span> }
+            @if (exportProblem is null && report.ReadyCount > 0 && report.ReadyCount + report.NotEligibleCount == report.TotalCount)
+            { <a class="btn btn-primary" href="@Model.PageUrl(export: "genesys")">Export Genesys CSV</a> }
+        </div>
         @{ var blocked = Model.ApproveBlockedReason; }
         <form method="post" class="campaign-approve" data-approve-form asp-page-handler="Approve">
             @foreach (var name in CampaignsModel.FilterFieldNames)
