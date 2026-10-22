@@ -12,6 +12,21 @@ public sealed class CollectionsCampaignOptions
     public string ValidatedProcedureSuffix { get; set; } = "";
     /// <summary>Free-text reference to the reconciliation evidence (ticket, workbook, sign-off). Shown to reviewers; not a secret.</summary>
     public string? ReconciliationReference { get; set; }
+    /// <summary>
+    /// When true (default) the human sign-off above is NOT enough on its own: a recent automated reconciliation of the snapshot against a fresh read of the SAME PACT procedure must also have
+    /// passed for both companies (see <c>FinancialReconciliationService</c>). The sign-off says a person checked the procedure against PACT; the automated run says the data being sent
+    /// is what the procedure returns right now. Set false only to fall back to the sign-off alone.
+    /// </summary>
+    public bool RequireAutomatedReconciliation { get; set; } = true;
+    /// <summary>How long a passing automated reconciliation counts (hours). Older evidence is "Expired" and must be re-run.</summary>
+    public int ReconciliationMaxAgeHours { get; set; } = 24;
+    /// <summary>The snapshot must be this fresh (minutes since its publish) when a reconciliation runs, otherwise payments made since the refresh show up as differences.</summary>
+    public int ReconciliationMaxSnapshotAgeMinutes { get; set; } = 30;
+    /// <summary>Largest difference (AED) in one instalment or unit that still counts as equal (rounding only).</summary>
+    public decimal ReconciliationToleranceAed { get; set; } = 0.01m;
+    /// <summary>How many differing units a run keeps in its diagnostics (the counts are always complete).</summary>
+    public int ReconciliationMaxDifferences { get; set; } = 500;
+
     /// <summary>Legal Case records are internal Legal referrals under the approved policy. Dispatching them to a customer
     /// contact list needs an explicit business decision; false until Legal/Collections record it.</summary>
     public bool LegalCaseDispatchApproved { get; set; }

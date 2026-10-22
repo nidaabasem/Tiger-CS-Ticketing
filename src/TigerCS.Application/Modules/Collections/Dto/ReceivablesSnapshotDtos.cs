@@ -15,10 +15,35 @@ public sealed record SnapshotCompanyStatusDto(
     int ExcludedInvalidUnitRows, decimal ExcludedInvalidUnitAmount,
     int ExcludedInvalidIdentityRows, decimal ExcludedInvalidIdentityAmount,
     int ContradictoryStatusRows, int UnknownStatusRows, string Freshness, int? AgeMinutes, bool RefreshInProgress = false, DateTime? RefreshStartedUtc = null, string? RunCompanyStatus = null,
-    bool PaidRetained = false, bool BreakdownAvailable = false, int UnclassifiedRows = 0)
+    bool PaidRetained = false, bool BreakdownAvailable = false, int UnclassifiedRows = 0,
+    DateTime? LastFinishedUtc = null, string? LastErrorDetail = null, int? LastFetchMs = null, int? LastRawRows = null, bool RefreshOverdue = false)
 {
     /// <summary>The newest refresh attempt failed or was abandoned (timeout, cancellation, restart); the previous snapshot (if any) is still being served.</summary>
     public bool LastRefreshFailed => LastAttemptStatus is "Failed" or "Abandoned";
+
+    /// <summary>
+    /// What the page must say about this company. Exactly one of <see cref="SnapshotLoadStates"/>; <c>Loading</c> only while a refresh of THIS company really executes
+    /// (and has not outlived the longest legitimate run), so a finished, failed or abandoned run is never reported as loading.
+    /// </summary>
+    public string State => RefreshInProgress ? (RefreshOverdue ? SnapshotLoadStates.Stuck : SnapshotLoadStates.Loading)
+        : LastRefreshFailed ? SnapshotLoadStates.Failed
+        : !HasSnapshot ? SnapshotLoadStates.NeverLoaded
+        : Freshness == "Fresh" ? SnapshotLoadStates.Ready : SnapshotLoadStates.Stale;
+
+    /// <summary>True while the page should keep checking: a refresh of this company is executing and within its expected duration. Every other state is final until a person or a schedule acts.</summary>
+    public bool IsLoading => State == SnapshotLoadStates.Loading;
+
+    /// <summary>Data is available to show (the last valid snapshot), whatever the state of the newest attempt.</summary>
+    public bool HasData => HasSnapshot && LastSuccessUtc is not null;
+
+    /// <summary>A safe, human sentence for the newest failure (null when the last attempt did not fail). Never contains server names, addresses or SQL text.</summary>
+    public string? FailureText => LastRefreshFailed ? TigerCS.Application.Modules.Collections.Services.SnapshotFailureText.Describe(LastErrorNumber, LastErrorDetail, LastFetchMs, LastRawRows) : null;
+}
+
+/// <summary>The per-company load states a page can show.</summary>
+public static class SnapshotLoadStates
+{
+    public const string Ready = "Ready", Loading = "Loading", Failed = "Failed", Stale = "Stale", NeverLoaded = "NeverLoaded", Stuck = "Stuck";
 }
 
 /// <summary>Receivables with no active tower row: reported, never dropped, never given an invented tower name.</summary>
@@ -29,12 +54,13 @@ public sealed record CoverageGapDto(int CompanyId, string CompanyName, DateOnly 
 
 public sealed record SnapshotStatusDto(
     IReadOnlyList<SnapshotCompanyStatusDto> Companies, IReadOnlyList<UnmatchedTowerDto> UnmatchedTowers, int MaxAgeMinutes,
-    DateOnly? RequestedFrom = null, DateOnly? RequestedThrough = null, IReadOnlyList<CoverageGapDto>? CoverageGaps = null)
+    DateOnly? RequestedFrom = null, DateOnly? RequestedThrough = null, IReadOnlyList<CoverageGapDto>? CoverageGaps = null,
+    bool? ScheduledRefreshActive = null, string? RefreshSchedule = null)
 {
     public IReadOnlyList<CoverageGapDto> Gaps => CoverageGaps ?? [];
     /// <summary>The whole requested From/To range is inside the loaded coverage of every loaded company in scope.</summary>
     public bool RangeCovered => Gaps.Count == 0;
-    public bool LoadInProgress => Companies.Any(c => c.RefreshInProgress);
+    public bool LoadInProgress => Companies.Any(c => c.IsLoading);
     /// <summary>Every loaded company in scope keeps fully paid instalments: "Fully paid" and "All" may be offered. False before the first load.</summary>
     public bool PaidRetained => Companies.Any(c => c.HasSnapshot) && Companies.Where(c => c.HasSnapshot).All(c => c.PaidRetained);
     /// <summary>Every loaded company in scope returned original + paid amounts: "Unpaid" and "Partially paid" can be told apart reliably.</summary>

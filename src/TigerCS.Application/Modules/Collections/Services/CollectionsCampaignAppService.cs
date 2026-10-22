@@ -7,6 +7,7 @@ using System.Text;
 using Microsoft.Extensions.Logging;
 using TigerCS.Application.Modules.Collections.Abstractions;
 using TigerCS.Application.Modules.Collections.Dto;
+using TigerCS.Application.Modules.Collections.Reconciliation;
 using TigerCS.Domain.Modules.Collections;
 using TigerCS.Domain.Modules.Collections.Review;
 
@@ -16,7 +17,8 @@ namespace TigerCS.Application.Modules.Collections.Services;
 public sealed class CollectionsCampaignAppService(
     CollectionsOptions options, CollectionsCampaignOptions campaignOptions, PactReceivablesOptions sourceOptions,
     CollectionsAuthorizationService authorization, CollectionsClock clock, IPactReceivablesSource source,
-    ILogger<CollectionsCampaignAppService> logger, CollectionsUnitLinkService? links = null)
+    ILogger<CollectionsCampaignAppService> logger, CollectionsUnitLinkService? links = null,
+    IFinancialReconciliationEvidence? reconciliation = null)
 {
     /// <summary>First day the receivables history is read from when the user gives no From date (the snapshot window starts here).</summary>
     public static readonly DateOnly HistoryStart = new(2000, 1, 1);
@@ -146,6 +148,8 @@ public sealed class CollectionsCampaignAppService(
         logger.LogInformation("Campaign preview {Stage} ({Scope}, {From:yyyy-MM-dd}..{To:yyyy-MM-dd}) read {Rows} {What} in {ElapsedMs} ms ({Engine}).",
             selected, scope, from, to, sqlPage?.Units.Count ?? snapshot!.Items.Count, sqlPage is null ? "source rows" : "units", sourceMs, sqlPage is null ? "in memory" : "sql");
 
+        // ONE definition of "reconciled" (sign-off + procedure + recent automated evidence), shared with the stored review data.
+        var gate = SourceGate.Evaluate(campaignOptions, sourceOptions, reconciliation, clock.UtcNow);
         var dates = CollectionsCampaignPolicy.ScheduledDates(selected, date);
         var cycle = $"{date.ToString("yyyy-MM", CultureInfo.InvariantCulture)}:{selected}";
         // Local snapshot: every company in scope must be loaded and within the documented maximum age
@@ -156,7 +160,7 @@ public sealed class CollectionsCampaignAppService(
         var coverageIncomplete = snapshotStatus is { RangeCovered: false };
         CollectionsCampaignContactDto ToContact(CampaignUnitFacts f)
         {
-            var (unitStatus, reasons) = Compose(f.Flags | (int)crmUnavailableFlag, fresh, coverageIncomplete, selected, date, dates);
+            var (unitStatus, reasons) = Compose(f.Flags | (int)crmUnavailableFlag, fresh, coverageIncomplete, gate.Reconciled, selected, date, dates);
             var identity = $"{f.CompanyId}:{f.TenantId}:{f.UnitId}:{f.UnitCode}:{cycle}";
             var id = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(identity)));
             return new CollectionsCampaignContactDto(id, $"ext:Pact:{f.TenantId}", f.CompanyId, f.TenantId, f.FullName, f.Phone, f.Email,
@@ -177,7 +181,7 @@ public sealed class CollectionsCampaignAppService(
                     "The export exceeds the row limit. Filter by company or customer; no partial file was created.");
             // Every unit-level reason makes a unit NeedsReview whatever the global gates are; a unit without one gets the status a hypothetical clean
             // unit would get, so Ready / NeedsReview counts are exact over the whole filtered set without materialising it.
-            var cleanStatus = Compose((int)crmUnavailableFlag, fresh, coverageIncomplete, selected, date, dates).Status;
+            var cleanStatus = Compose((int)crmUnavailableFlag, fresh, coverageIncomplete, gate.Reconciled, selected, date, dates).Status;
             count = sqlPage.Total;
             ready = cleanStatus == "Ready" ? sqlPage.Clean : 0;
             review = sqlPage.Review + (cleanStatus == "NeedsReview" ? sqlPage.Clean : 0);
@@ -221,11 +225,11 @@ public sealed class CollectionsCampaignAppService(
         }
         return CollectionsResult<CollectionsCampaignPreviewDto>.Ok(new(date, clock.BusinessDate, readAtUtc,
             "PACT receivables (companies 4 and 32)", selected.ToString(), cycle, dates, dates.Contains(date),
-            campaignOptions.FinancialSourceValidated, sqlPage is null && snapshot!.LegacyExclusionsApplied, permissions.CanSendReminders,
+            gate.Reconciled, sqlPage is null && snapshot!.LegacyExclusionsApplied, permissions.CanSendReminders,
             count, ready, review, page, pageSize, items,
             from, to, CollectionsCampaignPolicy.RangeNotes(selected, date, eligibleFrom, to), towerId, snapshotStatus, min,
             new ServerTimingsDto(sourceMs, total.Elapsed.TotalMilliseconds - sourceMs, total.Elapsed.TotalMilliseconds), CrmContactStatusDto.From(crmSet.Availability), notEligible,
-            CampaignPaymentFilters.Name(paymentFilter), eligibleTotal, eligibleOutstanding, PaymentStatusNote(paymentFilter, dateFrom, to, today)));
+            CampaignPaymentFilters.Name(paymentFilter), eligibleTotal, eligibleOutstanding, PaymentStatusNote(paymentFilter, dateFrom, to, today), gate));
     }
 
     /// <summary>
@@ -243,7 +247,7 @@ public sealed class CollectionsCampaignAppService(
     }
 
     /// <summary>Review reasons and status of a candidate from its unit-level flags and the global (source / schedule / release) gates. Order is part of the contract.</summary>
-    private (string Status, List<string> Reasons) Compose(int flags, bool fresh, bool coverageIncomplete, CollectionsCampaignStage selected,
+    private (string Status, List<string> Reasons) Compose(int flags, bool fresh, bool coverageIncomplete, bool sourceReconciled, CollectionsCampaignStage selected,
         DateOnly date, IReadOnlyList<DateOnly> dates)
     {
         bool Has(CollectionsCampaignFlags flag) => (flags & (int)flag) != 0;
@@ -260,7 +264,7 @@ public sealed class CollectionsCampaignAppService(
         if (sourceOptions.Currency != "AED") reasons.Add("CurrencyNeedsReview");
         if (!fresh) reasons.Add("StaleSource");
         if (coverageIncomplete) reasons.Add("CoverageIncomplete");
-        if (!campaignOptions.FinancialSourceValidated) reasons.Add("SourceReconciliationRequired");
+        if (!sourceReconciled) reasons.Add("SourceReconciliationRequired");
         if (Has(CollectionsCampaignFlags.NoValidContact)) reasons.Add("NoValidContact");
         if (Has(CollectionsCampaignFlags.CrmCustomerAmbiguous)) reasons.Add("CrmCustomerAmbiguous");
         if (Has(CollectionsCampaignFlags.ContactSourceConflict)) reasons.Add("ContactSourceConflict");
@@ -300,9 +304,11 @@ public sealed class CollectionsCampaignAppService(
         if (rows.Any(r => r.CompanyId is not (4 or 32) || string.IsNullOrWhiteSpace(r.TenantId)))
             throw new InvalidDataException("PACT returned a receivable without a valid company/customer identity.");
         // The originals can repeat one instalment under different apartments of the same tenant.
-        // ELIGIBILITY ends where it always did - at the earlier of To and TODAY - even though the READ scope now reaches the end of the current month. The days of the month still
-        // to come feed only the Due / Total figures; they never make a unit a candidate, never change a stage amount, flag or review reason, and never move a reminder.
-        var eligibleEnd = today is { } t0 && t0 < to ? t0 : to;
+        // ELIGIBILITY is decided by the stage rule alone (CollectionsCampaignPolicy.StageRange via Evaluate/Qualifying) - the SAME call Review makes - over the rows of the eligibility
+        // scope [eligibleStart, to]. There is deliberately no extra "up to today" cut here any more: for the Current-month and Follow-up stages the stage window is the whole preview month,
+        // so an instalment due later this month is eligible here exactly as it is in Review and in the Genesys upload (which sends the Review amounts). The read window `to` is already
+        // clamped to the end of the current month, so nothing from the next month on can enter.
+        var eligibleEnd = to;
         var eligibleRows = rows.Where(r => DateOnly.FromDateTime(r.DueDate) >= eligibleStart && DateOnly.FromDateTime(r.DueDate) <= eligibleEnd).ToList();
         var ambiguousTenants = eligibleRows.GroupBy(r => (r.CompanyId, Tenant: r.TenantId.Trim()))
             .Where(g => g.GroupBy(r => DateOnly.FromDateTime(r.DueDate))

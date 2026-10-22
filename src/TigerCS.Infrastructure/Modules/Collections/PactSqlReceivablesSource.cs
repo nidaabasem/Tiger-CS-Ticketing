@@ -22,7 +22,11 @@ public sealed class PactSqlReceivablesSource(
     public Task<PactReceivablesSnapshot> ReadAsync(DateOnly throughDate, CancellationToken cancellationToken) =>
         ReadAsync(new PactReceivablesRequest(null, throughDate), cancellationToken);
 
-    public async Task<PactReceivablesSnapshot> ReadAsync(PactReceivablesRequest request, CancellationToken cancellationToken)
+    public Task<PactReceivablesSnapshot> ReadAsync(PactReceivablesRequest request, CancellationToken cancellationToken) =>
+        ReadAsync(request, options.ProcedureSuffix, cancellationToken);
+
+    /// <summary>Reads procedure <c>p{company}AccountReceivables{suffix}</c>; the suffix is explicit so a caller can name the exact procedure (the reconciliation reads the one the snapshot refresh calls).</summary>
+    public async Task<PactReceivablesSnapshot> ReadAsync(PactReceivablesRequest request, string? procedureSuffix, CancellationToken cancellationToken)
     {
         var throughDate = request.ThroughDate;
         var startDate = (request.FromDate?.ToDateTime(TimeOnly.MinValue) ?? options.StartDate).Date;
@@ -52,7 +56,7 @@ public sealed class PactSqlReceivablesSource(
         // original failure (not the follow-on cancellation) is reported. No partial list is ever returned.
         using var fault = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         // A company-scoped request must not wait for (or be failed by) the other company's procedure.
-        var work = new[] { (Company: 4, Procedure: ProcedureName(4, options.ProcedureSuffix)), (Company: 32, Procedure: ProcedureName(32, options.ProcedureSuffix)) }
+        var work = new[] { (Company: 4, Procedure: ProcedureName(4, procedureSuffix)), (Company: 32, Procedure: ProcedureName(32, procedureSuffix)) }
             .Where(x => request.CompanyId is null || request.CompanyId == x.Company)
             .Select(x => Task.Run(() => ReadCompanyAsync(connectionString, x.Company, x.Procedure, startDate, endDate, fault.Token, cancellationToken), CancellationToken.None))
             .ToArray();

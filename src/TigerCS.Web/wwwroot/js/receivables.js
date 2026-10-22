@@ -11,8 +11,49 @@
     const spinner = form.querySelector('.receivables-loading');
     const timeoutNote = form.querySelector('.receivables-timeout');
     const WATCHDOG_MS = 120000;   // results are a local read; anything longer is a fault, not progress
-    const POLL_MS = 10000, MAX_POLLS = 180;
-    let controller = null, watchdog = 0, pollTimer = 0, polls = 0;
+    const MAX_AUTO_RELOADS = 3;   // per user action: after a refresh ends the list is re-read at most this many times, never in a loop
+    let controller = null, watchdog = 0, autoReloads = 0, expectStart = false;
+
+    // ONE monitor per page. While a refresh runs it polls the tiny status handler (never the results fragment); when the server says nothing is loading it fires once and the list
+    // is read ONE more time. load() / navigation / filter changes stop it first, so an obsolete loop can never outlive the request that started it.
+    const Monitor = window.ReceivablesLoadMonitor;
+    const statusUrl = () => `${box.dataset.resultsUrl}?handler=Status`;
+    const monitor = Monitor ? Monitor.create({
+        fetchStatus: async signal => {
+            const response = await fetch(statusUrl(), { signal, credentials: 'same-origin', headers: { 'X-Requested-With': 'fetch' }, cache: 'no-store' });
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            return response.json();
+        },
+        isHidden: () => document.hidden === true,
+        onStatus: status => updateRunningNotice(status),
+        onDone: () => { if (autoReloads < MAX_AUTO_RELOADS) { autoReloads++; load(currentQuery(), false); } else showPollStopped('the list was refreshed several times'); },
+        onGiveUp: (status, reason) => showPollStopped(reason === 'error' ? 'the status could not be read' : 'it is taking longer than expected', status)
+    }) : null;
+    const stopMonitor = () => { if (monitor) monitor.stop(); };
+
+    // Live text in the "Loading data for ..." notice, from the status answer (no list request).
+    function updateRunningNotice(status) {
+        (status.companies || []).forEach(c => {
+            const line = document.querySelector(`[data-company-state="${c.id}"]`);
+            if (!line) return;
+            if (c.loading && c.startedUtc) {
+                const minutes = Math.max(0, Math.round((Date.now() - Date.parse(c.startedUtc)) / 60000));
+                line.textContent = `${c.name}: refreshing for ${minutes} min` + (c.hasData && c.lastSuccess ? `; showing data from ${c.lastSuccess} meanwhile.` : '.');
+            }
+        });
+    }
+    // Polling ended without a final answer. The data on screen stays; the notice stops claiming progress and says what happened, with a way to look again.
+    function showPollStopped(why, status) {
+        const notice = document.querySelector('[data-load-running]');
+        if (!notice) return;
+        notice.removeAttribute('data-load-running'); notice.removeAttribute('data-poll-active');
+        notice.setAttribute('data-poll-stopped', ''); notice.setAttribute('role', 'alert'); notice.classList.add('receivables-notice--warning');
+        notice.textContent = '';
+        const text = document.createElement('span');
+        text.textContent = `The refresh is still running on the server, but this page stopped checking automatically because ${why}. The data shown is the last valid snapshot.`;
+        const again = document.createElement('button'); again.type = 'button'; again.className = 'btn'; again.textContent = 'Check again'; again.setAttribute('data-poll-resume', '');
+        notice.append(text, ' ', again);
+    }
 
     const setBusy = busy => {
         form.toggleAttribute('aria-busy', busy);
@@ -87,17 +128,17 @@
             if (to && !to.value && eff.dataset.to) to.value = eff.dataset.to;
             syncMonthFromDates();
         }
-        window.clearTimeout(pollTimer);
-        if (running() && polls < MAX_POLLS) { polls++; pollTimer = window.setTimeout(() => load(currentQuery(), false), POLL_MS); }
+        // A refresh is running (or was just requested and is about to start): watch it with the small status poll, never by re-reading the list.
+        if (monitor && (running() || expectStart)) { const expect = expectStart && !running(); expectStart = false; monitor.start({ expectActive: expect }); }
     };
 
     async function load(query, push) {
         if (controller) controller.abort();
-        window.clearTimeout(pollTimer); window.clearTimeout(watchdog);
+        stopMonitor(); window.clearTimeout(watchdog);
         controller = new AbortController();
         const mine = controller;
         if (timeoutNote) timeoutNote.hidden = true;
-        const polling = !push && running() !== null;   // keep the progress text while polling
+        const polling = !push && running() !== null;   // keep the current notice and list while re-reading after a refresh
         if (!polling) showLoading();
         setBusy(true);
         let timedOut = false;
@@ -112,6 +153,7 @@
             box.innerHTML = html;
             afterRender();
         } catch (error) {
+            expectStart = false;
             if (mine !== controller && !timedOut) return;   // superseded by a newer request: that request owns the UI now
             if (timedOut) { if (timeoutNote) timeoutNote.hidden = false; message('The list is taking too long. The request was stopped.', true); }
             else if (error && error.name === 'AbortError') { return; }
@@ -124,21 +166,24 @@
 
     // View (By unit / By instalment): switching re-runs the search with the same filters.
     form.querySelectorAll('[data-view-radio]').forEach(r => r.addEventListener('change', () => form.requestSubmit()));
-    form.addEventListener('submit', event => { event.preventDefault(); polls = 0; load(queryFromForm(), true); });
+    form.addEventListener('submit', event => { event.preventDefault(); autoReloads = 0; load(queryFromForm(), true); });
     box.addEventListener('click', event => {
         const link = event.target.closest('a[data-results-link]');
         if (link) {
-            event.preventDefault(); polls = 0;
+            event.preventDefault(); autoReloads = 0;
             const q = new URL(link.href, location.origin).searchParams; q.delete('render'); q.delete('handler');
             load(q, true);
             return;
         }
         const toggle = event.target.closest('[data-unit-toggle]');
         if (toggle) { setUnitOpen(toggle.closest('[data-unit]'), toggle.getAttribute('aria-expanded') !== 'true'); return; }
-        if (event.target.closest('[data-results-retry]')) { event.preventDefault(); polls = 0; load(currentQuery(), false); }
+        if (event.target.closest('[data-results-retry]')) { event.preventDefault(); autoReloads = 0; load(currentQuery(), false); }
+        if (event.target.closest('[data-poll-resume]')) { event.preventDefault(); autoReloads = 0; load(currentQuery(), false); }
     });
     window.addEventListener('popstate', () => location.reload());
     window.addEventListener('pageshow', event => { if (event.persisted) setBusy(false); });
+    window.addEventListener('pagehide', stopMonitor);   // leaving the page ends the loop
+    window.addEventListener('campaign-preview-invalidated', stopMonitor);   // a filter changed: the list being watched is obsolete, so is the watch
 
     // Month + Year set From / To to the first and last day of that month (any leap year handled by Date). Editing a date returns to "Custom range".
     const month = form.querySelector('[data-month-select]'), year = form.querySelector('[data-year-select]');
@@ -156,11 +201,11 @@
         const y = +year.value, m = +month.value, last = new Date(Date.UTC(y, m, 0)).getUTCDate();
         from.value = `${y}-${pad(m)}-01`; to.value = `${y}-${pad(m)}-${pad(last)}`;
         [from, to].forEach(i => { i.dataset.auto = 'false'; });   // a chosen month is an explicit range: stage defaults must not override it
-        polls = 0; load(queryFromForm(), true);
+        autoReloads = 0; load(queryFromForm(), true);
     }
     if (month && year && (!from || !to)) {   // pages without date inputs (Receivables): choosing a month / year reloads the list
-        month.addEventListener('change', () => { if (month.value && !year.value) year.value = String(new Date().getFullYear()); if (!month.value) year.value = ''; polls = 0; load(queryFromForm(), true); });
-        year.addEventListener('change', () => { if (month.value) { polls = 0; load(queryFromForm(), true); } });
+        month.addEventListener('change', () => { if (month.value && !year.value) year.value = String(new Date().getFullYear()); if (!month.value) year.value = ''; autoReloads = 0; load(queryFromForm(), true); });
+        year.addEventListener('change', () => { if (month.value) { autoReloads = 0; load(queryFromForm(), true); } });
     }
     if (month && year && from && to) {
         month.addEventListener('change', applyMonth);
@@ -180,7 +225,7 @@
             await fetch(f.action, { method: 'POST', body: new FormData(f), credentials: 'same-origin' });
         } catch { /* the reload below shows the real state */ }
         finally { if (button) button.disabled = false; if (note) note.hidden = true; }
-        polls = 0; load(currentQuery(), false);
+        autoReloads = 0; expectStart = true; load(currentQuery(), false);   // the job may take a moment to start: the monitor waits for it instead of concluding "nothing is loading"
     }, true);
 
     // First load: the shell is already on screen; fetch the results for the URL.

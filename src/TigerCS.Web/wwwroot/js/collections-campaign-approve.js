@@ -60,36 +60,45 @@
     if (results) new MutationObserver(sync).observe(results, { childList: true, subtree: true });
     sync();
 
+    // A chained, bounded poll: the next request is scheduled only after the previous answer, it ends when the server says the work is over, after maxMs, or after three failures in a row.
+    // Ending without an answer is said on the page (never an endless "Queued"), and the person can look again by reloading.
+    const boundedPoll = (url, firstMs, everyMs, maxMs, onState, giveUp) => {
+        const started = Date.now(); let errors = 0;
+        const tick = async () => {
+            if (document.hidden) { window.setTimeout(tick, everyMs); return; }
+            try {
+                const response = await fetch(url, { headers: { Accept: 'application/json' }, cache: 'no-store' });
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                const state = await response.json(); errors = 0;
+                if (!state.active) { window.location.reload(); return; }
+                onState(state);
+            } catch { if (++errors >= 3) { giveUp('its status could not be read'); return; } }
+            if (Date.now() - started >= maxMs) { giveUp('it is taking longer than expected'); return; }
+            window.setTimeout(tick, everyMs);
+        };
+        window.setTimeout(tick, firstMs);
+    };
+    const stopped = (host, why) => {
+        const note = document.createElement('p'); note.className = 'receivables-notice receivables-notice--warning'; note.setAttribute('role', 'alert'); note.setAttribute('data-poll-stopped', '');
+        note.textContent = `This page stopped checking automatically because ${why}. Reload the page to see the current state.`;
+        host.appendChild(note);
+    };
+
     // Approval-data refresh: poll until it ends, then reload so a failure (with its reason and Retry) or the finished data appears.
     const run = document.querySelector('[data-run-active="true"]');
     if (run) {
         const bar = run.querySelector('[data-run-progress]');
         const phase = run.querySelector('[data-run-phase]');
-        const poll = async () => {
-            try {
-                const response = await fetch('/Collections/Campaigns?handler=Run', { headers: { Accept: 'application/json' }, cache: 'no-store' });
-                const state = await response.json();
-                if (bar) bar.value = state.progressPercent;
-                if (phase) phase.textContent = state.phase + '…';
-                if (!state.active) { window.location.reload(); return; }
-            } catch { /* retry on the next tick */ }
-            window.setTimeout(poll, 3000);
-        };
-        window.setTimeout(poll, 2000);
+        boundedPoll('/Collections/Campaigns?handler=Run', 2000, 3000, 20 * 60 * 1000, state => {
+            if (bar) bar.value = state.progressPercent;
+            if (phase) phase.textContent = state.phase + '…';
+        }, why => stopped(run, why));
     }
 
     // A running send: poll its status and reload when it ends.
     const send = document.querySelector('[data-dispatch-active="true"]');
     if (send) {
         const id = send.dataset.dispatchId;
-        const poll = async () => {
-            try {
-                const response = await fetch('/Collections/Campaigns?handler=Send&dispatch=' + encodeURIComponent(id), { headers: { Accept: 'application/json' }, cache: 'no-store' });
-                const state = await response.json();
-                if (!state.active) { window.location.reload(); return; }
-            } catch { /* retry on the next tick */ }
-            window.setTimeout(poll, 4000);
-        };
-        window.setTimeout(poll, 3000);
+        boundedPoll('/Collections/Campaigns?handler=Send&dispatch=' + encodeURIComponent(id), 3000, 4000, 60 * 60 * 1000, () => {}, why => stopped(send, why));
     }
 })();

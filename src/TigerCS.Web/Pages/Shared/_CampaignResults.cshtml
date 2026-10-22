@@ -21,6 +21,10 @@ else if (Model.Report is { } report)
             <li>Needs review / blocked: <strong data-blocked-count>@blockedCount.ToString("N0")</strong> <span class="receivables-meta">(eligible, but not yet safe to send)</span></li>
             @if (report.EligibleTotalAmount is { } qualifying) { <li>Total qualifying amount: <strong data-eligible-total>@(report.Items.FirstOrDefault()?.Currency ?? "AED") @qualifying.ToString("N2", System.Globalization.CultureInfo.InvariantCulture)</strong> <span class="receivables-meta">(stage amount of the eligible customers, as sent to Genesys)</span></li> }
             @if (report.EligibleOutstandingAmount is { } outstanding) { <li>Outstanding balance of the eligible customers: <strong data-eligible-outstanding>@(report.Items.FirstOrDefault()?.Currency ?? "AED") @outstanding.ToString("N2", System.Globalization.CultureInfo.InvariantCulture)</strong></li> }
+            @if (report.EligibleTotalAmount is { } q && report.EligibleOutstandingAmount is { } o)
+            {
+                <li class="receivables-meta" data-amount-explanation>Why the two amounts differ: the outstanding balance is everything these customers owe that is Due or Overdue; the qualifying amount is only the part this stage's rule collects@(o - q > 0 ? $" (AED {(o - q).ToString("N2", System.Globalization.CultureInfo.InvariantCulture)} of the balance is not part of this stage)" : ""). Neither is the customers' full contract balance.</li>
+            }
             <li>Payment status: <strong>@(report.PaymentStatus == "Both" ? "Due and Overdue" : report.PaymentStatus)</strong></li>
             @if (Model.CampaignName is { } campaignName) { <li>Genesys campaign name when sent: <strong data-campaign-name>@campaignName</strong></li> }
         </ul>

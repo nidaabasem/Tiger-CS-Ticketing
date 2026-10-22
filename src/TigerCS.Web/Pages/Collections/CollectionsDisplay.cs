@@ -21,6 +21,26 @@ public static class CollectionsDisplay
         return failed.Count == 0 ? null : failed;
     }
 
+    /// <summary>
+    /// The compact JSON the pages poll while a refresh runs (a few hundred bytes; no receivables). <c>active</c> is true only while a refresh of some company really executes within its
+    /// expected duration - every other state is final until someone acts, so the browser stops checking.
+    /// </summary>
+    public static object StatusPayload(SnapshotStatusDto? status) => status is null
+        ? new { available = false, active = false, companies = Array.Empty<object>() }
+        : new
+        {
+            available = true,
+            active = status.LoadInProgress,
+            scheduledRefresh = status.ScheduledRefreshActive,
+            schedule = status.RefreshSchedule,
+            companies = status.Companies.Select(c => new
+            {
+                id = c.CompanyId, name = c.CompanyName, state = c.State, loading = c.IsLoading, hasData = c.HasData,
+                startedUtc = c.IsLoading ? c.RefreshStartedUtc : null, lastSuccess = c.LastSuccessUtc is null ? null : DubaiTime(c.LastSuccessUtc),
+                failure = c.FailureText, ageMinutes = c.AgeMinutes
+            }).ToArray()
+        };
+
     /// <summary>"Tiger Group Sharjah" / "Tiger Group Dubai and Tiger Group Sharjah".</summary>
     public static string CompanyList(IEnumerable<SnapshotCompanyStatusDto> companies) => string.Join(" and ", companies.Select(c => c.CompanyName));
 

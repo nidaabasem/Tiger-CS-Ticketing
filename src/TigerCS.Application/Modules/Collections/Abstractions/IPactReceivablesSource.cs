@@ -54,6 +54,22 @@ public interface ICollectionsTowerCatalog
 /// <summary>Raised when the request names a tower that does not exist (or clashes with the company filter).</summary>
 public sealed class PactReceivablesScopeException(string message) : Exception(message);
 
+/// <summary>Describes how (and whether) the receivables snapshot is refreshed on a schedule in THIS process, for the pages. Informational only: it changes nothing.</summary>
+public interface ISnapshotSchedule
+{
+    /// <summary>True while the recurring refresh job is registered (Hangfire running, refresh enabled).</summary>
+    bool ScheduledRefreshActive { get; }
+
+    /// <summary>One sentence for the page, e.g. "Scheduled refresh is OFF on this server (BackgroundJobs:Enabled is false) ...".</summary>
+    string Describe();
+}
+
+/// <summary>The per-company refresh state alone (no receivables): what the pages poll while a refresh runs. Never starts a refresh.</summary>
+public interface ISnapshotStatusSource
+{
+    Task<SnapshotStatusDto> ReadStatusAsync(CancellationToken cancellationToken);
+}
+
 /// <summary>Runs one snapshot refresh (PACT -> staging -> validated publish). Overlap-safe; companies succeed or fail independently.</summary>
 public interface IReceivablesRefresher
 {
@@ -142,7 +158,7 @@ public interface IPactCampaignSource
 /// [StageFrom, StageToExclusive) (StageFrom null = unbounded); a stage amount qualifies when its sum is &gt; Threshold. ContactRequired is false for the
 /// internal legal-referral stage. PhoneDigits are the digits of a phone-like search term, else null. Offset/Take page the ordered units
 /// (company, tenant, unit code, unit id). Today (Dubai): units carry DueAmount (due inside the month of Today) and OverdueAmount (due before that month); a unit with neither is not a candidate,
-/// and MinTotal (null = none) keeps units whose DueAmount + OverdueAmount is greater than it. Units whose code contains '*' (cancelled) are never candidates. [From, To] is the READ scope (it reaches the end of the current month); stage eligibility, the stage amount and the unit flags only look at rows due up to the earlier of To and Today, exactly as the in-memory evaluation does.
+/// and MinTotal (null = none) keeps units whose DueAmount + OverdueAmount is greater than it. Units whose code contains '*' (cancelled) are never candidates. [From, To] is the READ scope (it reaches the end of the current month); stage eligibility, the stage amount and the unit flags look at the rows of [eligibility start, To] through the stage window alone (CollectionsCampaignPolicy.StageRange), exactly as the in-memory evaluation and Review do. NOTE: the archived SQL campaign engine (database/collections-receivables/legacy/V007) is built on an older day-based rule, is not deployed and must not be revived without being brought in line with CollectionsDueMonth and this eligibility rule.
 /// </remarks>
 public sealed record PactCampaignRequest(
     DateOnly From, DateOnly To, decimal MinAmount, DateOnly? StageFrom, DateOnly StageToExclusive, decimal Threshold, bool ContactRequired,

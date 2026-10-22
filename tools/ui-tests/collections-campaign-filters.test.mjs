@@ -56,7 +56,7 @@ async function boot({ blocked = false } = {}) {
     const { window } = dom; const { document } = window; windows.push(window);
     const fetches = [];
     window.fetch = async url => { fetches.push(String(url)); return { ok: true, status: 200, redirected: false, url: String(url), text: async () => RESULTS(blocked) }; };
-    for (const f of ['receivables.js', 'collections-campaign-filters.js', 'collections-campaign-approve.js']) window.eval(read(f));
+    for (const f of ['receivables-load-monitor.js', 'receivables.js', 'collections-campaign-filters.js', 'collections-campaign-approve.js']) window.eval(read(f));
     document.dispatchEvent(new window.Event('DOMContentLoaded'));
     const tick = () => new Promise(r => setTimeout(r, 10));
     const preview = async () => { document.querySelector('#campaignFilters').requestSubmit(); await tick(); await tick(); };

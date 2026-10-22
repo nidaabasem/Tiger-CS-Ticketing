@@ -107,6 +107,16 @@ public sealed class RcvReceivablesRefresher(IConfiguration configuration, Receiv
                     Int(reader, "FetchMs"), null, Int(reader, "PublishMs"));
             }
             returned = true;   // the procedure ran to its end: the attempt has its own terminal state
+            var elapsedMs = (DateTime.UtcNow - startedAt).TotalMilliseconds;
+            if (result is { Status: "Succeeded" })
+                logger.LogInformation("Receivables refresh of company {CompanyId} run {RunId} Succeeded in {ElapsedMs:F0} ms (trigger {Trigger}): {RawRows} raw, {PublishedRows} published, fetch {FetchMs} ms, publish {PublishMs} ms.",
+                    company, resultRun ?? runId, elapsedMs, triggerSource, result.RawRows, result.PublishedRows, result.FetchMs, result.PublishMs);
+            else if (result is { Status: "AlreadyRunning" })
+                logger.LogInformation("Receivables refresh of company {CompanyId} skipped after {ElapsedMs:F0} ms (trigger {Trigger}): another refresh of this company holds its lock.", company, elapsedMs, triggerSource);
+            else
+                logger.LogWarning("Receivables refresh of company {CompanyId} run {RunId} ended {Status} after {ElapsedMs:F0} ms (trigger {Trigger}) in the phase \"{Phase}\" (SQL error {SqlNumber}): {ErrorMessage}. The previous snapshot is kept.",
+                    company, resultRun ?? runId, result?.Status ?? "Failed", elapsedMs, triggerSource,
+                    TigerCS.Application.Modules.Collections.Services.SnapshotFailureText.Phase(result?.ErrorNumber, result?.FetchMs), result?.ErrorNumber, result?.ErrorMessage);
             return (resultRun ?? runId, result ?? new ReceivablesRefreshCompanyResult(company, "Failed", null, null, null, null, null, null, "The refresh procedure returned no result."));
         }
         catch (SqlException ex)
@@ -121,8 +131,8 @@ public sealed class RcvReceivablesRefresher(IConfiguration configuration, Receiv
                     ? $"The connection to SQL Server was lost while the refresh was running (SQL error {ex.Number}: network / transport). The previous snapshot is kept; the server session may still be finishing and the next refresh or status read closes it."
                     : $"The refresh procedure failed (SQL error {ex.Number}).";
             // Everything needed to find the dropped session in the SQL Server logs and on the network path; never the connection string or any data.
-            logger.LogError("Receivables refresh of company {CompanyId} failed after {ElapsedSeconds:F0} s (SQL error {SqlNumber}, class {Class}, state {State}, transport={Transport}, clientConnectionId={ClientConnectionId}, server={Server}, commandTimeoutSeconds={CommandTimeout}).",
-                company, (DateTime.UtcNow - startedAt).TotalSeconds, ex.Number, ex.Class, ex.State, transport, ex.ClientConnectionId, ex.Server, options.RefreshCommandTimeoutSeconds);
+            logger.LogError("Receivables refresh of company {CompanyId} run {RunId} failed after {ElapsedSeconds:F0} s (SQL error {SqlNumber}, class {Class}, state {State}, transport={Transport}, clientConnectionId={ClientConnectionId}, server={Server}, commandTimeoutSeconds={CommandTimeout}).",
+                company, runId, (DateTime.UtcNow - startedAt).TotalSeconds, ex.Number, ex.Class, ex.State, transport, ex.ClientConnectionId, ex.Server, options.RefreshCommandTimeoutSeconds);
             return (runId, new ReceivablesRefreshCompanyResult(company, "Failed", null, null, null, null, null, ex.Number, closeMessage));
         }
         catch (OperationCanceledException)

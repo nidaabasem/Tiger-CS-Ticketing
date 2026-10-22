@@ -387,6 +387,13 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddScoped<PactInstalmentsAppService>();
         services.Configure<CollectionsCampaignOptions>(configuration.GetSection(CollectionsCampaignOptions.SectionName));
         services.AddScoped(sp => sp.GetRequiredService<IOptions<CollectionsCampaignOptions>>().Value);
+        // Reconciliation of the snapshot with a fresh read of the same PACT procedure (on request only). The history is a singleton: it is also the single-flight guard and the gate's evidence.
+        services.AddSingleton<TigerCS.Application.Modules.Collections.Reconciliation.ReconciliationHistory>();
+        services.AddSingleton<TigerCS.Application.Modules.Collections.Reconciliation.IFinancialReconciliationEvidence>(sp => sp.GetRequiredService<TigerCS.Application.Modules.Collections.Reconciliation.ReconciliationHistory>());
+        services.AddScoped<PactSqlReceivablesSource>();
+        services.AddScoped<TigerCS.Application.Modules.Collections.Reconciliation.IReconciliationSource, PactDirectReconciliationSource>();
+        services.AddSingleton<TigerCS.Application.Modules.Collections.Reconciliation.IReconciliationLauncher, InProcessReconciliationLauncher>();
+        services.AddScoped<TigerCS.Application.Modules.Collections.Reconciliation.FinancialReconciliationService>();
         services.AddScoped<CollectionsCampaignAppService>();
         // Review and approval workflow: stored review data, explicit refresh/dispatch jobs, Genesys outbound upload.
         services.Configure<CollectionsReviewOptions>(configuration.GetSection(CollectionsReviewOptions.SectionName));

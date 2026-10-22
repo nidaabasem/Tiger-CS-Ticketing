@@ -24,7 +24,8 @@ public sealed record CollectionsCampaignPreviewDto(
     DateOnly? DateFrom = null, DateOnly? DateTo = null, IReadOnlyList<string>? RangeNotes = null,
     int? TowerId = null, SnapshotStatusDto? Snapshot = null, decimal MinAmount = 0m, ServerTimingsDto? Timings = null, CrmContactStatusDto? Crm = null, int NotEligibleCount = 0,
     string PaymentStatus = "Both", decimal? EligibleTotalAmount = null,
-    decimal? EligibleOutstandingAmount = null, string? PaymentStatusNote = null);
+    decimal? EligibleOutstandingAmount = null, string? PaymentStatusNote = null,
+    Reconciliation.SourceGateDto? SourceGate = null);
 
 /// <summary>
 /// The state of the CRM contact data behind a list. <c>State</c>: Disabled (CRM linking is switched off: PACT contacts only), Ready, NotLoaded, Stale or ReadFailed. A <c>Blocks</c> state is a CRM

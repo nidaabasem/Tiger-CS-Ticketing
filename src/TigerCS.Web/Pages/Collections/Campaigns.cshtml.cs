@@ -173,12 +173,26 @@ public sealed class CampaignsModel(CollectionsApiClient api, Microsoft.Extension
         if (report.Snapshot is { IsReady: false } snapshot && snapshot.ReadyProblem is { } problem) reasons.Add($"Financial data: {problem}");
         if (!report.FinancialSourceValidated) reasons.Add("The financial source has not been reconciled against PACT.");
         if (report.Crm is { Blocks: true } crm) reasons.Add(crm.Message ?? "CRM contacts are unavailable, so contacts are unconfirmed.");
-        if (!report.IsScheduledDate || report.BusinessDate != report.LiveBusinessDate) reasons.Add("The preview date is not today's scheduled send date: preview only.");
+        if (ScheduleRestriction(StageName(report.Stage), report.ScheduledDates, report.BusinessDate, report.LiveBusinessDate, report.IsScheduledDate) is { } schedule) reasons.Add(schedule);
         var counts = report.Items.Where(i => i.Status is not ("Ready" or "NotEligible"))
             .SelectMany(i => i.Reason.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)).Where(r => r != "Qualifies")
             .GroupBy(r => r).OrderByDescending(g => g.Count()).ThenBy(g => g.Key, StringComparer.Ordinal);
         foreach (var g in counts) reasons.Add($"{ReasonText(g.Key)} ({g.Count():N0} on this page)");
         return reasons;
+    }
+
+    /// <summary>
+    /// Why a list can be previewed but not sent today, in terms of the stage's real schedule (null = no schedule restriction). Preview is always allowed; SENDING is allowed only when the preview
+    /// date is today (Dubai) and today is one of the stage's scheduled send days. The restriction is never overridden here.
+    /// </summary>
+    public static string? ScheduleRestriction(string stageName, IReadOnlyList<DateOnly> scheduledDates, DateOnly previewDate, DateOnly today, bool isScheduledDate)
+    {
+        var days = scheduledDates.Count == 0 ? "its scheduled days" : string.Join(" and ", scheduledDates.Select(d => d.ToString("dd MMM yyyy", CultureInfo.InvariantCulture)));
+        if (previewDate != today)
+            return $"Preview only: the preview date ({previewDate:dd MMM yyyy}) is not today ({today:dd MMM yyyy}, Dubai). A list can only be sent for today, and \"{stageName}\" is sent on {days}.";
+        if (!isScheduledDate)
+            return $"Preview only: \"{stageName}\" is scheduled for {days}; today ({today:dd MMM yyyy}) is not one of those days. The customer list can be previewed and exported for review, but it cannot be sent outside the schedule.";
+        return null;
     }
 
     public static string ReasonText(string code) => code switch
@@ -191,7 +205,7 @@ public sealed class CampaignsModel(CollectionsApiClient api, Microsoft.Extension
         "CrmCompanyAmbiguous" => "CRM sale cannot be tied to one company",
         "ContactSourceConflict" => "CRM and PACT contacts differ",
         "CrmUnavailable" => "CRM unavailable: contacts unconfirmed",
-        "OutsideSchedule" => "Not a scheduled send date: preview only",
+        "OutsideSchedule" => "Not a scheduled send day for this stage: preview only (sending is only possible on its scheduled days)",
         "InternalLegalReferralOnly" => "Internal legal referral: never sent to customers",
         "LegalNoticeReleaseRequired" => "Legal notice sending has not been released",
         "AmbiguousInstalments" => "Ambiguous instalments",
@@ -253,6 +267,14 @@ public sealed class CampaignsModel(CollectionsApiClient api, Microsoft.Extension
             // The list itself must stay usable when the approval status cannot be read; the panels are simply absent.
             ApprovalError ??= "The approval and send status could not be read. The customer list below is unaffected; reload to retry.";
         }
+    }
+
+    /// <summary>Per-company refresh state (JSON, tiny): polled while a snapshot refresh runs, instead of re-requesting the whole results fragment.</summary>
+    public async Task<IActionResult> OnGetStatusAsync(CancellationToken ct)
+    {
+        var result = await api.GetSnapshotStatusAsync(ct);
+        Response.Headers.CacheControl = "no-store";
+        return new JsonResult(CollectionsDisplay.StatusPayload(result.IsSuccess ? result.Value : null));
     }
 
     /// <summary>Progress poll for the approval-data refresh (JSON, no financial data).</summary>

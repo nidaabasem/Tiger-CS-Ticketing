@@ -90,6 +90,14 @@ public sealed class ReceivablesModel(CollectionsApiClient api) : PageModel
         return Partial("_InstalmentResults", this);
     }
 
+    /// <summary>Per-company refresh state (JSON, tiny): what receivables.js polls while a refresh is running, instead of re-requesting the whole results fragment.</summary>
+    public async Task<IActionResult> OnGetStatusAsync(CancellationToken cancellationToken)
+    {
+        var result = await api.GetSnapshotStatusAsync(cancellationToken);
+        Response.Headers.CacheControl = "no-store";
+        return new JsonResult(CollectionsDisplay.StatusPayload(result.IsSuccess ? result.Value : null));
+    }
+
     private void Bind(int? towerId, string? status, string? search, int? month, int? year, int page, string? load)
     {
         TowerId = towerId;
