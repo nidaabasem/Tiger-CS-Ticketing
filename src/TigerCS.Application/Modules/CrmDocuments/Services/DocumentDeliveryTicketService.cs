@@ -25,13 +25,17 @@ public enum DocumentDeliveryTicketEvent
 
 /// <summary>Who asked: the integration account, the verified session, the conversation the chatbot named, the ticket that already consumed the session, and what the session proves about the customer (CRM id, phone).</summary>
 public sealed class DocumentDeliveryTicketContext(
-    Guid callerEmployeeId, Guid verificationSessionId, string? conversationId, long? consumedByTicketId, int crmCustomerId, string? contactPhone)
+    Guid callerEmployeeId, Guid verificationSessionId, string? conversationId, long? consumedByTicketId, int crmCustomerId, string? contactPhone,
+    string? serviceRequestId = null)
 {
     public Guid CallerEmployeeId { get; } = callerEmployeeId;
     public Guid VerificationSessionId { get; } = verificationSessionId;
     public string? ConversationId { get; } = string.IsNullOrWhiteSpace(conversationId) ? null : conversationId.Trim();
     public long? ConsumedByTicketId { get; } = consumedByTicketId;
     public int CrmCustomerId { get; } = crmCustomerId;
+
+    /// <summary>The service request of the conversation this document request fulfils, when the chatbot named one — selects the right ticket among several of one conversation.</summary>
+    public string? ServiceRequestId { get; } = string.IsNullOrWhiteSpace(serviceRequestId) ? null : serviceRequestId.Trim();
     public string? ContactPhone { get; } = contactPhone;
 
     /// <summary>The delivery channel's own failure code, when it gave one — recorded as the actual reason.</summary>
@@ -59,7 +63,9 @@ public interface IDocumentDeliveryTicketHandler
 /// <b>Which ticket.</b> Only one the existing associations name: the ticket of the Genesys conversation the chatbot sent
 /// (<c>conversationId</c> → its interaction), else the ticket that consumed the verification session. It must still be open, belong to
 /// the same CRM customer when it has one, and — for a conversation — have been started from the verified contact's phone number.
-/// Anything else is left alone: this never searches for "a ticket of this customer".
+/// Anything else is left alone: this never searches for "a ticket of this customer". When the conversation carries several tickets, the
+/// request's <c>serviceRequestId</c> picks the right one, and a ticket that is <b>human follow-up</b> (flagged by Genesys, or with an
+/// open handoff) is never closed by a document outcome.
 /// </para>
 ///
 /// <para>
@@ -74,6 +80,8 @@ public sealed class DocumentDeliveryTicketService(
     CrmDocumentOptions options,
     IGenesysConversationRepository conversationRepository,
     ITicketRepository ticketRepository,
+    ITicketAgentHandoffRepository handoffRepository,
+    ITicketInteractionRepository interactionRepository,
     ICrmDocumentDeliveryRepository deliveryRepository,
     TicketLifecycleAppService lifecycleAppService,
     IAuditEntryWriter auditWriter,
@@ -151,7 +159,7 @@ public sealed class DocumentDeliveryTicketService(
         try
         {
             if (context.ConversationId is not { } conversationId
-                || await conversationRepository.GetByConversationIdAsync(conversationId, cancellationToken) is not { } interaction
+                || await FindInteractionAsync(context, conversationId, cancellationToken) is not { } interaction
                 || interaction.LastCustomerInteractionAtUtc is null // only a conversation the rule already tracks (never Call Center / human-managed)
                 || await FindTicketAsync(context, cancellationToken) is null)
             {
@@ -174,7 +182,7 @@ public sealed class DocumentDeliveryTicketService(
         long ticketId;
         if (context.ConversationId is { } conversationId)
         {
-            var interaction = await conversationRepository.GetByConversationIdAsync(conversationId, cancellationToken);
+            var interaction = await FindInteractionAsync(context, conversationId, cancellationToken);
             if (interaction is null || !SamePerson(interaction.CustomerPhone, context.ContactPhone))
             {
                 return null;
@@ -199,8 +207,28 @@ public sealed class DocumentDeliveryTicketService(
             return null;
         }
 
+        // Human follow-up keeps the ticket open: Genesys flagged it as human work (leasing, a complaint), or a handoff is requested,
+        // waiting, assigned or in progress. The document was delivered, but a person still owes the customer something on this ticket,
+        // and only that person's authorized workflow ends it. This is judged on THIS ticket alone — a sibling ticket of the same
+        // conversation neither protects nor endangers it.
+        if ((await interactionRepository.ListByTicketIdAsync(ticketId, cancellationToken)).Any(i => i.RequiresHumanFollowUp)
+            || (await handoffRepository.ListByTicketIdAsync(ticketId, cancellationToken)).Any(h => h.IsOpen))
+        {
+            return null;
+        }
+
         return ticket;
     }
+
+    /// <summary>
+    /// The conversation's interaction for this document request: the exact (conversation, service request) one when the chatbot named a
+    /// service request, otherwise the conversation's default interaction (the single one every conversation had before service requests).
+    /// </summary>
+    private Task<TicketInteraction?> FindInteractionAsync(
+        DocumentDeliveryTicketContext context, string conversationId, CancellationToken cancellationToken) =>
+        context.ServiceRequestId is { } serviceRequestId
+            ? conversationRepository.GetByConversationAndServiceRequestAsync(conversationId, serviceRequestId, cancellationToken)
+            : conversationRepository.GetByConversationIdAsync(conversationId, cancellationToken);
 
     /// <summary>Equal when both are phone numbers that normalise the same; if either is not a number there is nothing to contradict.</summary>
     private static bool SamePerson(string? conversationPhone, string? verifiedPhone)

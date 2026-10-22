@@ -35,6 +35,14 @@ public sealed record CrmDocumentCopyRequestDto(
     /// that consumed the verification session is used, if any; with neither, no ticket is touched.
     /// </summary>
     public string? ConversationId { get; init; }
+
+    /// <summary>
+    /// Optional. Which service request of the conversation this document request fulfils (the same <c>serviceRequestId</c> the ticket was
+    /// created with). When a conversation carries several tickets this is what makes the outcome close the <i>documents</i> ticket and never a
+    /// sibling (for example an apartment-leasing ticket). Omitted, the conversation's default (first) ticket is used, as before.
+    /// A ticket that needs human follow-up is never closed by a document outcome, whichever way it was found.
+    /// </summary>
+    public string? ServiceRequestId { get; init; }
 }
 
 /// <summary>

@@ -21,16 +21,17 @@ namespace TigerCS.Application.Modules.GenesysIntegration.Services;
 /// customer lookup, ticket creation, conversation link.
 ///
 /// <para>
-/// <b>One inquiry, exactly one ticket.</b>
-/// <see cref="GenesysInquiryDto.ConversationId"/> is the identity of an
-/// inquiry. The first accepted event for a conversation creates a ticket;
-/// every retry, redelivery, or duplicate event returns <i>that same ticket</i>
+/// <b>One service request, exactly one ticket.</b>
+/// The identity of an inquiry is the pair (<see cref="GenesysInquiryDto.ConversationId"/>,
+/// <see cref="GenesysInquiryDto.ServiceRequestId"/>). The first accepted event for a pair
+/// creates a ticket; every retry, redelivery, or duplicate event returns <i>that same ticket</i>
 /// (<see cref="GenesysIngestionOutcome.AlreadyIngested"/>) and creates
-/// nothing. The guarantee is not only this service's read-before-write: the
-/// conversation id carries a unique index on <c>TicketInteractions</c>, so
-/// two concurrent deliveries that both pass the read still produce one
-/// ticket — the loser's unique-constraint violation is caught below and
-/// answered with the winner's ticket.
+/// nothing. A conversation can therefore carry several distinct service requests (documents,
+/// then apartment leasing), each a separate ticket with its own lifecycle. A caller that sends no
+/// service request id keeps the original contract — the conversation is one ticket and every repeat
+/// returns it. The guarantee is not only this service's read-before-write: the pair carries a unique
+/// index on <c>TicketInteractions</c>, so two concurrent deliveries that both pass the read still produce
+/// one ticket — the loser's unique-constraint violation is caught below and answered with the winner's ticket.
 /// </para>
 ///
 /// <para>
@@ -125,10 +126,14 @@ public sealed class GenesysInquiryIngestionAppService(
         }
 
         var conversationId = inquiry.ConversationId.Trim();
+        var serviceRequestId = NullIfBlank(inquiry.ServiceRequestId);
 
         // Idempotency, first — before an intake record or anything else is
-        // written, so a retry never leaves debris behind either.
-        if (await conversationRepository.GetByConversationIdAsync(conversationId, cancellationToken) is { } existing)
+        // written, so a retry never leaves debris behind either. The identity of
+        // a ticket is the (conversation, service request) pair; a caller that
+        // sends no service request id keeps the original rule — the conversation
+        // IS the ticket, whichever service request created it.
+        if (await FindExistingAsync(conversationId, serviceRequestId, cancellationToken) is { } existing)
         {
             return await AlreadyIngestedAsync(existing, cancellationToken);
         }
@@ -142,22 +147,53 @@ public sealed class GenesysInquiryIngestionAppService(
         }
 
         var (department, departmentSource) = await ResolveDepartmentAsync(inquiry, cancellationToken);
-        if (department is null)
-        {
-            return GenesysIngestionResult.Failure(
-                GenesysIngestionOutcome.DepartmentNotResolved,
-                DescribeUnresolvedDepartment(inquiry));
-        }
 
         // An EXPLICITLY supplied request type is validated before anything is written. Absent is fine (the ticket is created on the
-        // default priority and stays Unclassified for manual classification); present-but-unusable is the caller's mistake and is refused
-        // with nothing created, so a retry with a corrected value works and no half-classified ticket is left behind.
-        if (inquiry.RequestType is { IsSupplied: true } supplied)
+        // default priority and stays Unclassified for manual classification).
+        RequestTypeResolution? requestTypeCheck = inquiry.RequestType is { IsSupplied: true } supplied
+            ? await classificationAppService.ValidateAsync(supplied, cancellationToken)
+            : null;
+
+        if (department is null)
         {
-            var check = await classificationAppService.ValidateAsync(supplied, cancellationToken);
-            if (!check.IsValid)
+            // Nothing named a department. Routing still never falls back to a guess, only to what configuration says, in this order:
+            // the department the (valid) request type is configured to be handled by, then the configured classification queue.
+            // With neither, the inquiry is refused exactly as before.
+            if (requestTypeCheck is { IsValid: true, RequestType: { } routedType }
+                && await departmentRepository.GetByIdAsync(routedType.DepartmentId, cancellationToken) is { IsActive: true } typeDepartment)
             {
-                return GenesysIngestionResult.Failure(GenesysIngestionOutcome.RequestTypeInvalid, check.Detail);
+                (department, departmentSource) = (typeDepartment, GenesysDepartmentSource.RequestTypeDepartment);
+            }
+            else if (await ResolveClassificationDepartmentAsync(cancellationToken) is { } classificationQueue)
+            {
+                (department, departmentSource) = (classificationQueue, GenesysDepartmentSource.ClassificationQueue);
+            }
+            else
+            {
+                return GenesysIngestionResult.Failure(
+                    GenesysIngestionOutcome.DepartmentNotResolved,
+                    DescribeUnresolvedDepartment(inquiry));
+            }
+        }
+
+        // Present-but-unusable is the caller's mistake and is refused with nothing created, so a retry with a corrected value works and
+        // no half-classified ticket is left behind — UNLESS a classification queue is configured: then the customer's request must not be
+        // lost to a routing-configuration gap (an intent nobody mapped, a request type whose department was retired). The ticket is created
+        // Unclassified in that queue, where a person classifies it, instead of being routed on a guess. An explicit department the caller
+        // named is respected; only a department that came from a queue mapping or a fallback is replaced.
+        string? requestTypeRejected = null;
+        if (requestTypeCheck is { IsValid: false } rejected)
+        {
+            var classificationQueue = await ResolveClassificationDepartmentAsync(cancellationToken);
+            if (classificationQueue is null)
+            {
+                return GenesysIngestionResult.Failure(GenesysIngestionOutcome.RequestTypeInvalid, rejected.Detail);
+            }
+
+            requestTypeRejected = rejected.Detail ?? "the supplied request type cannot be used.";
+            if (departmentSource is not (GenesysDepartmentSource.ExplicitDepartmentId or GenesysDepartmentSource.ExplicitDepartmentCode))
+            {
+                (department, departmentSource) = (classificationQueue, GenesysDepartmentSource.ClassificationQueue);
             }
         }
 
@@ -249,7 +285,9 @@ public sealed class GenesysInquiryIngestionAppService(
                 InteractionStartedAtUtc: inquiry.StartedAtUtc,
                 Direction: inquiry.Direction,
                 CustomerName: inquiry.CustomerName ?? lookup.CustomerName,
-                CustomerEmail: inquiry.CustomerEmail));
+                CustomerEmail: inquiry.CustomerEmail,
+                ServiceRequestId: serviceRequestId,
+                RequiresHumanFollowUp: inquiry.HumanFollowUpRequired == true));
 
         TicketCreationResult creation;
         try
@@ -262,7 +300,7 @@ public sealed class GenesysInquiryIngestionAppService(
             // its interaction row already claimed the conversation id (unique
             // index). That is the guarantee working, not a failure: answer
             // with the ticket that won.
-            var winner = await conversationRepository.GetByConversationIdAsync(conversationId, cancellationToken);
+            var winner = await FindExistingAsync(conversationId, serviceRequestId, cancellationToken);
             return winner is null
                 ? GenesysIngestionResult.CreationFailed(TicketCreationOutcome.TicketNumberCollision)
                 : await AlreadyIngestedAsync(winner, cancellationToken);
@@ -279,7 +317,7 @@ public sealed class GenesysInquiryIngestionAppService(
         // touched — who handled the call and who owns the ticket are
         // different facts.
         if (agent is { IsResolved: true }
-            && await conversationRepository.GetByConversationIdAsync(conversationId, cancellationToken) is { } originating)
+            && await conversationRepository.GetByConversationAndTicketAsync(conversationId, creation.Response.TicketId, cancellationToken) is { } originating)
         {
             originating.RecordHandlingAgentIfAbsent(agent.Agent!.GenesysUserId, agent.Agent.UserId);
         }
@@ -311,12 +349,17 @@ public sealed class GenesysInquiryIngestionAppService(
                 + $"QueueId={inquiry.QueueId ?? "(none)"};QueueName={inquiry.QueueName ?? "(none)"};"
                 + $"CustomerLookup={lookup.Status};Classification=Unclassified;"
                 + $"DefaultPriority={(defaultPriority is null ? "(none: not configured or not found)" : $"{defaultPriority.Name}({defaultPriority.PriorityId})")};"
-                + $"AgentMapping={DescribeAgentMapping(inquiry.AgentId, agent)}",
+                + $"AgentMapping={DescribeAgentMapping(inquiry.AgentId, agent)};"
+                + $"ServiceRequestId={serviceRequestId ?? "(none)"};HumanFollowUpRequired={inquiry.HumanFollowUpRequired == true};"
+                + $"RequestTypeRejected={requestTypeRejected ?? "(none)"}",
             correlationId: Guid.NewGuid(),
             cancellationToken);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
-        var classification = await ClassifyOrQueueAsync(callerEmployeeId, creation.Response.TicketId, conversationId, inquiry, cancellationToken);
+        var classification = requestTypeRejected is not null
+            ? GenesysRequestTypeClassificationAppService.AwaitClassification(
+                $"{requestTypeRejected} The ticket is in the classification queue for a person to classify.")
+            : await ClassifyOrQueueAsync(callerEmployeeId, creation.Response.TicketId, conversationId, inquiry, cancellationToken);
 
         // Classification can move the ticket (department, owner), so the
         // response is read back rather than echoing the creation snapshot.
@@ -354,6 +397,32 @@ public sealed class GenesysInquiryIngestionAppService(
             ? classified
             : GenesysRequestTypeClassificationAppService.AwaitClassification(
                 classified.Detail ?? $"the supplied request type could not be applied ({classified.Outcome}).");
+    }
+
+    /// <summary>
+    /// The interaction an inquiry's idempotency identity already maps to. With a service request id it is the exact (conversation, service
+    /// request) pair; without one it is the conversation's default interaction, so an integration that never sends a service request id keeps
+    /// "one conversation, one ticket".
+    /// </summary>
+    private Task<TicketInteraction?> FindExistingAsync(string conversationId, string? serviceRequestId, CancellationToken cancellationToken) =>
+        serviceRequestId is null
+            ? conversationRepository.GetByConversationIdAsync(conversationId, cancellationToken)
+            : conversationRepository.GetByConversationAndServiceRequestAsync(conversationId, serviceRequestId, cancellationToken);
+
+    /// <summary>
+    /// The configured safe classification queue (<c>Genesys:ClassificationDepartmentCode</c>), or null when none is configured or the
+    /// department is missing/inactive — in which case nothing is routed on a guess. Never a department id baked into code.
+    /// </summary>
+    private async Task<Department?> ResolveClassificationDepartmentAsync(CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(options.ClassificationDepartmentCode))
+        {
+            return null;
+        }
+
+        var code = options.ClassificationDepartmentCode.Trim();
+        var all = await departmentRepository.ListAsync(activeOnly: true, cancellationToken);
+        return all.FirstOrDefault(d => string.Equals(d.Code, code, StringComparison.OrdinalIgnoreCase));
     }
 
     /// <summary>
@@ -545,6 +614,9 @@ public static class GenesysAuditActions
     public const string InquiryIngested = "GenesysInquiryIngested";
     public const string ConversationEnded = "GenesysConversationEnded";
 
+    /// <summary>A ticket was marked as human work: no chatbot clock, AI completion or document delivery may close it any more.</summary>
+    public const string HumanFollowUpRequired = "GenesysHumanFollowUpRequired";
+
     /// <summary>Messages of a live conversation were stored before it ended (the incremental transcript).</summary>
     public const string TranscriptAppended = "GenesysTranscriptAppended";
 
@@ -596,5 +668,11 @@ public enum GenesysDepartmentSource
     None = 0,
     ExplicitDepartmentId = 1,
     ExplicitDepartmentCode = 2,
-    QueueMapping = 3
+    QueueMapping = 3,
+
+    /// <summary>No explicit department and no queue mapping, but the supplied (valid) request type is configured to be handled by this department.</summary>
+    RequestTypeDepartment = 4,
+
+    /// <summary>Nothing could be routed from configuration; the ticket went to the configured classification queue (<c>Genesys:ClassificationDepartmentCode</c>) for a person to classify.</summary>
+    ClassificationQueue = 5
 }

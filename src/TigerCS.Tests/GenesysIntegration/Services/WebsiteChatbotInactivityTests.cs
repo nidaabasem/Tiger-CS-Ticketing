@@ -274,7 +274,7 @@ public class WebsiteChatbotInactivityTests
     {
         var deliveries = new FakeCrmDocumentDeliveryRepository();
         return (new DocumentDeliveryTicketService(
-            new CrmDocumentOptions { Enabled = true }, f.Conversations, f.Tickets, deliveries, f.Lifecycle, f.Audit,
+            new CrmDocumentOptions { Enabled = true }, f.Conversations, f.Tickets, f.Handoffs, f.Interactions, deliveries, f.Lifecycle, f.Audit,
             new CommittingUnitOfWork(deliveries), f.Clock, NullLogger<DocumentDeliveryTicketService>.Instance), deliveries);
     }
 

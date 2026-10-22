@@ -13,7 +13,7 @@
         "Content-Type": "application/json",
         "Accept": "application/json"
       },
-      "requestTemplate": "{\"verificationSessionId\": \"$esc.jsonString(${input.verificationSessionId})\", \"documentType\": \"$esc.jsonString(${input.documentType})\", \"crmUnitId\": \"$!esc.jsonString($input.crmUnitId)\", \"recordId\": \"$!esc.jsonString($input.recordId)\", \"crmLeadId\": \"$!esc.jsonString($input.crmLeadId)\", \"conversationId\": \"$!esc.jsonString($input.conversationId)\", \"deliveryChannel\": \"$!esc.jsonString($input.deliveryChannel)\"}"
+      "requestTemplate": "{\"verificationSessionId\": \"$esc.jsonString(${input.verificationSessionId})\", \"documentType\": \"$esc.jsonString(${input.documentType})\", \"crmUnitId\": \"$!esc.jsonString($input.crmUnitId)\", \"recordId\": \"$!esc.jsonString($input.recordId)\", \"crmLeadId\": \"$!esc.jsonString($input.crmLeadId)\", \"conversationId\": \"$!esc.jsonString($input.conversationId)\", \"serviceRequestId\": \"$!esc.jsonString($input.serviceRequestId)\", \"deliveryChannel\": \"$!esc.jsonString($input.deliveryChannel)\"}"
     },
     "response": {
       "translationMap": {
@@ -81,6 +81,10 @@
           "conversationId": {
             "type": "string",
             "description": "Optional but recommended. The Genesys conversation id the ticket was created under. It names the ticket the outcome closes: Sent closes it as resolved, a delivery failure closes it with the failure reason."
+          },
+          "serviceRequestId": {
+            "type": "string",
+            "description": "Optional. The serviceRequestId the documents ticket was created with. REQUIRED when the conversation has more than one ticket, so the document outcome closes the documents ticket and never a sibling (for example the apartment-leasing ticket)."
           }
         }
       }

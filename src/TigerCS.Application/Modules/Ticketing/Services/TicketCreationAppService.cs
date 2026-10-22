@@ -328,7 +328,8 @@ public sealed class TicketCreationAppService(
                 genesys.ConversationId, genesys.CalledNumber, genesys.QueueId, genesys.QueueName,
                 genesys.AgentId, genesys.AgentName, genesys.InteractionStartedAtUtc, genesys.Direction, now,
                 isOriginatingInteraction: true,
-                customerName: genesys.CustomerName, customerEmail: genesys.CustomerEmail)
+                customerName: genesys.CustomerName, customerEmail: genesys.CustomerEmail,
+                genesysServiceRequestId: genesys.ServiceRequestId, requiresHumanFollowUp: genesys.RequiresHumanFollowUp)
             : TicketInteraction.CreateLocal(
                 ticket.TicketId, intakeRecord.ChannelId, intakeRecord.PhoneNumber, now, isOriginatingInteraction: true);
         // A Website/Chatbot conversation starts its "customer inactive" clock now: the customer opening it is the first interaction.

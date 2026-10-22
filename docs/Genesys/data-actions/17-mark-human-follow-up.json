@@ -1,0 +1,67 @@
+{
+  "name": "TigerCS - Mark Human Follow-Up",
+  "integrationType": "custom-rest-actions",
+  "actionType": "custom",
+  "category": "TigerCS",
+  "config": {
+    "request": {
+      "requestUrlTemplate": "https://tigergroup.ae/api/genesys/tickets/$esc.url(${input.ticketId})",
+      "requestType": "PATCH",
+      "headers": {
+        "Authorization": "${authResponse.token_type} ${authResponse.access_token}",
+        "Content-Type": "application/json",
+        "Accept": "application/json"
+      },
+      "requestTemplate": "{\"conversationId\": \"$esc.jsonString(${input.conversationId})\", \"humanFollowUpRequired\": \"true\"}"
+    },
+    "response": {
+      "translationMap": {
+        "outcome": "$.outcome",
+        "ticketStatus": "$.ticketStatus"
+      },
+      "translationMapDefaults": {},
+      "successTemplate": "{\"outcome\": ${outcome}, \"ticketStatus\": ${ticketStatus}}"
+    }
+  },
+  "contract": {
+    "input": {
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-04/schema#",
+        "title": "TigerCS - Mark Human Follow-Up",
+        "type": "object",
+        "required": [
+          "ticketId",
+          "conversationId"
+        ],
+        "properties": {
+          "ticketId": {
+            "type": "string",
+            "description": "The TigerCS ticket id of THIS service request (participant data for that request, e.g. TigerCsLeasingTicketId)."
+          },
+          "conversationId": {
+            "type": "string",
+            "description": "The conversation id."
+          }
+        }
+      }
+    },
+    "output": {
+      "successSchema": {
+        "$schema": "http://json-schema.org/draft-04/schema#",
+        "title": "TigerCS - Mark Human Follow-Up result",
+        "type": "object",
+        "properties": {
+          "outcome": {
+            "type": "string",
+            "description": "\"Applied\"."
+          },
+          "ticketStatus": {
+            "type": "string",
+            "description": "The ticket status now - unchanged by this call."
+          }
+        }
+      }
+    }
+  },
+  "secure": false
+}

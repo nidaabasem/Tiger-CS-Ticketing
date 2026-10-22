@@ -94,22 +94,23 @@ public sealed class GenesysTicketUpdateAppService(
             return GenesysTicketUpdateResult.Failure(GenesysTicketUpdateOutcome.TicketNotFound);
         }
 
-        var interaction = await conversationRepository.GetByConversationIdAsync(conversationId, cancellationToken);
+        // The interaction is addressed by BOTH identifiers: a conversation may carry several tickets (one per distinct service request),
+        // and an update to one of them must land on that ticket's own interaction, never on a sibling's.
+        var interaction = await conversationRepository.GetByConversationAndTicketAsync(conversationId, ticketId, cancellationToken);
         if (interaction is null)
         {
+            // The cross-check. Both identifiers are the caller's; agreeing with one of them and guessing about the other would
+            // silently attach a transcript, or pending human work, to somebody else's ticket.
+            if (await conversationRepository.GetByConversationIdAsync(conversationId, cancellationToken) is { } other)
+            {
+                return GenesysTicketUpdateResult.Failure(
+                    GenesysTicketUpdateOutcome.ConversationTicketMismatch,
+                    $"Conversation '{conversationId}' belongs to ticket {other.TicketId}, not {ticketId}.");
+            }
+
             return GenesysTicketUpdateResult.Failure(
                 GenesysTicketUpdateOutcome.ConversationNotFound,
                 "This conversation never produced a ticket, so there is nothing to update.");
-        }
-
-        // The cross-check. Both identifiers are the caller's; agreeing with
-        // one of them and guessing about the other would silently attach a
-        // transcript, or pending human work, to somebody else's ticket.
-        if (interaction.TicketId != ticketId)
-        {
-            return GenesysTicketUpdateResult.Failure(
-                GenesysTicketUpdateOutcome.ConversationTicketMismatch,
-                $"Conversation '{conversationId}' belongs to ticket {interaction.TicketId}, not {ticketId}.");
         }
 
         // Checked before anything is written, like the transcript: a
@@ -187,7 +188,7 @@ public sealed class GenesysTicketUpdateAppService(
         if (request.Transcript is { Count: > 0 })
         {
             var appended = await conversationEndAppService.AppendTranscriptAsync(
-                callerEmployeeId, conversationId, request.Transcript, cancellationToken);
+                callerEmployeeId, conversationId, request.Transcript, cancellationToken, ticketId);
 
             if (appended.Outcome == GenesysTranscriptAppendOutcome.Conflict)
             {
@@ -222,7 +223,7 @@ public sealed class GenesysTicketUpdateAppService(
                     callerEmployeeId,
                     new GenesysHandoffRequestDto(
                         conversationId, handoff.AgentAvailable, handoff.Mode, handoff.Reason, handoff.Trigger,
-                        request.AgentId, request.AgentName, handoff.WorkItemId),
+                        request.AgentId, request.AgentName, handoff.WorkItemId, TicketId: ticketId),
                     cancellationToken);
 
                 if (requested.Outcome is not (GenesysHandoffOutcome.HandoffRecorded or GenesysHandoffOutcome.AlreadyRequested))
@@ -245,7 +246,7 @@ public sealed class GenesysTicketUpdateAppService(
                 // simply reports the work's state.
                 var cancelled = await agentHandoffAppService.CancelAsync(
                     callerEmployeeId,
-                    new GenesysHandoffCancellationDto(conversationId, handoff.Reason),
+                    new GenesysHandoffCancellationDto(conversationId, handoff.Reason, ticketId),
                     cancellationToken);
 
                 if (cancelled.Outcome is not (GenesysHandoffOutcome.HandoffCancelled or GenesysHandoffOutcome.AlreadyResolved))
@@ -264,7 +265,7 @@ public sealed class GenesysTicketUpdateAppService(
             {
                 var assigned = await agentHandoffAppService.UpdateAssignmentAsync(
                     callerEmployeeId,
-                    new GenesysHandoffAssignmentDto(conversationId, handoff.AssignedAgentId, request.AgentName),
+                    new GenesysHandoffAssignmentDto(conversationId, handoff.AssignedAgentId, request.AgentName, TicketId: ticketId),
                     cancellationToken);
 
                 if (assigned.Outcome != GenesysHandoffOutcome.AssignmentRecorded)
@@ -298,7 +299,7 @@ public sealed class GenesysTicketUpdateAppService(
         {
             var taken = await agentHandoffAppService.UpdateAssignmentAsync(
                 callerEmployeeId,
-                new GenesysHandoffAssignmentDto(conversationId, connectedAgentId, request.Routing!.AgentName),
+                new GenesysHandoffAssignmentDto(conversationId, connectedAgentId, request.Routing!.AgentName, TicketId: ticketId),
                 cancellationToken);
 
             if (taken.Outcome == GenesysHandoffOutcome.AssignmentRecorded)
@@ -319,7 +320,7 @@ public sealed class GenesysTicketUpdateAppService(
                 callerEmployeeId,
                 new GenesysConversationEndDto(
                     conversationId, ended.EndedAtUtc, ended.EndReason,
-                    request.AgentId, request.AgentName, ended.Transcript),
+                    request.AgentId, request.AgentName, ended.Transcript, ticketId),
                 cancellationToken);
 
             if (endResult.Outcome is not (GenesysConversationEndOutcome.Ended or GenesysConversationEndOutcome.AlreadyEnded))
@@ -361,6 +362,11 @@ public sealed class GenesysTicketUpdateAppService(
         if (request.CustomerConfirmation is { } confirmation)
         {
             await RecordCustomerConfirmationAsync(callerEmployeeId, ticket, conversationId, confirmation, cancellationToken);
+        }
+
+        if (request.HumanFollowUpRequired == true)
+        {
+            await MarkHumanFollowUpAsync(callerEmployeeId, ticket, interaction, cancellationToken);
         }
 
         await ApplyCustomerActivityAsync(callerEmployeeId, ticket, interaction, request, cancellationToken);
@@ -425,6 +431,11 @@ public sealed class GenesysTicketUpdateAppService(
             || await handoffRepository.GetOpenByInteractionIdAsync(interaction.TicketInteractionId, cancellationToken) is not null)
         {
             return (false, "Not closed: human follow-up is requested or pending for this conversation.");
+        }
+
+        if (interaction.RequiresHumanFollowUp)
+        {
+            return (false, "Not closed: this ticket needs human follow-up; only the authorized TigerCS workflow may close it.");
         }
 
         if (ticket.CurrentOwnerEmployeeId is not null)
@@ -534,6 +545,7 @@ public sealed class GenesysTicketUpdateAppService(
         CancellationToken cancellationToken)
     {
         var humanFollowUp = request.Handoff is { Required: true }
+            || interaction.RequiresHumanFollowUp
             || await handoffRepository.GetOpenByInteractionIdAsync(interaction.TicketInteractionId, cancellationToken) is not null;
 
         string? note = null;
@@ -634,6 +646,33 @@ public sealed class GenesysTicketUpdateAppService(
             interaction.GenesysConversationId!,
             beforeValue: before,
             afterValue: DescribeRouting(interaction),
+            correlationId: Guid.NewGuid(),
+            cancellationToken);
+        await unitOfWork.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+    }
+
+    /// <summary>
+    /// <c>humanFollowUpRequired: true</c> — this ticket is human work (a leasing request, a complaint). Sticky and idempotent: both chatbot
+    /// inactivity clocks stop for good, and neither the AI nor document delivery may close it afterwards; a person resolves and closes it
+    /// through the authorized workflow. Touches only this ticket's own interaction, never a sibling ticket of the same conversation.
+    /// </summary>
+    private async Task MarkHumanFollowUpAsync(
+        Guid callerEmployeeId, Ticket ticket, TicketInteraction interaction, CancellationToken cancellationToken)
+    {
+        if (!interaction.MarkRequiresHumanFollowUp())
+        {
+            return;
+        }
+
+        await using var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
+        await auditWriter.WriteAsync(
+            callerEmployeeId,
+            GenesysAuditActions.HumanFollowUpRequired,
+            GenesysAuditActions.ConversationEntityType,
+            interaction.GenesysConversationId!,
+            beforeValue: null,
+            afterValue: $"TicketId={ticket.TicketId};ServiceRequestId={interaction.GenesysServiceRequestId ?? "(none)"};TicketStatus={ticket.TicketStatus}",
             correlationId: Guid.NewGuid(),
             cancellationToken);
         await unitOfWork.SaveChangesAsync(cancellationToken);

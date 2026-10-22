@@ -28,8 +28,28 @@ public interface IGenesysQueueMappingRepository
 /// </summary>
 public interface IGenesysConversationRepository
 {
-    /// <summary>The interaction recorded for one Genesys conversation id, or null when the conversation was never ingested. The uniqueness this relies on is a database index, not a convention.</summary>
+    /// <summary>
+    /// The interaction recorded for one Genesys conversation id, or null when the conversation was never ingested. When the conversation
+    /// carries several service requests this is the <b>default</b> one — the interaction with no service request id if there is one,
+    /// otherwise the earliest — which is exactly the single interaction every conversation had before service requests existed. Callers that
+    /// know the ticket or the service request use the more specific lookups below.
+    /// </summary>
     Task<TicketInteraction?> GetByConversationIdAsync(string genesysConversationId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// The interaction of one exact (conversation, service request) pair — the idempotency identity of a Genesys ticket. A null
+    /// <paramref name="serviceRequestId"/> matches only the interaction that has none. The uniqueness this relies on is a database index.
+    /// </summary>
+    Task<TicketInteraction?> GetByConversationAndServiceRequestAsync(
+        string genesysConversationId, string? serviceRequestId, CancellationToken cancellationToken = default);
+
+    /// <summary>The interaction a given ticket has in a given conversation, or null — how an update addressed to one ticket finds its own interaction among the conversation's siblings.</summary>
+    Task<TicketInteraction?> GetByConversationAndTicketAsync(
+        string genesysConversationId, long ticketId, CancellationToken cancellationToken = default);
+
+    /// <summary>Every interaction id of the given conversations (one query), keyed by conversation id — the siblings whose transcripts together form the conversation.</summary>
+    Task<IReadOnlyDictionary<string, IReadOnlyList<long>>> ListInteractionIdsByConversationIdsAsync(
+        IReadOnlyCollection<string> genesysConversationIds, CancellationToken cancellationToken = default);
 
     /// <summary>One interaction by its own id (tracked, so the caller can change it), or null.</summary>
     Task<TicketInteraction?> GetByIdAsync(long ticketInteractionId, CancellationToken cancellationToken = default);
@@ -59,6 +79,20 @@ public interface IGenesysConversationRepository
     Task<int> CountMessagesAsync(long ticketInteractionId, CancellationToken cancellationToken = default);
 
     Task AddMessageAsync(TicketInteractionMessage message, CancellationToken cancellationToken = default);
+}
+
+public static class GenesysConversationRepositoryExtensions
+{
+    /// <summary>
+    /// The interaction a conversation-addressed Genesys call refers to: the exact one of <paramref name="ticketId"/> when the caller names a
+    /// ticket (a conversation may carry several), otherwise the conversation's default interaction — the single interaction every
+    /// conversation had before service requests existed.
+    /// </summary>
+    public static Task<TicketInteraction?> ResolveAsync(
+        this IGenesysConversationRepository repository, string conversationId, long? ticketId, CancellationToken cancellationToken = default) =>
+        ticketId is { } id
+            ? repository.GetByConversationAndTicketAsync(conversationId, id, cancellationToken)
+            : repository.GetByConversationIdAsync(conversationId, cancellationToken);
 }
 
 /// <summary>

@@ -243,7 +243,8 @@ public sealed partial class CrmDocumentCopyAppService(
                 DeliveryScope.ForSession(sessionId), customerId, lead.LeadId, lead.UnitNumber, buyer.Customer.Email,
                 buyer.Customer.FullNameEnglish ?? contact.DisplayName ?? string.Empty, $"VerificationSessionId={sessionId}",
                 Ticket: new DocumentDeliveryTicketContext(
-                    callerEmployeeId, sessionId, request.ConversationId, session.ConsumedByTicketId, customerId, contact.ContactChannel)),
+                    callerEmployeeId, sessionId, request.ConversationId, session.ConsumedByTicketId, customerId, contact.ContactChannel,
+                    request.ServiceRequestId)),
             cancellationToken);
     }
 

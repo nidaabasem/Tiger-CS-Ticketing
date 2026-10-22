@@ -66,8 +66,9 @@ public class GenesysAgentMappingPersistenceTests
 
         Assert.Single(interaction.GetIndexes(), i => i.Name == "IX_TicketInteractions_HandledByUserId");
 
-        // The existing indexes are untouched.
-        Assert.Single(interaction.GetIndexes(), i => i.Name == "UX_TicketInteractions_GenesysConversationId");
+        // The conversation uniqueness is now (conversation, service request) — see GenesysMultipleTicketsPerConversationTests — and the
+        // other existing indexes are untouched.
+        Assert.Single(interaction.GetIndexes(), i => i.Name == "UX_TicketInteractions_GenesysConversationId_ServiceRequestId");
         Assert.Single(interaction.GetIndexes(), i => i.Name == "UX_TicketInteractions_OneOriginatingPerTicket");
     }
 

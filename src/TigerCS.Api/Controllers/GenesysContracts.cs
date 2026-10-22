@@ -45,6 +45,8 @@ namespace TigerCS.Api.Controllers;
 /// <param name="UnitNumber">The unit number the customer typed into the chat form, where collected.</param>
 /// <param name="Subject">A short subject the channel collected, where available — becomes the ticket's request summary.</param>
 /// <param name="RequestType">The request type the bot identified, when it already has one. Validated, then its department routing, automatic assignment and SLA policy are applied. Omit it (or send it blank) when unknown: the ticket then awaits classification in the human follow-up queue, and the bot can send it later on <c>PATCH</c>.</param>
+/// <param name="ServiceRequestId">Identifies ONE distinct service request inside the conversation (e.g. <c>documents</c>, <c>leasing</c>) — chosen by the caller, any stable string up to 64 characters. Each (<c>conversationId</c>, <c>serviceRequestId</c>) pair is its own idempotent ticket: a second distinct request in the same conversation creates its own ticket, a retry of the same pair returns the original. Omit it and the whole conversation is one ticket, as before.</param>
+/// <param name="HumanFollowUpRequired">true when this request needs a person (apartment leasing, a complaint). The ticket is then never closed by the chatbot inactivity rules, by <c>closedByAi</c> or by document delivery — only by an employee through the normal TigerCS workflow.</param>
 public sealed record GenesysInquiryRequest(
     string ConversationId,
     string Channel,
@@ -66,7 +68,9 @@ public sealed record GenesysInquiryRequest(
     string? TowerName = null,
     string? UnitNumber = null,
     string? Subject = null,
-    GenesysRequestTypePart? RequestType = null);
+    GenesysRequestTypePart? RequestType = null,
+    string? ServiceRequestId = null,
+    [property: JsonConverter(typeof(LenientNullableBoolConverter))] bool? HumanFollowUpRequired = null);
 
 /// <summary>
 /// The request type the bot identified. Send <c>requestTypeId</c> (preferred) or
@@ -117,6 +121,7 @@ public sealed record GenesysTranscriptMessageRequest(
 /// <param name="DepartmentId">The responsible department after routing.</param>
 /// <param name="AssignedEmployeeId">The employee the automatic assignment chose; null means the department queue.</param>
 /// <param name="ClassificationDetail">Why the ticket is awaiting classification, when it is.</param>
+/// <param name="ServiceRequestId">The service request this ticket is for, echoed back when one was sent.</param>
 public sealed record GenesysInquiryAcceptedResponse(
     string Outcome,
     string ConversationId,
@@ -126,7 +131,8 @@ public sealed record GenesysInquiryAcceptedResponse(
     int? RequestTypeId = null,
     int? DepartmentId = null,
     Guid? AssignedEmployeeId = null,
-    string? ClassificationDetail = null);
+    string? ClassificationDetail = null,
+    string? ServiceRequestId = null);
 
 /// <summary>What the conversation-end endpoint answers. <paramref name="TicketStatus"/> is included deliberately: it shows that ending a conversation did NOT close the ticket.</summary>
 /// <param name="Outcome">"Ended" or "AlreadyEnded".</param>
@@ -199,6 +205,7 @@ public sealed record GenesysConversationEndResponse(
 /// requested or assigned, or the conversation ended, in which case no timer runs.
 /// <b>Omit it</b> to leave the timer as it is.
 /// </param>
+/// <param name="HumanFollowUpRequired">true = this ticket needs a person: both chatbot inactivity clocks stop for good and neither <c>closedByAi</c> nor document delivery may close it afterwards. Sticky — only an employee resolves/closes it through the TigerCS workflow. <b>Omit it</b> (or false) to change nothing.</param>
 public sealed record GenesysTicketUpdateRequest(
     string ConversationId,
     string? AgentId = null,
@@ -212,7 +219,8 @@ public sealed record GenesysTicketUpdateRequest(
     GenesysRequestTypePart? RequestType = null,
     [property: JsonConverter(typeof(LenientNullableBoolConverter))] bool? CustomerActive = null,
     [property: JsonConverter(typeof(LenientNullableBoolConverter))] bool? ClosedByAi = null,
-    IReadOnlyList<GenesysTranscriptMessageRequest>? Transcript = null);
+    IReadOnlyList<GenesysTranscriptMessageRequest>? Transcript = null,
+    [property: JsonConverter(typeof(LenientNullableBoolConverter))] bool? HumanFollowUpRequired = null);
 
 /// <summary>
 /// Reads a flag as <c>true</c>/<c>false</c>, the strings <c>"true"</c>/<c>"false"</c>, or blank/null → null ("not supplied"). A Genesys data
@@ -502,7 +510,9 @@ internal static class GenesysContractMapper
             Absent(request.TowerName),
             Absent(request.UnitNumber),
             Absent(request.Subject),
-            Map(request.RequestType));
+            Map(request.RequestType),
+            Absent(request.ServiceRequestId)?.Trim(),
+            request.HumanFollowUpRequired);
         return true;
     }
 
@@ -580,7 +590,8 @@ internal static class GenesysContractMapper
         request.ClosedByAi,
         request.Transcript?
             .Select(m => new GenesysTranscriptMessageDto(m.Sender, m.SentAtUtc, m.Body, m.SenderName, m.SenderId, m.ExternalMessageId))
-            .ToList());
+            .ToList(),
+        request.HumanFollowUpRequired);
 
     private static GenesysRequestTypeDto? Map(GenesysRequestTypePart? part) =>
         part is null ? null : new GenesysRequestTypeDto(part.RequestTypeId, Absent(part.Name));
