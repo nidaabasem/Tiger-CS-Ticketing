@@ -200,18 +200,19 @@ using (var verificationTestingScope = app.Services.CreateScope())
     }
 }
 
-// Customer notification mode. Unlike VerificationTesting this never stops the host: a missing or invalid mode simply sends no
-// customer message (the delivery boundary enforces that), and the reason is logged here once at startup.
+// Customer notification routing (CustomerNotifications:IsTestMode). Never stops the host: missing/invalid configuration means test
+// mode, and a test mode without a recipient simply skips that delivery. The reason is logged here once at startup.
 {
     var customerNotifications = app.Services.GetRequiredService<TigerCS.Application.Modules.Notifications.CustomerNotificationModePolicy>();
     if (customerNotifications.ConfigurationWarning is { } notificationWarning)
     {
         app.Logger.LogWarning("CustomerNotifications: {Warning}", notificationWarning);
     }
-    else if (customerNotifications.IsTest)
+
+    if (customerNotifications.IsTest)
     {
         app.Logger.LogWarning(
-            "CustomerNotifications is in TEST mode in {Environment}: only Resolved and Closed emails are sent, and only to the configured test mailbox; no customer is contacted.",
+            "CustomerNotifications is in TEST mode in {Environment}: all customer email goes to the configured TestEmail and all customer SMS to TestPhone; no customer is contacted.",
             app.Environment.EnvironmentName);
     }
 

@@ -59,14 +59,14 @@ public class TicketReviewFlowTests
     [Fact]
     public async Task BaseUrlWithTrailingSlashOrPath_IsNormalized_AndABadOneYieldsNoLinks()
     {
-        Assert.Equal("https://tickets.example.com/Review?t=abc", new CustomerNotificationModePolicy("Production", null, "https://tickets.example.com/").BuildReviewUrl("abc"));
-        Assert.Equal("https://x.example.com/ts/Review?t=abc&r=4", new CustomerNotificationModePolicy("Production", null, "https://x.example.com/ts/").BuildReviewUrl("abc", 4));
+        Assert.Equal("https://tickets.example.com/Review?t=abc", new CustomerNotificationModePolicy("false", null, null, "https://tickets.example.com/").BuildReviewUrl("abc"));
+        Assert.Equal("https://x.example.com/ts/Review?t=abc&r=4", new CustomerNotificationModePolicy("false", null, null, "https://x.example.com/ts/").BuildReviewUrl("abc", 4));
         foreach (var bad in new[] { null, "", "tickets.example.com", "ftp://x.example.com", "javascript:alert(1)", "https://x.example.com/?q=1" })
         {
-            Assert.Null(new CustomerNotificationModePolicy("Production", null, bad).PublicBaseUrl);
+            Assert.Null(new CustomerNotificationModePolicy("false", null, null, bad).PublicBaseUrl);
         }
 
-        var f = new NotificationServiceFixture { ModePolicy = new CustomerNotificationModePolicy("Production", null, null) };
+        var f = new NotificationServiceFixture { ModePolicy = new CustomerNotificationModePolicy("false", null, null, null) };
         var ticket = await f.SeedVerifiedTicketAsync("ahmed@example.com");
         await f.ResolveAsync(ticket);
         Assert.Null(await f.CreateInvitationService().PrepareAsync(ticket));
@@ -361,7 +361,7 @@ public class TicketReviewFlowTests
     [Fact]
     public async Task TestReviews_NeverReachProductionFigures_AndDoNotBlockProductionReviews()
     {
-        var f = new NotificationServiceFixture { ModePolicy = new CustomerNotificationModePolicy("Test", "uat@example.org", Base) };
+        var f = new NotificationServiceFixture { ModePolicy = new CustomerNotificationModePolicy("true", "uat@example.org", null, Base) };
         var ticket = await f.SeedVerifiedTicketAsync("ahmed@example.com", "TG-CS-20260822-0410");
         await f.ResolveAsync(ticket);
         var testToken = TokenFrom((await f.CreateInvitationService().PrepareAsync(ticket))!.PageUrl);

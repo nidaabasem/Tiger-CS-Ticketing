@@ -50,23 +50,20 @@ public interface IEmailSender
 /// <param name="Attachments">Optional files (customer document copies). Held in memory for the send only.</param>
 /// <param name="Audience">
 /// Who the recipient is. Defaults to <see cref="EmailAudience.Customer"/> so that a caller which forgets to say is treated as
-/// customer-facing and is therefore subject to <c>CustomerNotifications:Mode</c> — the safe direction.
+/// customer-facing and is therefore subject to <c>CustomerNotifications:IsTestMode</c> — the safe direction.
 /// </param>
 public sealed record EmailMessage(
     string ToAddress, string Subject, string Body, Guid CorrelationId, string? HtmlBody = null,
     IReadOnlyList<EmailAttachment>? Attachments = null, EmailAudience Audience = EmailAudience.Customer);
 
-/// <summary>Who an <see cref="EmailMessage"/> is for. The final delivery guard applies <c>CustomerNotifications:Mode</c> to everything that is not <see cref="Internal"/>.</summary>
+/// <summary>Who an <see cref="EmailMessage"/> is for. The final delivery guard applies <c>CustomerNotifications:IsTestMode</c> to everything that is not <see cref="Internal"/>.</summary>
 public enum EmailAudience
 {
-    /// <summary>A customer's mailbox. Delivered only in <c>CustomerNotifications:Mode = Production</c>.</summary>
+    /// <summary>A customer's mailbox. Redirected to <c>TestEmail</c> when <c>CustomerNotifications:IsTestMode</c> is on.</summary>
     Customer = 0,
 
     /// <summary>A staff or administrator mailbox. Never affected by the customer notification mode.</summary>
-    Internal = 1,
-
-    /// <summary>A configured test inbox standing in for a customer (<c>CustomerNotifications:TestEmail</c> or <c>VerificationTesting:EmailOverride</c>). Delivered only to such an inbox.</summary>
-    TestMailbox = 2
+    Internal = 1
 }
 
 /// <summary>A file sent with an email — used for customer document copies. Held in memory only for the length of the send; never logged and never persisted by the sender.</summary>

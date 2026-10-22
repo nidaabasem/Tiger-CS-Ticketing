@@ -59,8 +59,7 @@ public sealed class EmailDocumentDeliveryChannelSender(IEmailSender emailSender,
         var result = await emailSender.SendAsync(
             new EmailMessage(
                 route.Destination, subject, body, message.CorrelationId,
-                Attachments: [new EmailAttachment(message.FileName, message.ContentType, message.Content)],
-                Audience: route.Redirected ? EmailAudience.TestMailbox : EmailAudience.Customer),
+                Attachments: [new EmailAttachment(message.FileName, message.ContentType, message.Content)]),
             cancellationToken);
 
         return result.Outcome switch

@@ -49,7 +49,7 @@ public sealed class NotificationServiceFixture
 
     /// <summary>The recording provider wrapped in the real delivery guard — what every production sender sits behind.</summary>
     public IEmailSender CreateGuardedProvider() =>
-        new CustomerDeliveryGuardEmailSender(Email, ModePolicy, null, NullLogger<CustomerDeliveryGuardEmailSender>.Instance);
+        new CustomerDeliveryGuardEmailSender(Email, ModePolicy, NullLogger<CustomerDeliveryGuardEmailSender>.Instance);
 
     public ICustomerEmailSender CreateCustomerEmailSender() =>
         new CustomerEmailSender(CreateGuardedProvider(), NotificationPolicy, ModePolicy, NullLogger<CustomerEmailSender>.Instance);

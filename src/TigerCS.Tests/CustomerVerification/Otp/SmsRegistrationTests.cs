@@ -29,8 +29,8 @@ public sealed class SmsRegistrationTests
 
     private static ServiceProvider Build(Dictionary<string, string?> settings, AllLogs? logs = null, StubHttpMessageHandler? handler = null)
     {
-        // Customer SMS passes the delivery guard only in Production mode; these tests are about provider selection, not the mode.
-        settings.TryAdd("CustomerNotifications:Mode", "Production");
+        // Customer SMS passes the delivery guard only when test mode is off; these tests are about provider selection, not the mode.
+        settings.TryAdd("CustomerNotifications:IsTestMode", "false");
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(settings).Build();
         var services = new ServiceCollection();
         services.AddLogging(b => { b.SetMinimumLevel(LogLevel.Trace); if (logs is not null) b.AddProvider(logs); });

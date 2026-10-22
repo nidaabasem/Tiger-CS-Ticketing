@@ -111,10 +111,10 @@ public sealed class TigerCsApiFactory : WebApplicationFactory<Program>
                 // leaves the process (EmailSenderSafety allows Recording in
                 // the "Testing" environment).
                 ["EmailNotifications:Enabled"] = "true",
-                // The shipped default is Test mode (no customer delivery). The integration host keeps the pre-existing
+                // The shipped default is test mode (all customer mail redirected to TestEmail). The integration host keeps the pre-existing
                 // customer behaviour so the lifecycle tests keep proving it; tests of Test mode override this through
                 // ExtraConfiguration. Public base URL: where the review links in the emails point.
-                ["CustomerNotifications:Mode"] = "Production",
+                ["CustomerNotifications:IsTestMode"] = "false",
                 ["CustomerNotifications:PublicBaseUrl"] = "https://tickets.example.com",
                 ["EmailNotifications:Provider"] = "Recording",
                 // Deterministic, offline test defaults regardless of what

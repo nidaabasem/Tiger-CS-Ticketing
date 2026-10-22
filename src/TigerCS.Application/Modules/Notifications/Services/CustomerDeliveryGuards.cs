@@ -1,27 +1,25 @@
 using Microsoft.Extensions.Logging;
-using TigerCS.Application.Modules.CrmDocuments;
 using TigerCS.Application.Modules.Notifications.Abstractions;
 
 namespace TigerCS.Application.Modules.Notifications.Services;
 
 /// <summary>
-/// The final delivery boundary for email: wraps the provider adapter so that <c>CustomerNotifications:Mode</c> is enforced for
-/// <i>every</i> caller — ticket notifications, OTP codes, document copies, Collections reminders, anything added later —
-/// including background jobs. No code path can reach the provider with a customer-facing message except through this class.
+/// The final delivery boundary for email: wraps the provider adapter so that <c>CustomerNotifications:IsTestMode</c> is applied
+/// to <i>every</i> caller — ticket notifications, OTP codes, document copies, Collections reminders, anything added later —
+/// including background jobs. No code path reaches the provider with a customer-facing message except through this class.
 ///
 /// <list type="bullet">
-///   <item><see cref="EmailAudience.Internal"/> (staff, administrators): always passes.</item>
-///   <item><see cref="EmailAudience.Customer"/> (the default): passes only in Production mode.</item>
-///   <item><see cref="EmailAudience.TestMailbox"/>: passes only when addressed to a configured test inbox
-///   (<c>CustomerNotifications:TestEmail</c> or the <c>VerificationTesting</c> override) and the mode is valid.</item>
+///   <item><see cref="EmailAudience.Internal"/> (staff, administrators): always passes untouched.</item>
+///   <item><see cref="EmailAudience.Customer"/> (the default, so a caller that forgets to classify is guarded): production
+///   sends as addressed; test mode replaces the recipient with <c>TestEmail</c> (and marks the subject <c>[TEST]</c>), or —
+///   when <c>TestEmail</c> is missing or invalid — skips the message and logs a warning. The customer's address is never used.</item>
 /// </list>
 ///
-/// A refused message is reported as <see cref="EmailSendOutcome.Suppressed"/> — terminal, never retried, never an error.
+/// A skipped message is reported as <see cref="EmailSendOutcome.Suppressed"/> — terminal, never retried, never an error.
 /// </summary>
 public sealed class CustomerDeliveryGuardEmailSender(
     IEmailSender inner,
     CustomerNotificationModePolicy mode,
-    VerificationTestingPolicy? verificationTesting,
     ILogger<CustomerDeliveryGuardEmailSender> logger) : IEmailSender
 {
     /// <summary>The provider behind the guard.</summary>
@@ -33,54 +31,35 @@ public sealed class CustomerDeliveryGuardEmailSender(
     {
         ArgumentNullException.ThrowIfNull(message);
 
-        var refusal = Refusal(message);
-        if (refusal is null)
+        if (message.Audience == EmailAudience.Internal || mode.IsProduction)
         {
             return inner.SendAsync(message, cancellationToken);
         }
 
-        logger.LogWarning(
-            "Customer-facing email suppressed at the delivery boundary ({Reason}); audience {Audience}, mode {Mode}. CorrelationId {CorrelationId}.",
-            refusal, message.Audience, mode.Mode, message.CorrelationId);
-        return Task.FromResult(EmailSendResult.Suppressed(refusal));
-    }
-
-    private string? Refusal(EmailMessage message)
-    {
-        switch (message.Audience)
+        var decision = mode.DecideEmail();
+        if (!decision.Deliver)
         {
-            case EmailAudience.Internal:
-                return null;
-
-            case EmailAudience.Customer:
-                return mode.IsProduction
-                    ? null
-                    : mode.IsTest
-                        ? CustomerEmailSkipReasons.TestModeSuppressed
-                        : CustomerEmailSkipReasons.CustomerNotificationModeInvalid;
-
-            default:
-                if (mode.Mode == CustomerNotificationMode.Invalid)
-                {
-                    return CustomerEmailSkipReasons.CustomerNotificationModeInvalid;
-                }
-
-                return mode.IsTestMailbox(message.ToAddress) || (verificationTesting?.IsApprovedEmailOverride(message.ToAddress) ?? false)
-                    ? null
-                    : CustomerEmailSkipReasons.TestEmailMissing;
+            logger.LogWarning(
+                "Customer email skipped in test mode ({Reason}): {Warning} CorrelationId {CorrelationId}.",
+                decision.SuppressReason, mode.ConfigurationWarning, message.CorrelationId);
+            return Task.FromResult(EmailSendResult.Suppressed(decision.SuppressReason!));
         }
+
+        var subject = message.Subject.StartsWith(CustomerNotificationModePolicy.TestSubjectPrefix, StringComparison.Ordinal)
+            ? message.Subject
+            : CustomerNotificationModePolicy.TestSubjectPrefix + message.Subject;
+        return inner.SendAsync(message with { ToAddress = decision.Recipient!, Subject = subject }, cancellationToken);
     }
 }
 
 /// <summary>
 /// SMS counterpart of <see cref="CustomerDeliveryGuardEmailSender"/>. Every SMS this system sends is customer-facing (the
-/// verification code), so Production passes, Test passes only a message redirected to the configured test number, and an
-/// invalid mode passes nothing.
+/// verification code), so production sends as addressed and test mode replaces the destination with <c>TestPhone</c> — or skips
+/// the SMS with a warning when <c>TestPhone</c> is missing or invalid.
 /// </summary>
 public sealed class CustomerDeliveryGuardSmsSender(
     ISmsSender inner,
     CustomerNotificationModePolicy mode,
-    VerificationTestingPolicy? verificationTesting,
     ILogger<CustomerDeliveryGuardSmsSender> logger) : ISmsSender
 {
     /// <summary>The provider behind the guard.</summary>
@@ -92,19 +71,18 @@ public sealed class CustomerDeliveryGuardSmsSender(
     {
         ArgumentNullException.ThrowIfNull(message);
 
-        var allowed = mode.Mode switch
-        {
-            CustomerNotificationMode.Production => true,
-            CustomerNotificationMode.Test => message.TestRedirected && (verificationTesting?.IsApprovedSmsOverride(message.Destination) ?? false),
-            _ => false
-        };
-
-        if (allowed)
+        if (mode.IsProduction)
         {
             return inner.SendAsync(message, cancellationToken);
         }
 
-        logger.LogWarning("Customer SMS suppressed at the delivery boundary; mode {Mode}.", mode.Mode);
-        return Task.FromResult(new SmsSendResult(SmsSendOutcome.Suppressed));
+        var decision = mode.DecideSms();
+        if (!decision.Deliver)
+        {
+            logger.LogWarning("Customer SMS skipped in test mode ({Reason}): {Warning}", decision.SuppressReason, mode.ConfigurationWarning);
+            return Task.FromResult(new SmsSendResult(SmsSendOutcome.Suppressed));
+        }
+
+        return inner.SendAsync(message with { Destination = decision.Recipient! }, cancellationToken);
     }
 }

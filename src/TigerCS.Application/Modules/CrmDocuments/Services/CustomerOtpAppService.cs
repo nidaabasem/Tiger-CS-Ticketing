@@ -553,9 +553,7 @@ public sealed class CustomerOtpAppService(
         try
         {
             sent = await emailSender.SendAsync(
-                new EmailMessage(
-                    route.Destination, "Your Tiger Properties verification code", body, challenge.CustomerOtpChallengeId,
-                    Audience: route.Redirected ? EmailAudience.TestMailbox : EmailAudience.Customer), cancellationToken);
+                new EmailMessage(route.Destination, "Your Tiger Properties verification code", body, challenge.CustomerOtpChallengeId), cancellationToken);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -596,7 +594,7 @@ public sealed class CustomerOtpAppService(
         SmsSendResult sent;
         try
         {
-            sent = await smsSender.SendAsync(new SmsMessage(route.Destination, text, challenge.Language, TestRedirected: route.Redirected), cancellationToken);
+            sent = await smsSender.SendAsync(new SmsMessage(route.Destination, text, challenge.Language), cancellationToken);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

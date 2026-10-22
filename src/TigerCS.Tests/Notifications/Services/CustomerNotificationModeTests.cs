@@ -1,6 +1,5 @@
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
-using TigerCS.Application.Modules.CrmDocuments;
 using TigerCS.Application.Modules.Notifications;
 using TigerCS.Application.Modules.Notifications.Abstractions;
 using TigerCS.Application.Modules.Notifications.Services;
@@ -12,17 +11,18 @@ using TigerCS.Tests.Notifications.Fakes;
 namespace TigerCS.Tests.Notifications.Services;
 
 /// <summary>
-/// <c>CustomerNotifications:Mode</c> — Test mode redirects Resolved/Closed to <c>TestEmail</c> and suppresses everything else
-/// customer-facing; Production keeps the existing behaviour; a missing or invalid configuration sends nothing. Exercised at the
-/// handlers, at the customer-email boundary and at the final provider guard.
+/// <c>CustomerNotifications:IsTestMode</c> — on: every customer email goes to <c>TestEmail</c> and every customer SMS to
+/// <c>TestPhone</c>, never to the customer; off: messages go to their intended recipients; missing/invalid: test mode. Exercised
+/// at the handlers, at the customer-email boundary and at the final provider guards.
 /// </summary>
 public class CustomerNotificationModeTests
 {
     private const string TestInbox = "uat-inbox@example.org";
+    private const string TestNumber = "971500000001";
     private const string CustomerEmail = "ahmed@example.com";
 
-    private static CustomerNotificationModePolicy Test(string? testEmail = TestInbox) =>
-        new("Test", testEmail, NotificationServiceFixture.PublicBaseUrl);
+    private static CustomerNotificationModePolicy Test(string? testEmail = TestInbox, string? testPhone = TestNumber) =>
+        new("true", testEmail, testPhone, NotificationServiceFixture.PublicBaseUrl);
 
     private static NotificationServiceFixture TestModeFixture(string? testEmail = TestInbox) =>
         new() { ModePolicy = Test(testEmail) };
@@ -35,81 +35,84 @@ public class CustomerNotificationModeTests
         return (f, ticket);
     }
 
-    // ---------------------------------------------------------------- Test mode
+    // ---------------------------------------------------------------- test mode: tickets
 
-    [Fact]
-    public async Task TestMode_Created_SendsNothingToAnyone()
+    [Theory]
+    [InlineData("created")]
+    [InlineData("resolved")]
+    [InlineData("closed")]
+    [InlineData("reopened")]
+    public async Task TestMode_EveryLifecycleEmail_GoesToTheTestMailboxOnly(string kind)
     {
         var f = TestModeFixture();
-        var ticket = await f.SeedVerifiedTicketAsync(CustomerEmail);
-        var message = f.EnqueueTicketCreated(ticket.TicketId);
+        var ticket = await f.SeedVerifiedTicketAsync(CustomerEmail, "TG-CS-20260822-0300");
+        OutboxMessage message;
+        IOutboxEventHandler handler;
+        switch (kind)
+        {
+            case "created":
+                message = f.EnqueueTicketCreated(ticket.TicketId);
+                handler = f.CreateHandler();
+                break;
+            case "resolved":
+                await f.ResolveAsync(ticket);
+                message = f.EnqueueLifecycleEvent(OutboxEventTypes.TicketResolved, ticket.TicketId);
+                handler = f.CreateResolvedHandler();
+                break;
+            case "closed":
+                await f.ResolveAsync(ticket);
+                ticket.Close();
+                message = f.EnqueueLifecycleEvent(OutboxEventTypes.TicketClosed, ticket.TicketId);
+                handler = f.CreateClosedHandler();
+                break;
+            default:
+                await f.ResolveAsync(ticket);
+                ticket.Close();
+                ticket.Reopen(ticket.CurrentDepartmentId);
+                message = f.EnqueueLifecycleEvent(OutboxEventTypes.TicketReopened, ticket.TicketId, ticket.ReopenCount);
+                handler = f.CreateReopenedHandler();
+                break;
+        }
 
-        var result = await f.CreateHandler().HandleAsync(message);
-
-        Assert.Equal(OutboxHandlingOutcome.Succeeded, result.Outcome);
-        Assert.Empty(f.Email.Sent);
-        Assert.Equal(NotificationDeliveryStatus.Skipped, Assert.Single(f.Notifications.Notifications).DeliveryStatus);
-        Assert.Null(ticket.AcknowledgementSentAtUtc);
-        Assert.Contains(f.Audit.Entries, e => e.AfterValue!.Contains(CustomerEmailSkipReasons.TestModeSuppressed, StringComparison.Ordinal));
-    }
-
-    [Fact]
-    public async Task TestMode_Reopened_SendsNothingToAnyone()
-    {
-        var f = TestModeFixture();
-        var ticket = await f.SeedVerifiedTicketAsync(CustomerEmail);
-        await f.ResolveAsync(ticket);
-        ticket.Close();
-        ticket.Reopen(ticket.CurrentDepartmentId);
-        var message = f.EnqueueLifecycleEvent(OutboxEventTypes.TicketReopened, ticket.TicketId, ticket.ReopenCount);
-
-        await f.CreateReopenedHandler().HandleAsync(message);
-
-        Assert.Empty(f.Email.Sent);
-        Assert.Equal(NotificationDeliveryStatus.Skipped, Assert.Single(f.Notifications.Notifications).DeliveryStatus);
-    }
-
-    [Fact]
-    public async Task TestMode_Resolved_GoesToTheTestMailboxOnly_MarkedAsATest_WithTheReview()
-    {
-        var f = TestModeFixture();
-        var (_, ticket) = await ResolvedTicketAsync(f);
-        var message = f.EnqueueLifecycleEvent(OutboxEventTypes.TicketResolved, ticket.TicketId);
-
-        var result = await f.CreateResolvedHandler().HandleAsync(message);
+        var result = await handler.HandleAsync(message);
 
         Assert.Equal(OutboxHandlingOutcome.Succeeded, result.Outcome);
         var email = Assert.Single(f.Email.Sent);
         Assert.Equal(TestInbox, email.ToAddress);
-        Assert.Equal(EmailAudience.TestMailbox, email.Audience);
-        Assert.Equal("[TEST] Your Ticket #TG-CS-20260822-0300 Has Been Resolved", email.Subject);
-        Assert.Contains("TEST NOTIFICATION", email.HtmlBody, StringComparison.Ordinal);
-        Assert.Contains("TEST NOTIFICATION", email.Body, StringComparison.Ordinal);
-        Assert.Contains("How was your experience?", email.HtmlBody, StringComparison.Ordinal);
+        Assert.StartsWith("[TEST] ", email.Subject, StringComparison.Ordinal);
+        Assert.Contains("TEST NOTIFICATION", email.HtmlBody!, StringComparison.Ordinal);
         Assert.DoesNotContain(CustomerEmail, email.HtmlBody + email.Body + email.Subject, StringComparison.Ordinal);
-
-        var invitation = Assert.Single(f.Reviews.Invitations);
-        Assert.True(invitation.IsTest);
         var notification = Assert.Single(f.Notifications.Notifications);
         Assert.Equal(NotificationDeliveryStatus.Sent, notification.DeliveryStatus);
         Assert.Equal(TestInbox, notification.RecipientAddress);
     }
 
     [Fact]
-    public async Task TestMode_Closed_GoesToTheTestMailboxOnly_WithTheReview()
+    public async Task TestMode_Resolved_IsMarkedAsATest_WithTheReview()
+    {
+        var f = TestModeFixture();
+        var (_, ticket) = await ResolvedTicketAsync(f);
+
+        await f.CreateResolvedHandler().HandleAsync(f.EnqueueLifecycleEvent(OutboxEventTypes.TicketResolved, ticket.TicketId));
+
+        var email = Assert.Single(f.Email.Sent);
+        Assert.Equal("[TEST] Your Ticket #TG-CS-20260822-0300 Has Been Resolved", email.Subject);
+        Assert.Contains("How was your experience?", email.HtmlBody!, StringComparison.Ordinal);
+        Assert.True(Assert.Single(f.Reviews.Invitations).IsTest);
+    }
+
+    [Fact]
+    public async Task TestMode_Closed_CarriesTheReview()
     {
         var f = TestModeFixture();
         var (_, ticket) = await ResolvedTicketAsync(f);
         ticket.Close();
-        var message = f.EnqueueLifecycleEvent(OutboxEventTypes.TicketClosed, ticket.TicketId);
 
-        await f.CreateClosedHandler().HandleAsync(message);
+        await f.CreateClosedHandler().HandleAsync(f.EnqueueLifecycleEvent(OutboxEventTypes.TicketClosed, ticket.TicketId));
 
         var email = Assert.Single(f.Email.Sent);
-        Assert.Equal(TestInbox, email.ToAddress);
         Assert.Equal("[TEST] Your Ticket #TG-CS-20260822-0300 Has Been Closed", email.Subject);
-        Assert.Contains("How was your experience?", email.HtmlBody, StringComparison.Ordinal);
-        Assert.True(Assert.Single(f.Reviews.Invitations).IsTest);
+        Assert.Contains("How was your experience?", email.HtmlBody!, StringComparison.Ordinal);
     }
 
     [Theory]
@@ -118,14 +121,17 @@ public class CustomerNotificationModeTests
     [InlineData("   ")]
     [InlineData("not-an-email")]
     [InlineData("two@example.com;three@example.com")]
-    public async Task TestMode_MissingOrInvalidTestEmail_SendsNothing_NeverFallsBackToTheCustomer(string? testEmail)
+    public async Task TestMode_MissingOrInvalidTestEmail_SkipsEveryEmail_NeverFallsBackToTheCustomer(string? testEmail)
     {
         var f = TestModeFixture(testEmail);
-        var (_, ticket) = await ResolvedTicketAsync(f);
+        var ticket = await f.SeedVerifiedTicketAsync(CustomerEmail, "TG-CS-20260822-0301");
+        var created = f.EnqueueTicketCreated(ticket.TicketId);
+        await f.ResolveAsync(ticket);
         var resolved = f.EnqueueLifecycleEvent(OutboxEventTypes.TicketResolved, ticket.TicketId);
         ticket.Close();
         var closed = f.EnqueueLifecycleEvent(OutboxEventTypes.TicketClosed, ticket.TicketId);
 
+        await f.CreateHandler().HandleAsync(created);
         Assert.Equal(OutboxHandlingOutcome.Succeeded, (await f.CreateResolvedHandler().HandleAsync(resolved)).Outcome);
         Assert.Equal(OutboxHandlingOutcome.Succeeded, (await f.CreateClosedHandler().HandleAsync(closed)).Outcome);
 
@@ -136,7 +142,7 @@ public class CustomerNotificationModeTests
     }
 
     [Fact]
-    public async Task TestMode_MissingTestEmail_LogsAWarning()
+    public async Task TestMode_MissingTestEmail_LogsAWarning_WithoutTheCustomersAddress()
     {
         var provider = new FakeEmailSender();
         var log = new CapturingLogger<CustomerEmailSender>();
@@ -160,15 +166,14 @@ public class CustomerNotificationModeTests
     {
         var f = TestModeFixture();
         var (_, ticket) = await ResolvedTicketAsync(f, contact: "+971500000009");
-        var message = f.EnqueueLifecycleEvent(OutboxEventTypes.TicketResolved, ticket.TicketId);
 
-        await f.CreateResolvedHandler().HandleAsync(message);
+        await f.CreateResolvedHandler().HandleAsync(f.EnqueueLifecycleEvent(OutboxEventTypes.TicketResolved, ticket.TicketId));
 
         Assert.Equal(TestInbox, Assert.Single(f.Email.Sent).ToAddress);
     }
 
     [Fact]
-    public async Task TestMode_RedeliveredMessage_SendsTheTestEmailOnce()
+    public async Task TestMode_RedeliveredMessage_SendsOnce()
     {
         var f = TestModeFixture();
         var (_, ticket) = await ResolvedTicketAsync(f);
@@ -185,8 +190,8 @@ public class CustomerNotificationModeTests
     [Fact]
     public async Task TestMode_AutomaticClosure_FollowsTheSamePolicy()
     {
-        // Auto-closure (customer inactivity, completed document delivery) enqueues the same Resolved and Closed events and
-        // runs through the same dispatcher and handlers: both go to the test mailbox, nothing reaches the customer.
+        // Auto-closure (inactivity, completed document delivery, AI) enqueues the same Resolved/Closed events and runs through
+        // the same dispatcher and handlers.
         var f = TestModeFixture();
         var ticket = await f.SeedGenesysTicketAsync(CustomerEmail);
         await f.ResolveAsync(ticket);
@@ -194,83 +199,107 @@ public class CustomerNotificationModeTests
         ticket.Close();
         f.EnqueueLifecycleEvent(OutboxEventTypes.TicketClosed, ticket.TicketId);
 
-        var dispatcher = f.CreateDispatcher(
-            f.CreateHandler(), f.CreateResolvedHandler(), f.CreateClosedHandler(), f.CreateReopenedHandler());
-        var result = await dispatcher.DispatchPendingAsync();
+        var result = await f.CreateDispatcher(
+            f.CreateHandler(), f.CreateResolvedHandler(), f.CreateClosedHandler(), f.CreateReopenedHandler()).DispatchPendingAsync();
 
         Assert.Equal(2, result.Processed);
-        Assert.All(f.Email.Sent, e => Assert.Equal(TestInbox, e.ToAddress));
         Assert.Equal(2, f.Email.Sent.Count);
-        Assert.All(f.Email.Sent, e => Assert.StartsWith("[TEST] ", e.Subject, StringComparison.Ordinal));
+        Assert.All(f.Email.Sent, e => Assert.Equal(TestInbox, e.ToAddress));
     }
 
+    // ------------------------------------------------------ the switch itself
+
     [Theory]
-    [InlineData(null)]
-    [InlineData("")]
-    [InlineData("Staging")]
-    [InlineData("1")]
-    public async Task InvalidMode_SendsNoCustomerMessageOfAnyKind(string? mode)
+    [InlineData("false", false)]
+    [InlineData("False", false)]
+    [InlineData(" FALSE ", false)]
+    [InlineData("true", true)]
+    [InlineData("True", true)]
+    [InlineData(null, true)]
+    [InlineData("", true)]
+    [InlineData("no", true)]
+    [InlineData("0", true)]
+    [InlineData("off", true)]
+    [InlineData("production", true)]
+    [InlineData("garbage", true)]
+    public void OnlyAnExplicitFalse_TurnsTestModeOff(string? value, bool expectedTestMode)
     {
-        var f = new NotificationServiceFixture { ModePolicy = new CustomerNotificationModePolicy(mode, TestInbox, NotificationServiceFixture.PublicBaseUrl) };
-        var ticket = await f.SeedVerifiedTicketAsync(CustomerEmail);
-        var created = f.EnqueueTicketCreated(ticket.TicketId);
-        await f.ResolveAsync(ticket);
-        var resolved = f.EnqueueLifecycleEvent(OutboxEventTypes.TicketResolved, ticket.TicketId);
-        ticket.Close();
-        var closed = f.EnqueueLifecycleEvent(OutboxEventTypes.TicketClosed, ticket.TicketId);
+        var policy = new CustomerNotificationModePolicy(value, TestInbox, TestNumber, null);
 
-        await f.CreateHandler().HandleAsync(created);
-        await f.CreateResolvedHandler().HandleAsync(resolved);
-        await f.CreateClosedHandler().HandleAsync(closed);
-
-        Assert.Equal(CustomerNotificationMode.Invalid, f.ModePolicy.Mode);
-        Assert.NotNull(f.ModePolicy.ConfigurationWarning);
-        Assert.Empty(f.Email.Sent);
-        Assert.All(f.Notifications.Notifications, n => Assert.Equal(NotificationDeliveryStatus.Skipped, n.DeliveryStatus));
+        Assert.Equal(expectedTestMode, policy.IsTest);
+        Assert.Equal(!expectedTestMode, policy.IsProduction);
     }
 
     [Fact]
-    public void ModeIsCaseInsensitive_AndTheDefaultUnconfiguredPolicyDeliversNothing()
+    public void TheUnconfiguredPolicy_IsTestModeWithNoRecipient_SoNothingIsDelivered()
     {
-        Assert.Equal(CustomerNotificationMode.Test, new CustomerNotificationModePolicy(" test ", TestInbox, null).Mode);
-        Assert.Equal(CustomerNotificationMode.Production, new CustomerNotificationModePolicy("PRODUCTION", null, null).Mode);
+        var policy = CustomerNotificationModePolicy.Unconfigured;
 
-        foreach (var type in Enum.GetValues<NotificationType>())
-        {
-            Assert.False(CustomerNotificationModePolicy.Unconfigured.Evaluate(type).Deliver);
-        }
+        Assert.True(policy.IsTest);
+        Assert.False(policy.DecideEmail().Deliver);
+        Assert.False(policy.DecideSms().Deliver);
+        Assert.NotNull(policy.ConfigurationWarning);
     }
 
-    // --------------------------------------------------------------- Production
+    [Theory]
+    [InlineData("971500000001", "971500000001")]
+    [InlineData("+971 50 000 0001", "971500000001")]
+    [InlineData("00971500000001", "971500000001")]
+    [InlineData("(971) 50-000-0001", "971500000001")]
+    [InlineData("0500000001", null)]
+    [InlineData("12345", null)]
+    [InlineData("97150000000199999", null)]
+    [InlineData("abc", null)]
+    [InlineData("", null)]
+    [InlineData(null, null)]
+    public void TestPhone_IsNormalizedToInternationalDigits_OrRejected(string? input, string? expected) =>
+        Assert.Equal(expected, new CustomerNotificationModePolicy("true", null, input, null).TestPhone);
+
+    // --------------------------------------------------------------- production
 
     [Fact]
     public async Task Production_Resolved_GoesToTheActualCustomer_WithTheReview_AndNoTestMarking()
     {
         var f = new NotificationServiceFixture();
         var (_, ticket) = await ResolvedTicketAsync(f);
-        var message = f.EnqueueLifecycleEvent(OutboxEventTypes.TicketResolved, ticket.TicketId);
 
-        await f.CreateResolvedHandler().HandleAsync(message);
+        await f.CreateResolvedHandler().HandleAsync(f.EnqueueLifecycleEvent(OutboxEventTypes.TicketResolved, ticket.TicketId));
 
         var email = Assert.Single(f.Email.Sent);
         Assert.Equal(CustomerEmail, email.ToAddress);
-        Assert.Equal(EmailAudience.Customer, email.Audience);
         Assert.Equal("Your Ticket #TG-CS-20260822-0300 Has Been Resolved", email.Subject);
         Assert.DoesNotContain("TEST", email.HtmlBody!, StringComparison.Ordinal);
-        Assert.Contains("How was your experience?", email.HtmlBody, StringComparison.Ordinal);
+        Assert.Contains("How was your experience?", email.HtmlBody!, StringComparison.Ordinal);
         Assert.False(Assert.Single(f.Reviews.Invitations).IsTest);
     }
 
     [Fact]
-    public async Task Production_Created_StillAcknowledgesTheCustomer()
+    public async Task Production_Closed_GoesToTheActualCustomer_WithTheReview()
+    {
+        var f = new NotificationServiceFixture();
+        var (_, ticket) = await ResolvedTicketAsync(f);
+        ticket.Close();
+
+        await f.CreateClosedHandler().HandleAsync(f.EnqueueLifecycleEvent(OutboxEventTypes.TicketClosed, ticket.TicketId));
+
+        var email = Assert.Single(f.Email.Sent);
+        Assert.Equal(CustomerEmail, email.ToAddress);
+        Assert.Contains("How was your experience?", email.HtmlBody!, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Production_CreatedAndReopened_StillGoToTheCustomer()
     {
         var f = new NotificationServiceFixture();
         var ticket = await f.SeedVerifiedTicketAsync(CustomerEmail);
-        var message = f.EnqueueTicketCreated(ticket.TicketId);
+        await f.CreateHandler().HandleAsync(f.EnqueueTicketCreated(ticket.TicketId));
+        await f.ResolveAsync(ticket);
+        ticket.Close();
+        ticket.Reopen(ticket.CurrentDepartmentId);
+        await f.CreateReopenedHandler().HandleAsync(f.EnqueueLifecycleEvent(OutboxEventTypes.TicketReopened, ticket.TicketId, ticket.ReopenCount));
 
-        await f.CreateHandler().HandleAsync(message);
-
-        Assert.Equal(CustomerEmail, Assert.Single(f.Email.Sent).ToAddress);
+        Assert.Equal(2, f.Email.Sent.Count);
+        Assert.All(f.Email.Sent, e => Assert.Equal(CustomerEmail, e.ToAddress));
         Assert.NotNull(ticket.AcknowledgementSentAtUtc);
     }
 
@@ -285,27 +314,57 @@ public class CustomerNotificationModeTests
         Assert.Empty(f.Email.Sent);
     }
 
-    // ------------------------------------------- final delivery boundary (guard)
+    // ------------------------------------------- final delivery boundary (guards)
 
     private static EmailMessage Message(EmailAudience audience, string to = CustomerEmail) =>
         new(to, "Subject", "Body", Guid.NewGuid(), "<p>Body</p>", Audience: audience);
 
-    private static CustomerDeliveryGuardEmailSender Guard(
-        FakeEmailSender provider, CustomerNotificationModePolicy mode, VerificationTestingPolicy? verification = null) =>
-        new(provider, mode, verification, NullLogger<CustomerDeliveryGuardEmailSender>.Instance);
+    private static CustomerDeliveryGuardEmailSender Guard(FakeEmailSender provider, CustomerNotificationModePolicy mode) =>
+        new(provider, mode, NullLogger<CustomerDeliveryGuardEmailSender>.Instance);
 
     [Fact]
-    public async Task Guard_TestMode_SuppressesEveryOtherCustomerFacingEmail()
+    public async Task Guard_TestMode_RedirectsEveryOtherCustomerEmail_ToTheTestMailbox()
     {
-        // Document copies, OTP codes, Collections reminders and anything added later build an EmailMessage that defaults to
-        // the Customer audience — and cannot reach the provider in Test mode.
+        // Document copies, OTP codes, Collections reminders and anything added later build an EmailMessage that defaults to the
+        // Customer audience: in test mode it is re-addressed to TestEmail, attachments and all, and marked [TEST].
         var provider = new FakeEmailSender();
-        var guard = Guard(provider, Test());
+        var attachment = new EmailAttachment("contract.pdf", "application/pdf", [1, 2, 3]);
 
-        var result = await guard.SendAsync(new EmailMessage(CustomerEmail, "Payment reminder", "Body", Guid.NewGuid()));
+        var result = await Guard(provider, Test()).SendAsync(
+            new EmailMessage(CustomerEmail, "Payment reminder", "Body", Guid.NewGuid(), Attachments: [attachment]));
+
+        Assert.Equal(EmailSendOutcome.Sent, result.Outcome);
+        var sent = Assert.Single(provider.Sent);
+        Assert.Equal(TestInbox, sent.ToAddress);
+        Assert.Equal("[TEST] Payment reminder", sent.Subject);
+        Assert.Same(attachment, Assert.Single(sent.Attachments!));
+    }
+
+    [Fact]
+    public async Task Guard_TestMode_DoesNotDoublePrefixTheSubject()
+    {
+        var provider = new FakeEmailSender();
+
+        await Guard(provider, Test()).SendAsync(new EmailMessage(CustomerEmail, "[TEST] Already marked", "Body", Guid.NewGuid()));
+
+        Assert.Equal("[TEST] Already marked", Assert.Single(provider.Sent).Subject);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("nope")]
+    public async Task Guard_TestMode_WithoutAValidTestEmail_SkipsTheMessage_NeverSendsToTheCustomer(string? testEmail)
+    {
+        var provider = new FakeEmailSender();
+        var log = new CapturingLogger<CustomerDeliveryGuardEmailSender>();
+        var guard = new CustomerDeliveryGuardEmailSender(provider, Test(testEmail), log);
+
+        var result = await guard.SendAsync(Message(EmailAudience.Customer));
 
         Assert.Equal(EmailSendOutcome.Suppressed, result.Outcome);
         Assert.Empty(provider.Sent);
+        Assert.Equal(LogLevel.Warning, Assert.Single(log.Entries).Level);
     }
 
     [Fact]
@@ -313,62 +372,33 @@ public class CustomerNotificationModeTests
     {
         var provider = new FakeEmailSender();
 
-        var result = await Guard(provider, Test()).SendAsync(Message(EmailAudience.Internal, "manager@tigergroup.example"));
+        await Guard(provider, Test()).SendAsync(Message(EmailAudience.Internal, "manager@tigergroup.example"));
 
-        Assert.Equal(EmailSendOutcome.Sent, result.Outcome);
-        Assert.Equal("manager@tigergroup.example", Assert.Single(provider.Sent).ToAddress);
+        var sent = Assert.Single(provider.Sent);
+        Assert.Equal("manager@tigergroup.example", sent.ToAddress);
+        Assert.Equal("Subject", sent.Subject);
     }
 
     [Fact]
-    public async Task Guard_TestMode_RefusesATestMailboxMessageAddressedToAnyoneElse()
-    {
-        var provider = new FakeEmailSender();
-        var guard = Guard(provider, Test());
-
-        var toCustomer = await guard.SendAsync(Message(EmailAudience.TestMailbox, CustomerEmail));
-        var toTestInbox = await guard.SendAsync(Message(EmailAudience.TestMailbox, TestInbox.ToUpperInvariant()));
-
-        Assert.Equal(EmailSendOutcome.Suppressed, toCustomer.Outcome);
-        Assert.Equal(EmailSendOutcome.Sent, toTestInbox.Outcome);
-        Assert.Single(provider.Sent);
-    }
-
-    [Fact]
-    public async Task Guard_TestMode_AllowsTheVerificationTestingInbox_ForOtpAndDocumentMail()
-    {
-        var provider = new FakeEmailSender();
-        var verification = new VerificationTestingPolicy(
-            new VerificationTestingOptions { Enabled = true, SmsOverride = "971500000001", EmailOverride = "otp-inbox@example.org", BlockRealCustomerDelivery = true },
-            "UAT");
-        var guard = Guard(provider, Test(), verification);
-
-        var otp = await guard.SendAsync(Message(EmailAudience.TestMailbox, "otp-inbox@example.org"));
-        var unredirected = await guard.SendAsync(Message(EmailAudience.Customer, CustomerEmail));
-
-        Assert.Equal(EmailSendOutcome.Sent, otp.Outcome);
-        Assert.Equal(EmailSendOutcome.Suppressed, unredirected.Outcome);
-    }
-
-    [Fact]
-    public async Task Guard_InvalidMode_SuppressesEveryCustomerAndTestMailboxMessage_ButNotInternal()
+    public async Task Guard_UnconfiguredPolicy_SkipsCustomerEmail_ButNotInternal()
     {
         var provider = new FakeEmailSender();
         var guard = Guard(provider, CustomerNotificationModePolicy.Unconfigured);
 
         Assert.Equal(EmailSendOutcome.Suppressed, (await guard.SendAsync(Message(EmailAudience.Customer))).Outcome);
-        Assert.Equal(EmailSendOutcome.Suppressed, (await guard.SendAsync(Message(EmailAudience.TestMailbox, TestInbox))).Outcome);
         Assert.Equal(EmailSendOutcome.Sent, (await guard.SendAsync(Message(EmailAudience.Internal, "ops@tigergroup.example"))).Outcome);
     }
 
     [Fact]
-    public async Task Guard_Production_PassesCustomerEmailThrough()
+    public async Task Guard_Production_SendsToTheOriginalRecipient_Unchanged()
     {
         var provider = new FakeEmailSender();
 
-        var result = await Guard(provider, CustomerNotificationModePolicy.ProductionDefault()).SendAsync(Message(EmailAudience.Customer));
+        await Guard(provider, CustomerNotificationModePolicy.ProductionDefault()).SendAsync(Message(EmailAudience.Customer));
 
-        Assert.Equal(EmailSendOutcome.Sent, result.Outcome);
-        Assert.Equal(CustomerEmail, Assert.Single(provider.Sent).ToAddress);
+        var sent = Assert.Single(provider.Sent);
+        Assert.Equal(CustomerEmail, sent.ToAddress);
+        Assert.Equal("Subject", sent.Subject);
     }
 
     [Fact]
@@ -376,10 +406,10 @@ public class CustomerNotificationModeTests
     {
         var provider = new FakeEmailSender();
         var sender = new CustomerEmailSender(
-            Guard(provider, Test()), CustomerNotificationPolicy.EnabledDefault, CustomerNotificationModePolicy.ProductionDefault(),
+            Guard(provider, Test(testEmail: null)), CustomerNotificationPolicy.EnabledDefault, CustomerNotificationModePolicy.ProductionDefault(),
             NullLogger<CustomerEmailSender>.Instance);
 
-        // The façade was (mis)configured for Production while the guard is in Test mode: the guard still refuses, and the
+        // The façade says production while the guard is in test mode without a mailbox: the guard still refuses, and the
         // result is a terminal skip rather than a transient failure the dispatcher would retry.
         var result = await sender.SendAsync(Request(NotificationType.Resolved, CustomerEmail));
 
@@ -389,39 +419,61 @@ public class CustomerNotificationModeTests
 
     // ------------------------------------------------------------------- SMS
 
+    private static TigerCS.Integrations.Modules.SmsIntegration.FakeSmsSender FakeSms() => new(
+        Microsoft.Extensions.Options.Options.Create(new TigerCS.Integrations.Modules.SmsIntegration.SmsOptions()),
+        NullLogger<TigerCS.Integrations.Modules.SmsIntegration.FakeSmsSender>.Instance);
+
     [Fact]
-    public async Task SmsGuard_TestMode_SuppressesUnredirectedSms_AndAllowsOnlyTheConfiguredTestNumber()
+    public async Task SmsGuard_TestMode_RedirectsEverySmsToTheTestPhone_NeverTheCustomer()
     {
-        var inner = new TigerCS.Integrations.Modules.SmsIntegration.FakeSmsSender(
-            Microsoft.Extensions.Options.Options.Create(new TigerCS.Integrations.Modules.SmsIntegration.SmsOptions()),
-            NullLogger<TigerCS.Integrations.Modules.SmsIntegration.FakeSmsSender>.Instance);
-        var verification = new VerificationTestingPolicy(
-            new VerificationTestingOptions { Enabled = true, SmsOverride = "971500000001", EmailOverride = "otp-inbox@example.org", BlockRealCustomerDelivery = true },
-            "UAT");
-        var guard = new CustomerDeliveryGuardSmsSender(inner, Test(), verification, NullLogger<CustomerDeliveryGuardSmsSender>.Instance);
+        var inner = FakeSms();
+        var guard = new CustomerDeliveryGuardSmsSender(inner, Test(), NullLogger<CustomerDeliveryGuardSmsSender>.Instance);
 
-        var toCustomer = await guard.SendAsync(new SmsMessage("971555555555", "code 123", "en"));
-        var claimsRedirectButWrongNumber = await guard.SendAsync(new SmsMessage("971555555555", "code 123", "en", TestRedirected: true));
-        var toTestNumber = await guard.SendAsync(new SmsMessage("971500000001", "code 123", "en", TestRedirected: true));
+        var result = await guard.SendAsync(new SmsMessage("971555555555", "code 123", "en"));
 
-        Assert.Equal(SmsSendOutcome.Suppressed, toCustomer.Outcome);
-        Assert.Equal(SmsSendOutcome.Suppressed, claimsRedirectButWrongNumber.Outcome);
-        Assert.Equal(SmsSendOutcome.Accepted, toTestNumber.Outcome);
+        Assert.Equal(SmsSendOutcome.Accepted, result.Outcome);
+        var sent = Assert.Single(inner.Sent);
+        Assert.Equal(TestNumber, sent.Destination);
+        Assert.Equal("code 123", sent.Text);
     }
 
     [Theory]
-    [InlineData("Production", SmsSendOutcome.Accepted)]
-    [InlineData("Test", SmsSendOutcome.Suppressed)]
-    [InlineData(null, SmsSendOutcome.Suppressed)]
-    public async Task SmsGuard_ByMode(string? mode, SmsSendOutcome expected)
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("12")]
+    public async Task SmsGuard_TestMode_WithoutAValidTestPhone_SkipsTheSms_AndLogsAWarning(string? testPhone)
     {
-        var inner = new TigerCS.Integrations.Modules.SmsIntegration.FakeSmsSender(
-            Microsoft.Extensions.Options.Options.Create(new TigerCS.Integrations.Modules.SmsIntegration.SmsOptions()),
-            NullLogger<TigerCS.Integrations.Modules.SmsIntegration.FakeSmsSender>.Instance);
-        var guard = new CustomerDeliveryGuardSmsSender(
-            inner, new CustomerNotificationModePolicy(mode, TestInbox, null), null, NullLogger<CustomerDeliveryGuardSmsSender>.Instance);
+        var inner = FakeSms();
+        var log = new CapturingLogger<CustomerDeliveryGuardSmsSender>();
+        var guard = new CustomerDeliveryGuardSmsSender(inner, Test(testPhone: testPhone), log);
 
-        Assert.Equal(expected, (await guard.SendAsync(new SmsMessage("971555555555", "code 123", "en"))).Outcome);
+        var result = await guard.SendAsync(new SmsMessage("971555555555", "code 123", "en"));
+
+        Assert.Equal(SmsSendOutcome.Suppressed, result.Outcome);
+        Assert.Empty(inner.Sent);
+        Assert.Equal(LogLevel.Warning, Assert.Single(log.Entries).Level);
+        Assert.DoesNotContain("971555555555", log.Entries[0].Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task SmsGuard_Production_SendsToTheOriginalNumber()
+    {
+        var inner = FakeSms();
+        var guard = new CustomerDeliveryGuardSmsSender(inner, CustomerNotificationModePolicy.ProductionDefault(), NullLogger<CustomerDeliveryGuardSmsSender>.Instance);
+
+        await guard.SendAsync(new SmsMessage("971555555555", "code 123", "en"));
+
+        Assert.Equal("971555555555", Assert.Single(inner.Sent).Destination);
+    }
+
+    [Fact]
+    public async Task SmsGuard_Unconfigured_SendsNothing()
+    {
+        var inner = FakeSms();
+        var guard = new CustomerDeliveryGuardSmsSender(inner, CustomerNotificationModePolicy.Unconfigured, NullLogger<CustomerDeliveryGuardSmsSender>.Instance);
+
+        Assert.Equal(SmsSendOutcome.Suppressed, (await guard.SendAsync(new SmsMessage("971555555555", "x", "en"))).Outcome);
+        Assert.Empty(inner.Sent);
     }
 
     private static CustomerEmailRequest Request(NotificationType type, string? recipient) => new(

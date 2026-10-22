@@ -31,11 +31,10 @@ public static class SmsServiceCollectionExtensions
             .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false })
             .RemoveAllLoggers();
 
-        // The provider is always wrapped in the customer-delivery guard (CustomerNotifications:Mode), the final SMS boundary.
+        // The provider is always wrapped in the customer-delivery guard (CustomerNotifications:IsTestMode), the final SMS boundary.
         services.AddScoped<ISmsSender>(sp => new CustomerDeliveryGuardSmsSender(
             CreateProvider(sp),
             sp.GetRequiredService<CustomerNotificationModePolicy>(),
-            sp.GetService<VerificationTestingPolicy>(),
             sp.GetRequiredService<ILogger<CustomerDeliveryGuardSmsSender>>()));
 
         return services;

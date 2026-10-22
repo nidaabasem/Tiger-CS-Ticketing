@@ -371,12 +371,11 @@ public static class IntegrationsServiceCollectionExtensions
         services.AddCustomerNotificationMode(configuration);
 
         // Every IEmailSender consumer receives the provider wrapped in the customer-delivery guard, so
-        // CustomerNotifications:Mode is enforced at the final boundary no matter which flow or background job sends.
+        // CustomerNotifications:IsTestMode is applied at the final boundary no matter which flow or background job sends.
         services.AddSingleton<IEmailSender>(sp =>
             new CustomerDeliveryGuardEmailSender(
                 CreateProvider(sp),
                 sp.GetRequiredService<CustomerNotificationModePolicy>(),
-                sp.GetService<VerificationTestingPolicy>(),
                 sp.GetRequiredService<ILogger<CustomerDeliveryGuardEmailSender>>()));
 
         services.AddSingleton<ICustomerEmailSender, CustomerEmailSender>();

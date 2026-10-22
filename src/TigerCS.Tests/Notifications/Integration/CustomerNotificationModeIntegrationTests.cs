@@ -9,9 +9,8 @@ using TigerCS.Tests.IdentityAndAccess.Integration;
 namespace TigerCS.Tests.Notifications.Integration;
 
 /// <summary>
-/// Test mode through the real API host and the real dispatcher: a ticket created, resolved, closed and reopened over HTTP
-/// produces test emails for Resolved and Closed only, addressed to <c>TestEmail</c> only — and nothing at all reaches the
-/// customer, whichever way the configuration is wrong.
+/// <c>IsTestMode = true</c> through the real API host and the real dispatcher: a ticket created, resolved, closed and reopened
+/// over HTTP produces all four emails — every one addressed to <c>TestEmail</c>, none to the customer.
 /// </summary>
 public sealed class CustomerNotificationTestModeIntegrationTests : LifecycleIntegrationTestBase, IDisposable
 {
@@ -23,7 +22,7 @@ public sealed class CustomerNotificationTestModeIntegrationTests : LifecycleInte
         {
             ExtraConfiguration =
             {
-                ["CustomerNotifications:Mode"] = "Test",
+                ["CustomerNotifications:IsTestMode"] = "true",
                 ["CustomerNotifications:TestEmail"] = TestInbox
             }
         })
@@ -46,7 +45,7 @@ public sealed class CustomerNotificationTestModeIntegrationTests : LifecycleInte
     }
 
     [Fact]
-    public async Task OnlyResolvedAndClosed_AreSent_ToTheTestMailboxOnly()
+    public async Task EveryLifecycleEmail_GoesToTheTestMailboxOnly_AndIsNotRepeated()
     {
         var ticket = await ResolveCloseReopenAsync();
 
@@ -56,21 +55,11 @@ public sealed class CustomerNotificationTestModeIntegrationTests : LifecycleInte
 
         Assert.Equal(0, first.DeadLettered);
         var mine = _factory.EmailSender.Recorded.Where(e => e.Subject.Contains(ticket.TicketNumber, StringComparison.Ordinal)).ToList();
-        Assert.Equal(2, mine.Count);
+        Assert.Equal(4, mine.Count);
         Assert.All(mine, e => Assert.Equal(TestInbox, e.ToAddress));
-        Assert.Equal(
-            [
-                $"[TEST] Your Ticket #{ticket.TicketNumber} Has Been Closed",
-                $"[TEST] Your Ticket #{ticket.TicketNumber} Has Been Resolved"
-            ],
-            mine.Select(e => e.Subject).OrderBy(s => s).ToArray());
+        Assert.All(mine, e => Assert.StartsWith("[TEST] ", e.Subject, StringComparison.Ordinal));
         Assert.DoesNotContain(_factory.EmailSender.Recorded, e => e.ToAddress == Customer);
-
-        var notifications = (await _factory.GetNotificationsAsync(ticket.TicketId)).ToDictionary(n => n.NotificationType);
-        Assert.Equal(NotificationDeliveryStatus.Skipped, notifications[NotificationType.Acknowledgement].DeliveryStatus);
-        Assert.Equal(NotificationDeliveryStatus.Sent, notifications[NotificationType.Resolved].DeliveryStatus);
-        Assert.Equal(NotificationDeliveryStatus.Sent, notifications[NotificationType.Closed].DeliveryStatus);
-        Assert.Equal(NotificationDeliveryStatus.Skipped, notifications[NotificationType.Reopened].DeliveryStatus);
+        Assert.All(await _factory.GetNotificationsAsync(ticket.TicketId), n => Assert.Equal(NotificationDeliveryStatus.Sent, n.DeliveryStatus));
     }
 
     [Fact]
@@ -92,7 +81,7 @@ public sealed class CustomerNotificationMisconfiguredIntegrationTests : Lifecycl
         {
             ExtraConfiguration =
             {
-                ["CustomerNotifications:Mode"] = "Test",
+                ["CustomerNotifications:IsTestMode"] = "true",
                 ["CustomerNotifications:TestEmail"] = ""
             }
         })
@@ -120,20 +109,21 @@ public sealed class CustomerNotificationMisconfiguredIntegrationTests : Lifecycl
 public sealed class CustomerNotificationUnsetModeIntegrationTests : LifecycleIntegrationTestBase, IDisposable
 {
     public CustomerNotificationUnsetModeIntegrationTests()
-        : base(new TigerCsApiFactory { ExtraConfiguration = { ["CustomerNotifications:Mode"] = null } })
+        : base(new TigerCsApiFactory { ExtraConfiguration = { ["CustomerNotifications:IsTestMode"] = null } })
     {
     }
 
     public void Dispose() => _factory.Dispose();
 
     [Fact]
-    public async Task AMissingMode_FailsSafe_NoCustomerMessageIsSent()
+    public async Task AMissingSetting_MeansTestMode_NoCustomerMessageIsSent()
     {
         var (ticket, _, _, _) = await CreateAndResolveAsync();
 
         await _factory.RunOutboxDispatchAsync();
 
-        Assert.Empty(_factory.EmailSender.Recorded);
+        Assert.DoesNotContain(_factory.EmailSender.Recorded, e => e.ToAddress == "ahmed.alfarsi@example.com");
+        Assert.Empty(_factory.EmailSender.Recorded); // no TestEmail configured either
         Assert.All(await _factory.GetNotificationsAsync(ticket.TicketId), n => Assert.Equal(NotificationDeliveryStatus.Skipped, n.DeliveryStatus));
     }
 }

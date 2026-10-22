@@ -34,7 +34,7 @@ public sealed class CustomerEmailSender(
         ArgumentNullException.ThrowIfNull(request);
 
         CustomerEmailSendResult result;
-        var decision = modePolicy.Evaluate(request.NotificationType);
+        var decision = modePolicy.DecideEmail();
 
         if (!policy.Enabled)
         {
@@ -42,8 +42,8 @@ public sealed class CustomerEmailSender(
         }
         else if (!decision.Deliver)
         {
-            // CustomerNotifications:Mode forbids this message (Test mode, or no valid mode). Nothing is resolved or sent.
-            result = CustomerEmailSendResult.Skipped(decision.SuppressReason ?? CustomerEmailSkipReasons.CustomerNotificationModeInvalid);
+            // Test mode without a usable TestEmail: skipped, never sent to the customer.
+            result = CustomerEmailSendResult.Skipped(decision.SuppressReason ?? CustomerEmailSkipReasons.TestEmailMissing);
         }
         else if (decision.Recipient is { } testRecipient)
         {
@@ -80,7 +80,7 @@ public sealed class CustomerEmailSender(
             request.Content.TextBody,
             request.CorrelationId,
             request.Content.HtmlBody,
-            Audience: decision.IsTest ? EmailAudience.TestMailbox : EmailAudience.Customer);
+            Audience: EmailAudience.Customer);
 
         EmailSendResult providerResult;
         try
@@ -96,7 +96,7 @@ public sealed class CustomerEmailSender(
         return providerResult.Outcome switch
         {
             EmailSendOutcome.Sent => CustomerEmailSendResult.Sent(),
-            EmailSendOutcome.Suppressed => CustomerEmailSendResult.Skipped(providerResult.Error ?? CustomerEmailSkipReasons.CustomerNotificationModeInvalid),
+            EmailSendOutcome.Suppressed => CustomerEmailSendResult.Skipped(providerResult.Error ?? CustomerEmailSkipReasons.TestEmailMissing),
             EmailSendOutcome.PermanentFailure => CustomerEmailSendResult.Permanent(
                 providerResult.Error ?? "The email provider reported a permanent failure."),
             _ => CustomerEmailSendResult.Transient(
@@ -117,12 +117,11 @@ public sealed class CustomerEmailSender(
                     request.NotificationType, request.TicketNumber, masked, request.CorrelationId);
                 break;
 
-            case CustomerEmailSendOutcome.Skipped when result.Reason is CustomerEmailSkipReasons.TestEmailMissing
-                or CustomerEmailSkipReasons.CustomerNotificationModeInvalid:
+            case CustomerEmailSendOutcome.Skipped when result.Reason is CustomerEmailSkipReasons.TestEmailMissing:
                 logger.LogWarning(
                     "Customer email {NotificationType} for ticket {TicketNumber} suppressed ({Reason}): {Warning} CorrelationId {CorrelationId}.",
                     request.NotificationType, request.TicketNumber, result.Reason,
-                    modePolicy.ConfigurationWarning ?? "Customer notification mode forbids delivery.", request.CorrelationId);
+                    modePolicy.ConfigurationWarning ?? "Test mode has no usable recipient.", request.CorrelationId);
                 break;
 
             case CustomerEmailSendOutcome.Skipped:

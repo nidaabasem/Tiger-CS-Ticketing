@@ -109,10 +109,9 @@ public abstract class CustomerTicketEmailHandler(
         var nowUtc = timeProvider.GetUtcNow().UtcDateTime;
         var contact = await contactResolver.ResolveAsync(ticket, cancellationToken);
 
-        // CustomerNotifications:Mode: Production sends to the customer, Test redirects Resolved/Closed to the test mailbox and
-        // suppresses the rest, and an invalid mode sends nothing. The sender enforces the same rule again at the delivery
-        // boundary; deciding here as well lets the audit trail say why nothing was sent.
-        var decision = modePolicy.Evaluate(NotificationType);
+        // CustomerNotifications:IsTestMode: in test mode every customer email goes to TestEmail (skipped if there is none); otherwise to the
+        // customer. The sender and the delivery guard apply the same rule; deciding here lets the audit trail say why nothing was sent.
+        var decision = modePolicy.DecideEmail();
 
         if (notification is null)
         {
@@ -139,7 +138,7 @@ public abstract class CustomerTicketEmailHandler(
         if (!decision.Deliver)
         {
             return await SkipAsync(
-                ticket, notification, message, decision.SuppressReason ?? CustomerEmailSkipReasons.CustomerNotificationModeInvalid, cancellationToken);
+                ticket, notification, message, decision.SuppressReason ?? CustomerEmailSkipReasons.TestEmailMissing, cancellationToken);
         }
 
         if (policy.MaxEventAge > TimeSpan.Zero && nowUtc - message.OccurredAtUtc > policy.MaxEventAge)

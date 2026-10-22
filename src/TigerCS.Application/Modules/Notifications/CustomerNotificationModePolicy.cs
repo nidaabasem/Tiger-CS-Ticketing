@@ -5,26 +5,14 @@ using TigerCS.Domain.Modules.Notifications;
 
 namespace TigerCS.Application.Modules.Notifications;
 
-public enum CustomerNotificationMode
-{
-    /// <summary>Missing or unrecognised <c>CustomerNotifications:Mode</c>. Treated as "send nothing to any customer".</summary>
-    Invalid = 0,
-
-    /// <summary>UAT / test: only Resolved and Closed are emailed, and only to <c>TestEmail</c>; the real customer is never contacted.</summary>
-    Test = 1,
-
-    /// <summary>The existing behaviour: customers receive their lifecycle emails.</summary>
-    Production = 2
-}
-
-/// <summary>What the delivery boundary must do with one customer notification.</summary>
+/// <summary>What the delivery boundary must do with one customer message.</summary>
 /// <param name="Deliver">False when nothing may be sent.</param>
-/// <param name="Recipient">The mailbox that replaces the customer's (Test mode only); <c>null</c> means "the customer's own address".</param>
-/// <param name="IsTest">The message is a test notification (marked in the subject, reviews kept out of production statistics).</param>
+/// <param name="Recipient">The test recipient that replaces the customer's contact (test mode only); <c>null</c> means "the customer's own".</param>
+/// <param name="IsTest">The message is a test notification.</param>
 /// <param name="SuppressReason">A <see cref="CustomerEmailSkipReasons"/> code when <paramref name="Deliver"/> is false.</param>
 public readonly record struct CustomerDeliveryDecision(bool Deliver, string? Recipient, bool IsTest, string? SuppressReason)
 {
-    public static CustomerDeliveryDecision Suppress(string reason, bool isTest = false) => new(false, null, isTest, reason);
+    public static CustomerDeliveryDecision Suppress(string reason) => new(false, null, true, reason);
 }
 
 /// <summary>The Tiger Properties branding shared by every customer email.</summary>
@@ -38,14 +26,16 @@ public sealed record CustomerEmailBranding(string? LogoUrl, string WebsiteUrl, s
 }
 
 /// <summary>
-/// The Application layer's view of the <c>CustomerNotifications</c> configuration section: whether customer messages go to
-/// customers (<see cref="CustomerNotificationMode.Production"/>), to a single test mailbox
-/// (<see cref="CustomerNotificationMode.Test"/>), or nowhere (<see cref="CustomerNotificationMode.Invalid"/>).
+/// The Application layer's view of the <c>CustomerNotifications</c> section — one Boolean switch.
 ///
 /// <para>
-/// <b>Fails safe.</b> A missing, blank or unrecognised mode is <see cref="CustomerNotificationMode.Invalid"/> and suppresses
-/// every customer message. In Test mode a missing or malformed <c>TestEmail</c> suppresses delivery too — there is no
-/// fallback to the customer's own address under any condition.
+/// <c>IsTestMode = true</c>: <i>every</i> customer email goes to <c>TestEmail</c> and every customer SMS to <c>TestPhone</c>;
+/// the customer's own contact details are never used. <c>IsTestMode = false</c>: messages go to their intended recipients.
+/// </para>
+///
+/// <para>
+/// <b>Fails safe.</b> Only an explicit <c>false</c> turns test mode off; a missing, blank or unrecognised value means test
+/// mode. In test mode a missing or invalid recipient suppresses that delivery — there is no fallback to the customer.
 /// </para>
 /// </summary>
 public sealed class CustomerNotificationModePolicy
@@ -55,21 +45,18 @@ public sealed class CustomerNotificationModePolicy
     public static readonly TimeSpan DefaultReviewLinkLifetime = TimeSpan.FromDays(14);
 
     public CustomerNotificationModePolicy(
-        string? mode,
+        string? isTestMode,
         string? testEmail,
+        string? testPhone,
         string? publicBaseUrl,
         TimeSpan? reviewLinkLifetime = null,
         CustomerEmailBranding? branding = null)
     {
-        Mode = mode?.Trim().ToLowerInvariant() switch
-        {
-            "test" => CustomerNotificationMode.Test,
-            "production" => CustomerNotificationMode.Production,
-            _ => CustomerNotificationMode.Invalid
-        };
+        IsTest = !string.Equals(isTestMode?.Trim(), "false", StringComparison.OrdinalIgnoreCase);
 
         var candidate = CustomerEmailAddress.Normalize(testEmail);
         TestEmail = CustomerEmailAddress.IsValid(candidate) ? candidate : null;
+        TestPhone = NormalizePhone(testPhone);
 
         PublicBaseUrl = NormalizeBaseUrl(publicBaseUrl);
         ReviewLinkLifetime = reviewLinkLifetime is { } lifetime && lifetime > TimeSpan.Zero ? lifetime : DefaultReviewLinkLifetime;
@@ -84,21 +71,22 @@ public sealed class CustomerNotificationModePolicy
         };
     }
 
-    /// <summary>The safe default: no customer message of any kind is delivered.</summary>
-    public static CustomerNotificationModePolicy Unconfigured { get; } = new(null, null, null);
+    /// <summary>The safe default (configuration absent): test mode with no recipients, so nothing is delivered.</summary>
+    public static CustomerNotificationModePolicy Unconfigured { get; } = new(null, null, null, null);
 
-    /// <summary>The existing behaviour, for tests and call sites that predate the mode switch.</summary>
+    /// <summary><c>IsTestMode = false</c>, for tests and call sites that predate the switch.</summary>
     public static CustomerNotificationModePolicy ProductionDefault(string? publicBaseUrl = null) =>
-        new("Production", null, publicBaseUrl);
+        new("false", null, null, publicBaseUrl);
 
-    public CustomerNotificationMode Mode { get; }
+    public bool IsTest { get; }
 
-    public bool IsTest => Mode == CustomerNotificationMode.Test;
-
-    public bool IsProduction => Mode == CustomerNotificationMode.Production;
+    public bool IsProduction => !IsTest;
 
     /// <summary>The validated test mailbox; <c>null</c> when missing or malformed.</summary>
     public string? TestEmail { get; }
+
+    /// <summary>The test mobile number as international digits (no "+"); <c>null</c> when missing or malformed.</summary>
+    public string? TestPhone { get; }
 
     /// <summary>Absolute http(s) base URL of the public Ticketing site, without a trailing slash; <c>null</c> when not configured.</summary>
     public string? PublicBaseUrl { get; }
@@ -107,44 +95,59 @@ public sealed class CustomerNotificationModePolicy
 
     public CustomerEmailBranding Branding { get; }
 
-    /// <summary>Operator-facing explanation of why customer delivery is blocked or degraded; <c>null</c> when the configuration is sound.</summary>
-    public string? ConfigurationWarning => Mode switch
+    /// <summary>Operator-facing explanation of why test-mode delivery is blocked; <c>null</c> when sound or not in test mode.</summary>
+    public string? ConfigurationWarning
     {
-        CustomerNotificationMode.Invalid =>
-            "CustomerNotifications:Mode is missing or invalid (expected \"Test\" or \"Production\"); no customer notification will be sent.",
-        CustomerNotificationMode.Test when TestEmail is null =>
-            "CustomerNotifications:Mode is Test but CustomerNotifications:TestEmail is missing or invalid; no notification will be sent.",
-        _ => null
-    };
-
-    /// <summary>Test mode delivers only these, and only to the test mailbox.</summary>
-    public static bool IsTestModeDelivered(NotificationType type) => type is NotificationType.Resolved or NotificationType.Closed;
-
-    public CustomerDeliveryDecision Evaluate(NotificationType type)
-    {
-        switch (Mode)
+        get
         {
-            case CustomerNotificationMode.Production:
-                return new CustomerDeliveryDecision(true, null, false, null);
+            if (!IsTest)
+            {
+                return null;
+            }
 
-            case CustomerNotificationMode.Test:
-                if (!IsTestModeDelivered(type))
-                {
-                    return CustomerDeliveryDecision.Suppress(CustomerEmailSkipReasons.TestModeSuppressed, isTest: true);
-                }
-
-                return TestEmail is null
-                    ? CustomerDeliveryDecision.Suppress(CustomerEmailSkipReasons.TestEmailMissing, isTest: true)
-                    : new CustomerDeliveryDecision(true, TestEmail, true, null);
-
-            default:
-                return CustomerDeliveryDecision.Suppress(CustomerEmailSkipReasons.CustomerNotificationModeInvalid);
+            var missing = new List<string>();
+            if (TestEmail is null) missing.Add("CustomerNotifications:TestEmail (customer emails are skipped)");
+            if (TestPhone is null) missing.Add("CustomerNotifications:TestPhone (customer SMS are skipped)");
+            return missing.Count == 0 ? null : "IsTestMode is on but " + string.Join(" and ", missing) + " is missing or invalid.";
         }
     }
 
-    /// <summary>True when <paramref name="address"/> is the configured test mailbox.</summary>
-    public bool IsTestMailbox(string? address) =>
-        TestEmail is not null && string.Equals(CustomerEmailAddress.Normalize(address), TestEmail, StringComparison.OrdinalIgnoreCase);
+    /// <summary>How a customer email is routed: to the test mailbox in test mode (or suppressed if there is none), else as intended.</summary>
+    public CustomerDeliveryDecision DecideEmail()
+    {
+        if (!IsTest)
+        {
+            return new CustomerDeliveryDecision(true, null, false, null);
+        }
+
+        return TestEmail is null
+            ? CustomerDeliveryDecision.Suppress(CustomerEmailSkipReasons.TestEmailMissing)
+            : new CustomerDeliveryDecision(true, TestEmail, true, null);
+    }
+
+    /// <summary>How a customer SMS is routed: to the test number in test mode (or suppressed if there is none), else as intended.</summary>
+    public CustomerDeliveryDecision DecideSms()
+    {
+        if (!IsTest)
+        {
+            return new CustomerDeliveryDecision(true, null, false, null);
+        }
+
+        return TestPhone is null
+            ? CustomerDeliveryDecision.Suppress(CustomerEmailSkipReasons.TestPhoneMissing)
+            : new CustomerDeliveryDecision(true, TestPhone, true, null);
+    }
+
+    private static string? NormalizePhone(string? value)
+    {
+        var digits = new string((value ?? string.Empty).Where(c => !(char.IsWhiteSpace(c) || c is '+' or '-' or '(' or ')')).ToArray());
+        if (digits.StartsWith("00", StringComparison.Ordinal))
+        {
+            digits = digits[2..];
+        }
+
+        return digits.Length is >= 8 and <= 15 && digits[0] != '0' && digits.All(char.IsAsciiDigit) ? digits : null;
+    }
 
     /// <summary>
     /// The review page link for a token, optionally with a pre-selected rating. <c>null</c> when no public base URL is
