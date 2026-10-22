@@ -804,6 +804,10 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                     b.Property<int>("AttemptCount")
                         .HasColumnType("int");
 
+                    b.Property<string>("CampaignAction")
+                        .HasMaxLength(24)
+                        .HasColumnType("nvarchar(24)");
+
                     b.Property<long>("CollectionsDispatchId")
                         .HasColumnType("bigint");
 
@@ -812,10 +816,6 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
 
                     b.Property<int>("ContactCount")
                         .HasColumnType("int");
-
-                    b.Property<string>("CampaignAction")
-                        .HasMaxLength(24)
-                        .HasColumnType("nvarchar(24)");
 
                     b.Property<string>("ContactListId")
                         .IsRequired()
@@ -983,6 +983,11 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                         .HasMaxLength(100)
                         .HasColumnType("nvarchar(100)");
 
+                    b.Property<string>("TenantId")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)");
+
                     b.Property<int?>("TowerId")
                         .HasColumnType("int");
 
@@ -993,11 +998,6 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                     b.Property<string>("TowerNumber")
                         .HasMaxLength(20)
                         .HasColumnType("nvarchar(20)");
-
-                    b.Property<string>("TenantId")
-                        .IsRequired()
-                        .HasMaxLength(50)
-                        .HasColumnType("nvarchar(50)");
 
                     b.Property<string>("UnitCode")
                         .IsRequired()
@@ -1121,6 +1121,92 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                         .HasFilter("[IsCurrent] = 1");
 
                     b.ToTable("CollectionsReviewRuns", (string)null);
+                });
+
+            modelBuilder.Entity("TigerCS.Domain.Modules.CustomerReviews.TicketReview", b =>
+                {
+                    b.Property<long>("TicketReviewId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("TicketReviewId"));
+
+                    b.Property<string>("Comment")
+                        .HasMaxLength(1000)
+                        .HasColumnType("nvarchar(1000)");
+
+                    b.Property<bool>("IsTest")
+                        .HasColumnType("bit");
+
+                    b.Property<byte>("Rating")
+                        .HasColumnType("tinyint");
+
+                    b.Property<int>("ReopenCycle")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime>("SubmittedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<long>("TicketId")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("TicketReviewInvitationId")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("TicketReviewId");
+
+                    b.HasIndex("TicketReviewInvitationId");
+
+                    b.HasIndex("IsTest", "SubmittedAtUtc")
+                        .HasDatabaseName("IX_TicketReviews_IsTest_SubmittedAtUtc");
+
+                    b.HasIndex("TicketId", "ReopenCycle", "IsTest")
+                        .IsUnique()
+                        .HasDatabaseName("UX_TicketReviews_TicketId_ReopenCycle_IsTest");
+
+                    b.ToTable("TicketReviews", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_TicketReviews_Rating", "[Rating] BETWEEN 1 AND 5");
+                        });
+                });
+
+            modelBuilder.Entity("TigerCS.Domain.Modules.CustomerReviews.TicketReviewInvitation", b =>
+                {
+                    b.Property<long>("TicketReviewInvitationId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("TicketReviewInvitationId"));
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime>("ExpiresAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<bool>("IsTest")
+                        .HasColumnType("bit");
+
+                    b.Property<int>("ReopenCycle")
+                        .HasColumnType("int");
+
+                    b.Property<long>("TicketId")
+                        .HasColumnType("bigint");
+
+                    b.Property<byte[]>("TokenHash")
+                        .IsRequired()
+                        .HasColumnType("varbinary(32)");
+
+                    b.HasKey("TicketReviewInvitationId");
+
+                    b.HasIndex("TokenHash")
+                        .IsUnique()
+                        .HasDatabaseName("UX_TicketReviewInvitations_TokenHash");
+
+                    b.HasIndex("TicketId", "ReopenCycle")
+                        .HasDatabaseName("IX_TicketReviewInvitations_TicketId_ReopenCycle");
+
+                    b.ToTable("TicketReviewInvitations", (string)null);
                 });
 
             modelBuilder.Entity("TigerCS.Domain.Modules.CustomerVerification.ContactReference", b =>
@@ -3711,6 +3797,30 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                         .WithMany()
                         .HasForeignKey("CollectionsReviewRunId")
                         .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("TigerCS.Domain.Modules.CustomerReviews.TicketReview", b =>
+                {
+                    b.HasOne("TigerCS.Domain.Modules.Ticketing.Ticket", null)
+                        .WithMany()
+                        .HasForeignKey("TicketId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("TigerCS.Domain.Modules.CustomerReviews.TicketReviewInvitation", null)
+                        .WithMany()
+                        .HasForeignKey("TicketReviewInvitationId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("TigerCS.Domain.Modules.CustomerReviews.TicketReviewInvitation", b =>
+                {
+                    b.HasOne("TigerCS.Domain.Modules.Ticketing.Ticket", null)
+                        .WithMany()
+                        .HasForeignKey("TicketId")
+                        .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
                 });
 

@@ -48,6 +48,7 @@ public static class OpenApiTags
     public const string SlaAndEscalation = "SLA and Escalation";
     public const string RequestTypes = "Request Types";
     public const string Genesys = "Genesys";
+    public const string CustomerReviews = "Customer Reviews";
     public const string Collections = "Collections";
     public const string PendingCustomerInteractions = "Pending Customer Interactions";
     public const string Administration = "Administration";
@@ -112,6 +113,10 @@ public static class OpenApiTags
         (RequestTypes,
             "The active Request Type directory scoped to one Department — what the New Ticket wizard's Request Type "
             + "picker reads from. A request type resolves the workflow version a new ticket is pinned to."),
+        (CustomerReviews,
+            "The public customer satisfaction review page's backend. Anonymous: the opaque review token from a Resolved/Closed "
+            + "email is the only credential. Looking up a link never records anything; a review is committed only by an explicit "
+            + "submission, once per ticket."),
         (Genesys,
             "The three externally consumable Genesys contracts. CREATE: one normalized endpoint every channel "
             + "(phone, website chat, chatbot, WhatsApp, social media) converges on, idempotent on the Genesys "

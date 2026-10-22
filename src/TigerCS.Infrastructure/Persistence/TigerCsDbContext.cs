@@ -5,6 +5,7 @@ using TigerCS.Domain.Infrastructure;
 using TigerCS.Domain.Modules.ClassificationAndRouting;
 using TigerCS.Domain.Modules.Collections;
 using TigerCS.Domain.Modules.Collections.Review;
+using TigerCS.Domain.Modules.CustomerReviews;
 using TigerCS.Domain.Modules.CustomerVerification;
 using TigerCS.Domain.Modules.GenesysIntegration;
 using TigerCS.Domain.Modules.IdentityAndAccess;
@@ -16,6 +17,7 @@ using TigerCS.Infrastructure.Audit;
 using TigerCS.Infrastructure.Identity;
 using TigerCS.Infrastructure.Modules.ClassificationAndRouting.Configurations;
 using TigerCS.Infrastructure.Modules.Collections;
+using TigerCS.Infrastructure.Modules.CustomerReviews;
 using TigerCS.Infrastructure.Modules.CustomerVerification.Configurations;
 using TigerCS.Infrastructure.Modules.GenesysIntegration.Configurations;
 using TigerCS.Infrastructure.Modules.IdentityAndAccess.Configurations;
@@ -108,6 +110,10 @@ public class TigerCsDbContext(DbContextOptions<TigerCsDbContext> options)
     public DbSet<OutboxMessage> OutboxMessages => Set<OutboxMessage>();
 
     public DbSet<Notification> Notifications => Set<Notification>();
+
+    public DbSet<TicketReviewInvitation> TicketReviewInvitations => Set<TicketReviewInvitation>();
+
+    public DbSet<TicketReview> TicketReviews => Set<TicketReview>();
 
     public DbSet<Workflow> Workflows => Set<Workflow>();
 
@@ -202,6 +208,8 @@ public class TigerCsDbContext(DbContextOptions<TigerCsDbContext> options)
         builder.ApplyConfiguration(new IdempotencyRecordConfiguration());
         builder.ApplyConfiguration(new OutboxMessageConfiguration());
         builder.ApplyConfiguration(new NotificationConfiguration());
+        builder.ApplyConfiguration(new TicketReviewInvitationConfiguration());
+        builder.ApplyConfiguration(new TicketReviewConfiguration());
 
         builder.ApplyConfiguration(new WorkflowConfiguration());
         builder.ApplyConfiguration(new WorkflowTemplateConfiguration());

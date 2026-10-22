@@ -1,0 +1,68 @@
+@page "/Review"
+@model TigerCS.Web.Pages.ReviewModel
+@{
+    ViewData["Title"] = "Rate your experience";
+    Layout = "_ReviewLayout";
+}
+
+<main class="review-card">
+    <img class="review-logo" src="~/img/tiger-logo.png" alt="Tiger Properties" width="140" />
+
+    @switch (Model.State)
+    {
+        case TigerCS.Web.Pages.ReviewPageState.Form:
+            <h1>How was your experience?</h1>
+            @if (!string.IsNullOrEmpty(Model.TicketNumber))
+            {
+                <p class="review-sub">Ticket <strong data-review-ticket>@Model.TicketNumber</strong></p>
+            }
+            <p class="review-sub">Choose a star rating, add a comment if you wish, then press <strong>Submit review</strong>.</p>
+
+            @if (!string.IsNullOrEmpty(Model.FormError))
+            {
+                <p class="review-error" role="alert" data-review-error>@Model.FormError</p>
+            }
+
+            @* A plain form: no script, so it works under the strict CSP. Nothing is saved until the button is pressed. *@
+            <form method="post" asp-page="/Review">
+                <input type="hidden" name="t" value="@Model.Token" />
+                <fieldset class="review-stars">
+                    <legend class="review-visually-hidden">Rating</legend>
+                    @for (var star = 5; star >= 1; star--)
+                    {
+                        <input type="radio" id="star-@star" name="r" value="@star" checked="@(Model.Rating == star)" />
+                        <label for="star-@star" title="@(star == 1 ? "1 star" : star + " stars")">&#9733;<span class="review-visually-hidden">@(star == 1 ? "1 star" : star + " stars")</span></label>
+                    }
+                </fieldset>
+                <label class="review-comment-label" for="comment">Comment (optional)</label>
+                <textarea id="comment" name="Comment" rows="4" maxlength="1000">@Model.Comment</textarea>
+                <button type="submit" class="review-button">Submit review</button>
+            </form>
+            break;
+
+        case TigerCS.Web.Pages.ReviewPageState.Thanks:
+            <h1 data-review-thanks>Thank you for your feedback</h1>
+            <p class="review-sub">Your review has been received. We appreciate you taking the time to tell us about your experience.</p>
+            break;
+
+        case TigerCS.Web.Pages.ReviewPageState.AlreadySubmitted:
+            <h1 data-review-already>Thank you — we already have your review</h1>
+            <p class="review-sub">A review has already been submitted for this ticket and cannot be changed.</p>
+            break;
+
+        case TigerCS.Web.Pages.ReviewPageState.Expired:
+            <h1 data-review-expired>This review link has expired</h1>
+            <p class="review-sub">Review links stay valid for a limited time. Thank you for choosing Tiger Properties.</p>
+            break;
+
+        case TigerCS.Web.Pages.ReviewPageState.Unavailable:
+            <h1>Reviews are unavailable right now</h1>
+            <p class="review-sub">Please try the link in your email again in a few minutes.</p>
+            break;
+
+        default:
+            <h1 data-review-invalid>This review link is not valid</h1>
+            <p class="review-sub">Please use the link from your most recent email from Tiger Properties.</p>
+            break;
+    }
+</main>

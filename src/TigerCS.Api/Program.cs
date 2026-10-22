@@ -200,6 +200,29 @@ using (var verificationTestingScope = app.Services.CreateScope())
     }
 }
 
+// Customer notification routing (CustomerNotifications:IsTestMode). Never stops the host: missing/invalid configuration means test
+// mode, and a test mode without a recipient simply skips that delivery. The reason is logged here once at startup.
+{
+    var customerNotifications = app.Services.GetRequiredService<TigerCS.Application.Modules.Notifications.CustomerNotificationModePolicy>();
+    if (customerNotifications.ConfigurationWarning is { } notificationWarning)
+    {
+        app.Logger.LogWarning("CustomerNotifications: {Warning}", notificationWarning);
+    }
+
+    if (customerNotifications.IsTest)
+    {
+        app.Logger.LogWarning(
+            "CustomerNotifications is in TEST mode in {Environment}: all customer email goes to the configured TestEmail and all customer SMS to TestPhone; no customer is contacted.",
+            app.Environment.EnvironmentName);
+    }
+
+    if (customerNotifications.PublicBaseUrl is null)
+    {
+        app.Logger.LogWarning(
+            "CustomerNotifications:PublicBaseUrl is not configured; Resolved/Closed emails will carry no review section.");
+    }
+}
+
 // Fail fast if fixture Collections balances would be served outside
 // Development/Testing — a sample balance shown to an agent, or read by the
 // voice bot, as if it were a customer's real debt is the one failure this

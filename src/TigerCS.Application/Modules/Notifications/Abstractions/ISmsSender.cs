@@ -12,7 +12,10 @@ public enum SmsSendOutcome
     Failed,
 
     /// <summary>Timeout or an unreadable/unrecognised response — the SMS may or may not have been sent.</summary>
-    Unconfirmed
+    Unconfirmed,
+
+    /// <summary>Deliberately not sent: the customer notification mode forbids it. Nothing reached the provider.</summary>
+    Suppressed
 }
 
 /// <param name="Destination">Recipient mobile as CRM holds it (any common form); the sender formats it for its provider.</param>

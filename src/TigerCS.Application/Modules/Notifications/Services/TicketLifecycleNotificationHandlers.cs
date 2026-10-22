@@ -1,4 +1,5 @@
 using TigerCS.Application.Abstractions;
+using TigerCS.Application.Modules.CustomerReviews.Services;
 using TigerCS.Application.Modules.Notifications.Abstractions;
 using TigerCS.Application.Modules.Notifications.Dto;
 using TigerCS.Application.Modules.Notifications.Templates;
@@ -29,9 +30,12 @@ public sealed class TicketResolvedNotificationHandler(
     IAuditEntryWriter auditWriter,
     CustomerNotificationPolicy policy,
     TimeProvider timeProvider,
-    ITicketResolutionRepository resolutionRepository)
+    CustomerNotificationModePolicy modePolicy,
+    ITicketResolutionRepository resolutionRepository,
+    CustomerTicketSubjectResolver subjectResolver,
+    TicketReviewInvitationService reviewInvitations)
     : CustomerTicketEmailHandler(
-        ticketRepository, notificationRepository, contactResolver, emailSender, auditWriter, policy, timeProvider)
+        ticketRepository, notificationRepository, contactResolver, emailSender, auditWriter, policy, timeProvider, modePolicy)
 {
     public override string EventType => OutboxEventTypes.TicketResolved;
 
@@ -55,7 +59,13 @@ public sealed class TicketResolvedNotificationHandler(
             contact.DisplayName,
             resolution?.ResolvedAtUtc ?? occurredAtUtc,
             ResolutionStatus: CustomerEmailTemplates.DescribeResolution(outcome),
-            ResolutionMessage: Policy.IncludeResolutionNote ? resolution?.ResolutionNote : null));
+            ResolutionMessage: Policy.IncludeResolutionNote ? resolution?.ResolutionNote : null,
+            TicketSubject: await subjectResolver.ResolveAsync(ticket, cancellationToken),
+            Language: contact.Language,
+            Branding: ModePolicy.Branding,
+            // Null when the customer has already reviewed this ticket or no public base URL is configured.
+            Review: await reviewInvitations.PrepareAsync(ticket, cancellationToken),
+            IsTest: ModePolicy.IsTest));
     }
 }
 
@@ -67,9 +77,13 @@ public sealed class TicketClosedNotificationHandler(
     ICustomerEmailSender emailSender,
     IAuditEntryWriter auditWriter,
     CustomerNotificationPolicy policy,
-    TimeProvider timeProvider)
+    TimeProvider timeProvider,
+    CustomerNotificationModePolicy modePolicy,
+    ITicketResolutionRepository resolutionRepository,
+    CustomerTicketSubjectResolver subjectResolver,
+    TicketReviewInvitationService reviewInvitations)
     : CustomerTicketEmailHandler(
-        ticketRepository, notificationRepository, contactResolver, emailSender, auditWriter, policy, timeProvider)
+        ticketRepository, notificationRepository, contactResolver, emailSender, auditWriter, policy, timeProvider, modePolicy)
 {
     public override string EventType => OutboxEventTypes.TicketClosed;
 
@@ -77,10 +91,25 @@ public sealed class TicketClosedNotificationHandler(
 
     protected override long? ParseTicketId(string payload) => TicketLifecycleEventPayload.FromJson(payload)?.TicketId;
 
-    protected override Task<CustomerEmailContent> BuildContentAsync(
-        Ticket ticket, CustomerContact contact, DateTime occurredAtUtc, CancellationToken cancellationToken) =>
-        Task.FromResult(CustomerEmailTemplates.TicketClosed(new CustomerEmailTicketModel(
-            ticket.TicketNumber, contact.DisplayName, occurredAtUtc)));
+    protected override async Task<CustomerEmailContent> BuildContentAsync(
+        Ticket ticket, CustomerContact contact, DateTime occurredAtUtc, CancellationToken cancellationToken)
+    {
+        var resolution = Policy.IncludeResolutionNote
+            ? await resolutionRepository.GetCurrentAsync(ticket.TicketId, cancellationToken)
+            : null;
+
+        return CustomerEmailTemplates.TicketClosed(new CustomerEmailTicketModel(
+            ticket.TicketNumber,
+            contact.DisplayName,
+            occurredAtUtc,
+            ResolutionMessage: resolution?.ResolutionNote,
+            TicketSubject: await subjectResolver.ResolveAsync(ticket, cancellationToken),
+            Language: contact.Language,
+            Branding: ModePolicy.Branding,
+            // A review the customer already gave is preserved and not asked for again: PrepareAsync returns null for it.
+            Review: await reviewInvitations.PrepareAsync(ticket, cancellationToken),
+            IsTest: ModePolicy.IsTest));
+    }
 }
 
 /// <summary>Customer Email Notifications increment — "your request has been reopened", from the <c>TicketReopened</c> Outbox event.</summary>
@@ -91,9 +120,10 @@ public sealed class TicketReopenedNotificationHandler(
     ICustomerEmailSender emailSender,
     IAuditEntryWriter auditWriter,
     CustomerNotificationPolicy policy,
-    TimeProvider timeProvider)
+    TimeProvider timeProvider,
+    CustomerNotificationModePolicy modePolicy)
     : CustomerTicketEmailHandler(
-        ticketRepository, notificationRepository, contactResolver, emailSender, auditWriter, policy, timeProvider)
+        ticketRepository, notificationRepository, contactResolver, emailSender, auditWriter, policy, timeProvider, modePolicy)
 {
     public override string EventType => OutboxEventTypes.TicketReopened;
 
@@ -104,5 +134,6 @@ public sealed class TicketReopenedNotificationHandler(
     protected override Task<CustomerEmailContent> BuildContentAsync(
         Ticket ticket, CustomerContact contact, DateTime occurredAtUtc, CancellationToken cancellationToken) =>
         Task.FromResult(CustomerEmailTemplates.TicketReopened(new CustomerEmailTicketModel(
-            ticket.TicketNumber, contact.DisplayName, occurredAtUtc)));
+            ticket.TicketNumber, contact.DisplayName, occurredAtUtc,
+            Language: contact.Language, Branding: ModePolicy.Branding, IsTest: ModePolicy.IsTest)));
 }

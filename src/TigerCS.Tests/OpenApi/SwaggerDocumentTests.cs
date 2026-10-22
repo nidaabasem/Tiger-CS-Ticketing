@@ -66,6 +66,9 @@ public class SwaggerDocumentTests(SwaggerDocumentFixture fixture) : IClassFixtur
         "POST /api/auth/logout",
         "POST /api/auth/change-password",
 
+        "POST /api/public/ticket-reviews/lookup",
+        "POST /api/public/ticket-reviews/submit",
+
         "GET /api/users/me",
         "GET /api/users/assignable",
         "PATCH /api/users/{employeeId}/activation",

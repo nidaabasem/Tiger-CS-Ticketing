@@ -168,6 +168,7 @@ jobs:
             "SlaPolicies" "BusinessCalendars" "BusinessCalendarWorkingDays" "Holidays" \
             "TicketSlaInstances" "TicketEscalations" "IdempotencyRecords" \
             "OutboxMessages" "Notifications" \
+            "TicketReviewInvitations" "TicketReviews" \
             "DepartmentCustomerLookupSources" \
             "WorkflowTemplates" "WorkflowTemplateSteps" "RequestTypes" \
             "RequestTypeSlaPolicies" "DepartmentWorkflowSettings" \

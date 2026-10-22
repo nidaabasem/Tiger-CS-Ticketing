@@ -42,7 +42,7 @@ public class CustomerEmailTemplatesTests
             ResolutionStatus: CustomerEmailTemplates.DescribeResolution(ResolutionOutcome.Resolved),
             ResolutionMessage: "Thermostat replaced."));
 
-        Assert.Equal("Your request has been resolved – Ticket TG-CS-20260822-0042", content.Subject);
+        Assert.Equal("Your Ticket #TG-CS-20260822-0042 Has Been Resolved", content.Subject);
         Assert.Contains("Status: Resolved", content.TextBody, StringComparison.Ordinal);
         Assert.Contains("Resolution: Thermostat replaced.", content.TextBody, StringComparison.Ordinal);
         Assert.Contains("Resolved on: 22 August 2026, 09:30 UTC", content.TextBody, StringComparison.Ordinal);
@@ -72,7 +72,7 @@ public class CustomerEmailTemplatesTests
         var closed = CustomerEmailTemplates.TicketClosed(new CustomerEmailTicketModel("TG-CS-20260822-0042", "Ahmed", When));
         var reopened = CustomerEmailTemplates.TicketReopened(new CustomerEmailTicketModel("TG-CS-20260822-0042", "Ahmed", When));
 
-        Assert.Equal("Your request has been closed – Ticket TG-CS-20260822-0042", closed.Subject);
+        Assert.Equal("Your Ticket #TG-CS-20260822-0042 Has Been Closed", closed.Subject);
         Assert.Contains("has now been closed", closed.TextBody, StringComparison.Ordinal);
         Assert.Equal("Your request has been reopened – Ticket TG-CS-20260822-0042", reopened.Subject);
         Assert.Contains("working on it again", reopened.TextBody, StringComparison.Ordinal);
@@ -120,7 +120,7 @@ public class CustomerEmailTemplatesTests
             Assert.Contains("Please do not reply", content.HtmlBody, StringComparison.Ordinal);
             Assert.Contains("Kind regards,", content.TextBody, StringComparison.Ordinal);
             Assert.Contains("Please do not reply", content.TextBody, StringComparison.Ordinal);
-            Assert.Contains("– Ticket TG-CS-20260822-0042", content.Subject, StringComparison.Ordinal);
+            Assert.Contains("TG-CS-20260822-0042", content.Subject, StringComparison.Ordinal);
         }
     }
 }

@@ -25,11 +25,12 @@ public class CustomerEmailSenderTests
         Guid.NewGuid());
 
     private static (CustomerEmailSender Sender, FakeEmailSender Provider, CapturingLogger<CustomerEmailSender> Log) Create(
-        CustomerNotificationPolicy? policy = null)
+        CustomerNotificationPolicy? policy = null, CustomerNotificationModePolicy? mode = null)
     {
         var provider = new FakeEmailSender();
         var log = new CapturingLogger<CustomerEmailSender>();
-        return (new CustomerEmailSender(provider, policy ?? CustomerNotificationPolicy.EnabledDefault, log), provider, log);
+        return (new CustomerEmailSender(
+            provider, policy ?? CustomerNotificationPolicy.EnabledDefault, mode ?? CustomerNotificationModePolicy.ProductionDefault(), log), provider, log);
     }
 
     [Fact]
