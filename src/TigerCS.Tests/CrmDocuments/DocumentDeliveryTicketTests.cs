@@ -57,7 +57,7 @@ public class DocumentDeliveryTicketTests
 
         var deliveries = new FakeCrmDocumentDeliveryRepository();
         var service = new DocumentDeliveryTicketService(
-            new CrmDocumentOptions { Enabled = true }, f.Conversations, f.Tickets, deliveries, f.Lifecycle, f.Audit,
+            new CrmDocumentOptions { Enabled = true }, f.Conversations, f.Tickets, f.Handoffs, f.Interactions, deliveries, f.Lifecycle, f.Audit,
             new CommittingUnitOfWork(deliveries), f.Clock, NullLogger<DocumentDeliveryTicketService>.Instance);
 
         return new Rig { F = f, Deliveries = deliveries, Service = service, Ticket = f.Tickets.All.Single(), ConversationId = conversationId };

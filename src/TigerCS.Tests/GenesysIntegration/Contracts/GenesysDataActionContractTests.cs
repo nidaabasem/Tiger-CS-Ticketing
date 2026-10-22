@@ -129,6 +129,7 @@ public sealed partial class GenesysDataActionContractTests
             ("sent", new CustomerOtpResult(CustomerOtpStatus.CodeSent, ChallengeId: SessionId, MaskedDestination: "a***@g***.com", Channel: "Email")),
             ("sentBySms", new CustomerOtpResult(CustomerOtpStatus.CodeSent, ChallengeId: SessionId, MaskedDestination: "+971******888", Channel: "Sms"))
         ]),
+        new("17", "PATCH", "api/genesys/tickets/{ticketId}", typeof(GenesysTicketUpdateRequest), ["ticketId", "conversationId"], () => [("applied", Applied)]),
         new("16", "POST", "api/genesys/verification/otp/verify", typeof(OtpVerifyRequestDto), ["challengeId", "code"], () =>
         [
             ("verified", new CustomerOtpResult(CustomerOtpStatus.Verified, Session: new VerificationSessionResponseDto(
@@ -188,14 +189,14 @@ public sealed partial class GenesysDataActionContractTests
     // ------------------------------------------------------------------
 
     [Fact]
-    public void FilesAreNumberedUniquelyAndSequentially_00To16_AndEveryOneIsValidJson()
+    public void FilesAreNumberedUniquelyAndSequentially_00To17_AndEveryOneIsValidJson()
     {
         var files = Directory.GetFiles(DataActionsDirectory, "*.json").Select(Path.GetFileName).Select(f => f!).OrderBy(f => f, StringComparer.Ordinal).ToList();
         var numbers = files.Select(f => Regex.Match(f, @"^(\d{2})-[a-z0-9-]+\.json$")).ToList();
 
         Assert.All(numbers, m => Assert.True(m.Success, "File name must be NN-kebab-name.json"));
         Assert.Equal(Enumerable.Range(0, files.Count).Select(n => n.ToString("00")), numbers.Select(m => m.Groups[1].Value));
-        Assert.Equal(17, files.Count); // 00..16: a new action must update this test, the inventory and the route table
+        Assert.Equal(18, files.Count); // 00..17: a new action must update this test, the inventory and the route table
         Assert.Equal(Specs.Select(s => s.Prefix).Order(), files.Skip(1).Select(f => f[..2]).Order());
 
         var names = new List<string>();
@@ -570,7 +571,7 @@ public sealed partial class GenesysDataActionContractTests
     /// <summary>String inputs the DTO reads as a typed value (GUID, date, number), where a hostile string is rightly rejected.</summary>
     private static readonly HashSet<string> TypedStrings = new(StringComparer.Ordinal)
     {
-        "ticketId", "startedAtUtc", "endedAtUtc", "confirmedAtUtc", "verificationSessionId", "challengeId", "crmLeadId", "unitId", "awaiting", "closedByAi"
+        "ticketId", "startedAtUtc", "endedAtUtc", "confirmedAtUtc", "verificationSessionId", "challengeId", "crmLeadId", "unitId", "awaiting", "closedByAi", "humanFollowUpRequired"
     };
 
     private static Dictionary<string, object?> Baseline(JsonElement schemaProperties)
@@ -585,7 +586,7 @@ public sealed partial class GenesysDataActionContractTests
                 "channel" => "Phone",
                 "startedAtUtc" or "endedAtUtc" or "confirmedAtUtc" => "2026-10-08T10:00:00Z",
                 "unitId" => 41230,
-                "awaiting" or "closedByAi" => true,
+                "awaiting" or "closedByAi" or "humanFollowUpRequired" => true,
                 "companyId" => 4,
                 "type" => "Paid",
                 "customerKey" => "ext:Pact:3001",

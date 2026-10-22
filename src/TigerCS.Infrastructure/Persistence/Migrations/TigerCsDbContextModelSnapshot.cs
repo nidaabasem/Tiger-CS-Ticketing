@@ -2789,6 +2789,10 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                         .HasMaxLength(200)
                         .HasColumnType("nvarchar(200)");
 
+                    b.Property<string>("GenesysServiceRequestId")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
                     b.Property<Guid?>("HandledByUserId")
                         .HasColumnType("uniqueidentifier");
 
@@ -2808,6 +2812,9 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                     b.Property<Guid?>("LastCustomerInteractionReportedByEmployeeId")
                         .HasColumnType("uniqueidentifier");
 
+                    b.Property<bool>("RequiresHumanFollowUp")
+                        .HasColumnType("bit");
+
                     b.Property<byte>("Source")
                         .HasColumnType("tinyint");
 
@@ -2821,6 +2828,9 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                     b.HasIndex(new[] { "AwaitingCustomerReplySinceUtc" }, "IX_TicketInteractions_AwaitingCustomerReplySinceUtc")
                         .HasFilter("[AwaitingCustomerReplySinceUtc] IS NOT NULL");
 
+                    b.HasIndex(new[] { "GenesysConversationId" }, "IX_TicketInteractions_GenesysConversationId")
+                        .HasFilter("[GenesysConversationId] IS NOT NULL");
+
                     b.HasIndex(new[] { "HandledByUserId" }, "IX_TicketInteractions_HandledByUserId");
 
                     b.HasIndex(new[] { "LastCustomerInteractionAtUtc" }, "IX_TicketInteractions_LastCustomerInteractionAtUtc")
@@ -2828,7 +2838,7 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
 
                     b.HasIndex(new[] { "TicketId" }, "IX_TicketInteractions_TicketId");
 
-                    b.HasIndex(new[] { "GenesysConversationId" }, "UX_TicketInteractions_GenesysConversationId")
+                    b.HasIndex(new[] { "GenesysConversationId", "GenesysServiceRequestId" }, "UX_TicketInteractions_GenesysConversationId_ServiceRequestId")
                         .IsUnique()
                         .HasFilter("[GenesysConversationId] IS NOT NULL");
 

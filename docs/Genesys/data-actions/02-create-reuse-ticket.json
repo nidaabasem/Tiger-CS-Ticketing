@@ -12,7 +12,7 @@
         "Content-Type": "application/json",
         "Accept": "application/json"
       },
-      "requestTemplate": "{\"conversationId\": \"$esc.jsonString(${input.conversationId})\", \"channel\": \"$esc.jsonString(${input.channel})\", \"customerPhone\": \"$!esc.jsonString($input.customerPhone)\", \"customerName\": \"$!esc.jsonString($input.customerName)\", \"customerEmail\": \"$!esc.jsonString($input.customerEmail)\", \"departmentCode\": \"$!esc.jsonString($input.departmentCode)\", \"queueId\": \"$!esc.jsonString($input.queueId)\", \"queueName\": \"$!esc.jsonString($input.queueName)\", \"agentId\": \"$!esc.jsonString($input.agentId)\", \"agentName\": \"$!esc.jsonString($input.agentName)\", \"calledNumber\": \"$!esc.jsonString($input.calledNumber)\", \"direction\": \"$!esc.jsonString($input.direction)\", \"subject\": \"$!esc.jsonString($input.subject)\", \"towerName\": \"$!esc.jsonString($input.towerName)\", \"unitNumber\": \"$!esc.jsonString($input.unitNumber)\", \"startedAtUtc\": #if(\"$!{input.startedAtUtc}\" == \"\")null#else\"$esc.jsonString(${input.startedAtUtc})\"#end, \"requestType\": {\"name\": \"$!esc.jsonString($input.requestTypeName)\"}}"
+      "requestTemplate": "{\"conversationId\": \"$esc.jsonString(${input.conversationId})\", \"channel\": \"$esc.jsonString(${input.channel})\", \"customerPhone\": \"$!esc.jsonString($input.customerPhone)\", \"customerName\": \"$!esc.jsonString($input.customerName)\", \"customerEmail\": \"$!esc.jsonString($input.customerEmail)\", \"departmentCode\": \"$!esc.jsonString($input.departmentCode)\", \"queueId\": \"$!esc.jsonString($input.queueId)\", \"queueName\": \"$!esc.jsonString($input.queueName)\", \"agentId\": \"$!esc.jsonString($input.agentId)\", \"agentName\": \"$!esc.jsonString($input.agentName)\", \"calledNumber\": \"$!esc.jsonString($input.calledNumber)\", \"direction\": \"$!esc.jsonString($input.direction)\", \"subject\": \"$!esc.jsonString($input.subject)\", \"towerName\": \"$!esc.jsonString($input.towerName)\", \"unitNumber\": \"$!esc.jsonString($input.unitNumber)\", \"startedAtUtc\": #if(\"$!{input.startedAtUtc}\" == \"\")null#else\"$esc.jsonString(${input.startedAtUtc})\"#end, \"requestType\": {\"name\": \"$!esc.jsonString($input.requestTypeName)\"}, \"serviceRequestId\": \"$!esc.jsonString($input.serviceRequestId)\", \"humanFollowUpRequired\": \"$!esc.jsonString($input.humanFollowUpRequired)\"}"
     },
     "response": {
       "translationMap": {
@@ -98,6 +98,14 @@
           "startedAtUtc": {
             "type": "string",
             "description": "ISO-8601 UTC, e.g. ToString(Flow.StartDateTimeUtc). Optional."
+          },
+          "serviceRequestId": {
+            "type": "string",
+            "description": "Optional but REQUIRED for a second request in the same conversation. A stable id YOU choose for ONE distinct service request (e.g. documents, leasing) - the conversationId + serviceRequestId pair is the idempotency key, so each distinct request gets its own ticket and a retry of the same pair returns the same ticket. Omit it and the whole conversation stays one ticket (the old behaviour)."
+          },
+          "humanFollowUpRequired": {
+            "type": "boolean",
+            "description": "Optional. true when this request needs a person (apartment leasing, a complaint). The ticket is then never closed by the chatbot inactivity timers, closedByAi or document delivery - only by an employee in TigerCS. Leave blank for a request the bot completes itself (e.g. sending documents)."
           },
           "requestTypeName": {
             "type": "string",

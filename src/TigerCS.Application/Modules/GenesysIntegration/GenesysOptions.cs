@@ -87,6 +87,16 @@ public sealed class GenesysOptions
     /// </summary>
     public bool AutoRaiseHandoffOnConversationEnd { get; set; }
 
+    /// <summary>
+    /// The code of the department that acts as the <b>safe classification queue</b> (<c>Genesys:ClassificationDepartmentCode</c>, e.g. the
+    /// department whose staff triage Unclassified tickets). Used only when configuration cannot place a Genesys ticket: no department,
+    /// queue mapping or valid request type named one, or a supplied request type is unusable (unmapped intent, retired department, no
+    /// published workflow). The ticket is then created <b>Unclassified</b> in this department for a person to classify, rather than being
+    /// refused (and the customer's request lost) or routed on a guess. Resolved by code against the Departments table — never an id in code.
+    /// Unset (the default) keeps the previous behaviour: an unroutable inquiry or an unusable request type is refused with 422 and nothing is created.
+    /// </summary>
+    public string? ClassificationDepartmentCode { get; set; }
+
     /// <summary>The configured timeout, or null when automatic closure is switched off.</summary>
     public TimeSpan? CustomerInactivityTimeout =>
         CustomerInactivityTimeoutMinutes > 0 ? TimeSpan.FromMinutes(CustomerInactivityTimeoutMinutes) : null;

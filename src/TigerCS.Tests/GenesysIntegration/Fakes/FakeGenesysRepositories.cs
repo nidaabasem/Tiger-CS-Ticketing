@@ -64,7 +64,33 @@ public sealed class FakeGenesysConversationRepository(FakeTicketInteractionRepos
 
     public Task<TicketInteraction?> GetByConversationIdAsync(
         string genesysConversationId, CancellationToken cancellationToken = default) =>
-        Task.FromResult(interactions.All.FirstOrDefault(i => i.GenesysConversationId == genesysConversationId.Trim()));
+        Task.FromResult(
+            interactions.All
+                .Where(i => i.GenesysConversationId == genesysConversationId.Trim())
+                .OrderBy(i => i.GenesysServiceRequestId != null)
+                .ThenBy(i => i.TicketInteractionId)
+                .FirstOrDefault());
+
+    public Task<TicketInteraction?> GetByConversationAndServiceRequestAsync(
+        string genesysConversationId, string? serviceRequestId, CancellationToken cancellationToken = default)
+    {
+        var serviceRequest = string.IsNullOrWhiteSpace(serviceRequestId) ? null : serviceRequestId.Trim();
+        return Task.FromResult(interactions.All.FirstOrDefault(
+            i => i.GenesysConversationId == genesysConversationId.Trim() && i.GenesysServiceRequestId == serviceRequest));
+    }
+
+    public Task<TicketInteraction?> GetByConversationAndTicketAsync(
+        string genesysConversationId, long ticketId, CancellationToken cancellationToken = default) =>
+        Task.FromResult(interactions.All.FirstOrDefault(
+            i => i.GenesysConversationId == genesysConversationId.Trim() && i.TicketId == ticketId));
+
+    public Task<IReadOnlyDictionary<string, IReadOnlyList<long>>> ListInteractionIdsByConversationIdsAsync(
+        IReadOnlyCollection<string> genesysConversationIds, CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyDictionary<string, IReadOnlyList<long>>>(
+            interactions.All
+                .Where(i => i.GenesysConversationId is not null && genesysConversationIds.Contains(i.GenesysConversationId))
+                .GroupBy(i => i.GenesysConversationId!)
+                .ToDictionary(g => g.Key, g => (IReadOnlyList<long>)g.Select(i => i.TicketInteractionId).OrderBy(id => id).ToList()));
 
     public Task<TicketInteraction?> GetByIdAsync(long ticketInteractionId, CancellationToken cancellationToken = default) =>
         Task.FromResult(interactions.All.FirstOrDefault(i => i.TicketInteractionId == ticketInteractionId));

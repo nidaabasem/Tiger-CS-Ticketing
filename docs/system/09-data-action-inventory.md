@@ -30,12 +30,13 @@ Common assumptions: header `Authorization: ${authResponse.token_type} ${authResp
 | 08 | collections-payment-summary | `GET .../collections/customers/by-key/{key}/payment-summary?includeTransactions=false` | `GenesysCollectionsController.cs:107` | success template fixed (was F-02); validated by `GenesysDataActionContractTests` |
 | 09 | collections-payment-transactions | `GET .../by-key/{key}/payment-transactions?companyId&type` | `:135` | matches |
 | 10 | awaiting-customer-reply | PATCH | `:207` | matches; null-field defaults |
-| 11 | send-document-copy | `POST /api/genesys/documents/send-copy` + `Idempotency-Key` | `GenesysDocumentsController.cs:69` | matches; stale description |
+| 11 | send-document-copy | `POST /api/genesys/documents/send-copy` + `Idempotency-Key` | `GenesysDocumentsController.cs:69` | matches; optional `serviceRequestId` input selects the documents ticket of a multi-ticket conversation |
 | 12 | customer-unit-details | `POST /api/genesys/customers/unit-details` | `GenesysController.cs:397` | quoting already correct; not-recorded defaults changed from `0` to sentinels `-999` / `-1` / `-1` (F-03 closed) |
 | 13 | buyer-lookup | `POST /api/genesys/verification/buyer-lookup` | `GenesysVerificationController.cs` `buyer-lookup` | matches; `tel:` rejected (F-09); outputs `availableChannels`/`maskedMobile` added with SMS |
 | 14 | otp-send | `POST .../verification/otp/send` | `otp/send` | matches; inputs `channel`/`language` and output `channel` added with SMS |
 | 15 | otp-resend | `POST .../verification/otp/resend` | `otp/resend` | matches; output `channel` added |
 | 16 | otp-verify | `POST .../verification/otp/verify` | `otp/verify` | matches |
+| 17 | mark-human-follow-up | PATCH `humanFollowUpRequired` | `GenesysController.cs` `UpdateTicket` | new: flags one ticket as human work (no chatbot clock, `closedByAi` or document delivery may close it) |
 
 Not covered by any action (routes exist in code): `agent-context`, `screen-pop`, `GET/POST` collections reminders/candidates/outcomes/outstanding/payments, `POST /api/verification-sessions`, pending-interaction work list, transcript delivery.
 

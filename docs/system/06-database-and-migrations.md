@@ -36,6 +36,7 @@ Campaign preview/export (PR #77) **persists nothing** — there is no campaign t
 |---|---|---|
 | `AddChannels.sql`, `AddGenesysIntegration.sql`, `AddGenesysAgentMappingAndInteractionOwnership.sql`, `ApplyAgentHandoffMigration.sql`, `AddGenesysScreenPopLaunches.sql` | Genesys tables/columns | DB behind the matching migration |
 | `AddExternalCustomerSnapshotToTickets.sql` | External (PACT) customer snapshot on tickets | before PACT-first ticketing |
+| `AddGenesysServiceRequestToTicketInteractions.sql` | `TicketInteractions.GenesysServiceRequestId` + `RequiresHumanFollowUp`; unique index becomes (conversation, service request) | before deploying the multi-ticket-per-conversation build (additive; existing rows unchanged) |
 | `AddCollectionsReminders.sql` | reminder tables | before enabling reminders |
 | `AddChatbotInactivityAndCrmDocumentCopies.sql` | inactivity + document delivery tables | before `BackgroundJobs`/documents |
 | `AddResolutionClosedForCustomerInactivity.sql` | resolution lookup row for inactivity closure | after the previous |

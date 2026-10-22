@@ -143,7 +143,7 @@ public sealed class GenesysRequestTypeClassificationAppService(
             await transaction.CommitAsync(cancellationToken);
         }
 
-        await StandDownAwaitingClassificationWorkAsync(callerEmployeeId, conversationId, routed.RequestTypeName, cancellationToken);
+        await StandDownAwaitingClassificationWorkAsync(callerEmployeeId, ticketId, conversationId, routed.RequestTypeName, cancellationToken);
 
         return new GenesysClassificationResult(
             GenesysClassificationOutcome.Classified, routed.RequestTypeId, routed.RequestTypeName, routed.DepartmentId,
@@ -194,10 +194,10 @@ public sealed class GenesysRequestTypeClassificationAppService(
     }
 
     private async Task StandDownAwaitingClassificationWorkAsync(
-        Guid callerEmployeeId, string conversationId, string requestTypeName, CancellationToken cancellationToken)
+        Guid callerEmployeeId, long ticketId, string conversationId, string requestTypeName, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(conversationId)
-            || await conversationRepository.GetByConversationIdAsync(conversationId.Trim(), cancellationToken) is not { } interaction
+            || await conversationRepository.GetByConversationAndTicketAsync(conversationId.Trim(), ticketId, cancellationToken) is not { } interaction
             || await handoffRepository.GetOpenByInteractionIdAsync(interaction.TicketInteractionId, cancellationToken) is not { } open
             || open.RequestReason?.StartsWith(AwaitingClassificationReason, StringComparison.Ordinal) != true)
         {
@@ -208,7 +208,7 @@ public sealed class GenesysRequestTypeClassificationAppService(
         // down; a customer's own request for a human is left outstanding.
         await agentHandoffAppService.CancelAsync(
             callerEmployeeId,
-            new GenesysHandoffCancellationDto(conversationId.Trim(), $"Request type '{requestTypeName}' was classified."),
+            new GenesysHandoffCancellationDto(conversationId.Trim(), $"Request type '{requestTypeName}' was classified.", ticketId),
             cancellationToken);
     }
 }

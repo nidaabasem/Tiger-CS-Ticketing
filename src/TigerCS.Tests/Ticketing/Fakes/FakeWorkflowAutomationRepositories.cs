@@ -65,7 +65,8 @@ public sealed class FakeTicketInteractionRepository : ITicketInteractionReposito
         // ticket — so the fake must raise the same exception, or that
         // recovery path would never be exercised by a test.
         if (interaction.GenesysConversationId is { } conversationId
-            && _interactions.Any(i => i.GenesysConversationId == conversationId))
+            && _interactions.Any(i => i.GenesysConversationId == conversationId
+                && i.GenesysServiceRequestId == interaction.GenesysServiceRequestId))
         {
             throw new DuplicateWriteException(
                 new InvalidOperationException($"Conversation {conversationId} already has an interaction."));

@@ -60,11 +60,16 @@ public class GenesysController(
 
     /// <summary>Create — or reuse — the one ticket for a Genesys conversation, on any channel.</summary>
     /// <remarks>
-    /// <b>Idempotent on <c>conversationId</c>.</b> The first accepted event
-    /// for a conversation creates a ticket; every retry or duplicate returns
-    /// that same ticket with outcome <c>AlreadyIngested</c> and creates
-    /// nothing. A unique index on the conversation id makes this hold under
-    /// concurrent delivery, not merely under sequential retries.
+    /// <b>Idempotent on <c>conversationId</c> + <c>serviceRequestId</c>.</b> The
+    /// first accepted event for that pair creates a ticket; every retry or
+    /// duplicate returns that same ticket with outcome <c>AlreadyIngested</c>
+    /// and creates nothing. A unique index on the pair makes this hold under
+    /// concurrent delivery, not merely under sequential retries. A conversation
+    /// can carry several distinct service requests (documents, then apartment
+    /// leasing): send a different <c>serviceRequestId</c> for each and each gets
+    /// its own ticket with its own lifecycle. <b>Without a
+    /// <c>serviceRequestId</c> the conversation is one ticket</b>, exactly as
+    /// before — a second request under the same conversation id returns the first ticket.
     ///
     /// <para>
     /// <b>This endpoint means exactly one thing:</b> create or reuse the
@@ -135,13 +140,14 @@ public class GenesysController(
                     result.Ticket.TicketId, result.Ticket.TicketNumber,
                     result.Classification?.Status, result.Classification?.RequestTypeId,
                     result.Ticket.CurrentDepartmentId, result.Classification?.AssignedEmployeeId,
-                    result.Classification?.Detail)),
+                    result.Classification?.Detail, inquiry.ServiceRequestId)),
 
             // The retry answer: 200 rather than 201, same body, no new ticket.
             GenesysIngestionOutcome.AlreadyIngested when result.Ticket is not null => Ok(
                 new GenesysInquiryAcceptedResponse(
                     nameof(GenesysIngestionOutcome.AlreadyIngested), inquiry.ConversationId,
-                    result.Ticket.TicketId, result.Ticket.TicketNumber)),
+                    result.Ticket.TicketId, result.Ticket.TicketNumber,
+                    ServiceRequestId: inquiry.ServiceRequestId)),
 
             GenesysIngestionOutcome.IntegrationDisabled => Problem(
                 type: "https://tigercs.internal/problems/genesys-integration-disabled",

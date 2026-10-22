@@ -38,6 +38,7 @@ namespace TigerCS.Application.Modules.GenesysIntegration.Dto;
 /// <param name="CustomerActive">true = the customer just did something in the conversation (sent a message, answered the bot): restarts the Website/Chatbot inactivity clock at TigerCS's own time. Send it on EVERY inbound customer message. null/false changes nothing.</param>
 /// <param name="ClosedByAi">true = the Genesys AI (voicebot / chatbot) finished the conversation: the ticket is closed (Resolved → Closed, reason "Closed by AI") — only if the AI still owns it. Refused, with a note and nothing changed, when a human is requested/pending/connected, a person owns the ticket, it is a Call Center ticket or it is already closed. null/false changes nothing.</param>
 /// <param name="RequestType">Set when the bot has identified the request type: validated, then applied with its department routing, automatic assignment and SLA policy. Repeating the same one changes nothing; a different one replaces it only while no person has worked the ticket, otherwise it is refused.</param>
+/// <param name="HumanFollowUpRequired">true = this ticket needs a person: stops both chatbot inactivity clocks and forbids the AI and document delivery from closing it. Sticky — only the authorized TigerCS workflow ends it. null/false changes nothing.</param>
 /// <param name="Transcript">Messages of the live conversation, sent as they happen or in batches. Additive and idempotent (de-duplicated on <c>externalMessageId</c>, else sender+time+body); does not end the conversation. The final <c>ended.transcript</c> may repeat them safely.</param>
 public sealed record GenesysTicketUpdateDto(
     string ConversationId,
@@ -52,7 +53,8 @@ public sealed record GenesysTicketUpdateDto(
     GenesysRequestTypeDto? RequestType = null,
     bool? CustomerActive = null,
     bool? ClosedByAi = null,
-    IReadOnlyList<GenesysTranscriptMessageDto>? Transcript = null);
+    IReadOnlyList<GenesysTranscriptMessageDto>? Transcript = null,
+    bool? HumanFollowUpRequired = null);
 
 /// <summary>
 /// The customer's own statement, made during the interaction, that the issue

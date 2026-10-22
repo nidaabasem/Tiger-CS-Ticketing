@@ -58,8 +58,25 @@ public sealed class TicketInteractionQueryAppService(
                 new TicketInteractionHistoryDto(ticketId, []));
         }
 
-        var messagesByInteraction = await conversationRepository.ListMessagesForInteractionsAsync(
-            interactions.Select(i => i.TicketInteractionId).ToList(), cancellationToken);
+        // A Genesys conversation can carry several tickets (one per distinct service request), and Genesys sends the conversation's
+        // messages against whichever ticket it happens to hold. The transcript belongs to the CONVERSATION, so every ticket of it shows the
+        // whole conversation: the messages stored under any sibling interaction are read alongside this ticket's own, in one batched query.
+        var conversationIds = interactions
+            .Select(i => i.GenesysConversationId)
+            .OfType<string>()
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        var siblingIdsByConversation = await conversationRepository.ListInteractionIdsByConversationIdsAsync(conversationIds, cancellationToken);
+
+        var interactionIdsToRead = interactions
+            .Select(i => i.TicketInteractionId)
+            .Concat(siblingIdsByConversation.Values.SelectMany(ids => ids))
+            .Distinct()
+            .ToList();
+        var storedMessages = await conversationRepository.ListMessagesForInteractionsAsync(interactionIdsToRead, cancellationToken);
+        var messagesByInteraction = interactions.ToDictionary(
+            i => i.TicketInteractionId,
+            i => MergeConversationMessages(i, siblingIdsByConversation, storedMessages));
 
         // Channel names come from configuration, resolved by id, so a channel
         // deactivated since the interaction happened still displays its name.
@@ -84,6 +101,7 @@ public sealed class TicketInteractionQueryAppService(
                 interaction,
                 channelNames.GetValueOrDefault(interaction.ChannelId),
                 messagesByInteraction.TryGetValue(interaction.TicketInteractionId, out var messages) ? messages : [],
+                storedMessages.TryGetValue(interaction.TicketInteractionId, out var ownMessages) ? ownMessages : [],
                 handoffsByInteraction.GetValueOrDefault(interaction.TicketInteractionId)))
             // Chronological: Genesys' own start time where it supplied one,
             // otherwise the moment Ticketing recorded the interaction.
@@ -95,9 +113,51 @@ public sealed class TicketInteractionQueryAppService(
             new TicketInteractionHistoryDto(ticketId, items));
     }
 
+    /// <summary>
+    /// The messages of one interaction's conversation: its own plus every sibling interaction's (same Genesys conversation, other tickets),
+    /// one line once — the same message delivered against two tickets is shown once, recognised by Genesys' message id, else by
+    /// sender + time + body — in the order they were said.
+    /// </summary>
+    private static IReadOnlyList<TicketInteractionMessage> MergeConversationMessages(
+        TicketInteraction interaction,
+        IReadOnlyDictionary<string, IReadOnlyList<long>> siblingIdsByConversation,
+        IReadOnlyDictionary<long, IReadOnlyList<TicketInteractionMessage>> storedMessages)
+    {
+        var ids = interaction.GenesysConversationId is { } conversationId
+            && siblingIdsByConversation.TryGetValue(conversationId, out var siblings) && siblings.Count > 1
+                ? siblings.OrderBy(id => id == interaction.TicketInteractionId ? 0 : 1).ThenBy(id => id).ToList()
+                : [interaction.TicketInteractionId];
+
+        var merged = new List<TicketInteractionMessage>();
+        foreach (var id in ids)
+        {
+            if (!storedMessages.TryGetValue(id, out var messages))
+            {
+                continue;
+            }
+
+            foreach (var message in messages.OrderBy(m => m.Sequence))
+            {
+                var duplicate = merged.Any(m =>
+                    message.ExternalMessageId is { } externalId && m.ExternalMessageId is { } otherId
+                        ? string.Equals(externalId, otherId, StringComparison.Ordinal)
+                        : m.Sender == message.Sender && m.SentAtUtc == message.SentAtUtc && string.Equals(m.Body, message.Body, StringComparison.Ordinal));
+                if (!duplicate)
+                {
+                    merged.Add(message);
+                }
+            }
+        }
+
+        // A single interaction keeps its stored order untouched; a merged conversation is ordered by when things were said.
+        return ids.Count == 1
+            ? merged
+            : merged.OrderBy(m => m.SentAtUtc).ThenBy(m => m.TicketInteractionId).ThenBy(m => m.Sequence).ToList();
+    }
+
     private static TicketInteractionDto ToDto(
         TicketInteraction interaction, string? channelName, IReadOnlyList<TicketInteractionMessage> messages,
-        TicketAgentHandoff? handoff) => new(
+        IReadOnlyList<TicketInteractionMessage> ownMessages, TicketAgentHandoff? handoff) => new(
         interaction.TicketInteractionId,
         interaction.IsOriginatingInteraction,
         interaction.Source.ToString(),
@@ -116,9 +176,10 @@ public sealed class TicketInteractionQueryAppService(
         interaction.EndedAtUtc,
         interaction.EndReason,
         interaction.IsEnded ? "Ended" : "Active",
-        messages
-            .OrderBy(m => m.Sequence)
-            .Select(m => new TicketInteractionMessageDto(m.Sequence, m.Sender.ToString(), m.SenderName, m.SentAtUtc, m.Body))
+        // Single-interaction conversations keep their stored sequence number; a merged conversation is renumbered 1..n in display order.
+        messages.Select((m, index) => new TicketInteractionMessageDto(
+                messages.Any(x => x.TicketInteractionId != interaction.TicketInteractionId) ? index + 1 : m.Sequence,
+                m.Sender.ToString(), m.SenderName, m.SentAtUtc, m.Body))
             .ToList(),
         handoff is null
             ? null
@@ -133,7 +194,9 @@ public sealed class TicketInteractionQueryAppService(
                 handoff.ResolvedAtUtc,
                 handoff.ResolutionNote,
                 handoff.Trigger?.ToString()),
-        DescribeHandlingState(interaction, messages, handoff));
+        // Who is handling THIS ticket's interaction is judged on its own messages only: a person answering the conversation under a
+        // sibling ticket does not make this ticket human-handled.
+        DescribeHandlingState(interaction, ownMessages, handoff));
 
     /// <summary>
     /// Who is handling the interaction, from facts only: a person took the

@@ -35,9 +35,12 @@ namespace TigerCS.Domain.Modules.Ticketing;
 /// </para>
 ///
 /// <para>
-/// <b>One Genesys conversation is exactly one interaction, on exactly one
-/// ticket</b> (Genesys integration phase 1). <see cref="GenesysConversationId"/>
-/// is unique across the whole table (filtered unique index), which is the
+/// <b>One Genesys service request is exactly one interaction, on exactly one
+/// ticket.</b> A conversation may carry several distinct service requests
+/// (documents, then leasing), each with its own <see cref="GenesysServiceRequestId"/>
+/// and its own ticket. (<see cref="GenesysConversationId"/>, <see cref="GenesysServiceRequestId"/>)
+/// is unique (filtered unique index) — a conversation whose caller sends no
+/// service request id keeps the original rule of exactly one — which is the
 /// database-level half of "a retried or duplicated Genesys event never
 /// creates a second ticket": the application checks first, and a lost race
 /// surfaces as a unique-constraint violation the caller treats as "already
@@ -66,6 +69,7 @@ public class TicketInteraction
     public const int GenesysAgentUserIdMaxLength = 64;
     public const int GenesysIdMaxLength = 64;
     public const int GenesysNameMaxLength = 200;
+    public const int GenesysServiceRequestIdMaxLength = 64;
 
     public long TicketInteractionId { get; private set; }
     public long TicketId { get; private set; }
@@ -90,6 +94,23 @@ public class TicketInteraction
     public string? CalledNumber { get; private set; }
 
     public string? GenesysConversationId { get; private set; }
+
+    /// <summary>
+    /// Which distinct service request of the Genesys conversation this interaction (and therefore its ticket) belongs to — the caller's own
+    /// identifier (e.g. "documents", "leasing-1"), stored verbatim. Null on every row created before multiple tickets per conversation
+    /// existed and on any conversation whose caller sends none: such a conversation keeps its original "one conversation, one ticket" rule.
+    /// (<see cref="GenesysConversationId"/>, <see cref="GenesysServiceRequestId"/>) is the unique idempotency identity of a Genesys ticket.
+    /// </summary>
+    public string? GenesysServiceRequestId { get; private set; }
+
+    /// <summary>
+    /// The ticket behind this interaction needs a person to work it (a leasing request, a complaint — anything the AI cannot complete).
+    /// While true, no chatbot clock may close the ticket: neither inactivity rule tracks it, the AI cannot close it and document delivery
+    /// leaves it alone. It ends only through the authorized TigerCS workflow (resolve / close by an employee). Distinct from an open
+    /// <see cref="TicketAgentHandoff"/> (the queue of human work): this records that the ticket is human work at all.
+    /// </summary>
+    public bool RequiresHumanFollowUp { get; private set; }
+
     public string? GenesysQueueId { get; private set; }
     public string? GenesysQueueName { get; private set; }
     public string? GenesysAgentId { get; private set; }
@@ -220,7 +241,9 @@ public class TicketInteraction
         DateTime createdAtUtc,
         bool isOriginatingInteraction = false,
         string? customerName = null,
-        string? customerEmail = null)
+        string? customerEmail = null,
+        string? genesysServiceRequestId = null,
+        bool requiresHumanFollowUp = false)
     {
         if (string.IsNullOrWhiteSpace(genesysConversationId))
         {
@@ -241,8 +264,25 @@ public class TicketInteraction
             InteractionStartedAtUtc = interactionStartedAtUtc,
             Direction = direction,
             CustomerName = Truncate(customerName, CustomerNameMaxLength),
-            CustomerEmail = Truncate(customerEmail, CustomerEmailMaxLength)
+            CustomerEmail = Truncate(customerEmail, CustomerEmailMaxLength),
+            GenesysServiceRequestId = Truncate(genesysServiceRequestId, GenesysServiceRequestIdMaxLength),
+            RequiresHumanFollowUp = requiresHumanFollowUp
         };
+    }
+
+    /// <summary>
+    /// Marks the ticket as human work: from now on no chatbot clock or automatic completion may close it. Stops both inactivity clocks.
+    /// Idempotent; returns true when this call changed anything. It is never undone by Genesys — a person resolves or closes the ticket.
+    /// </summary>
+    public bool MarkRequiresHumanFollowUp()
+    {
+        var changed = !RequiresHumanFollowUp || AwaitingCustomerReplySinceUtc is not null || LastCustomerInteractionAtUtc is not null;
+        RequiresHumanFollowUp = true;
+        AwaitingCustomerReplySinceUtc = null;
+        AwaitingCustomerReplyReportedByEmployeeId = null;
+        LastCustomerInteractionAtUtc = null;
+        LastCustomerInteractionReportedByEmployeeId = null;
+        return changed;
     }
 
     /// <summary>
@@ -291,7 +331,7 @@ public class TicketInteraction
             throw new ArgumentException("ReportedByEmployeeId must be a real integration account.", nameof(reportedByEmployeeId));
         }
 
-        if (IsEnded || InactivityClosedAtUtc is not null || AwaitingCustomerReplySinceUtc is not null)
+        if (IsEnded || RequiresHumanFollowUp || InactivityClosedAtUtc is not null || AwaitingCustomerReplySinceUtc is not null)
         {
             return false;
         }
@@ -325,7 +365,7 @@ public class TicketInteraction
             throw new ArgumentException("ReportedByEmployeeId must be a real integration account.", nameof(reportedByEmployeeId));
         }
 
-        if (IsEnded || InactivityClosedAtUtc is not null || (LastCustomerInteractionAtUtc is { } last && nowUtc <= last))
+        if (IsEnded || RequiresHumanFollowUp || InactivityClosedAtUtc is not null || (LastCustomerInteractionAtUtc is { } last && nowUtc <= last))
         {
             return false;
         }
@@ -354,11 +394,11 @@ public class TicketInteraction
 
     /// <summary>True when the customer has been silent for strictly more than <paramref name="timeout"/> since <see cref="LastCustomerInteractionAtUtc"/> and the conversation is still live.</summary>
     public bool IsCustomerInactive(DateTime nowUtc, TimeSpan timeout) =>
-        LastCustomerInteractionAtUtc is { } last && InactivityClosedAtUtc is null && EndedAtUtc is null && nowUtc - last > timeout;
+        LastCustomerInteractionAtUtc is { } last && !RequiresHumanFollowUp && InactivityClosedAtUtc is null && EndedAtUtc is null && nowUtc - last > timeout;
 
     /// <summary>True when the timer has been running for strictly longer than <paramref name="timeout"/> at <paramref name="nowUtc"/> — "more than 5 minutes", not "5 minutes or more".</summary>
     public bool IsInactivityTimeoutDue(DateTime nowUtc, TimeSpan timeout) =>
-        AwaitingCustomerReplySinceUtc is { } since && InactivityClosedAtUtc is null && nowUtc - since > timeout;
+        AwaitingCustomerReplySinceUtc is { } since && !RequiresHumanFollowUp && InactivityClosedAtUtc is null && nowUtc - since > timeout;
 
     /// <summary>Records that the timeout closed the ticket and stops the timer. Write-once.</summary>
     public void RecordInactivityClosure(DateTime nowUtc)

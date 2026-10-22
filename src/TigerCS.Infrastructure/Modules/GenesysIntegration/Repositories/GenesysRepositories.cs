@@ -45,9 +45,10 @@ public sealed class GenesysQueueMappingRepository(TigerCsDbContext dbContext) : 
 
 /// <summary>
 /// Conversation-scoped reads/writes over the interaction and its transcript.
-/// The conversation lookup relies on the unique filtered index on
-/// <c>TicketInteractions.GenesysConversationId</c> — that index is what makes
-/// "one conversation, one interaction" a database fact rather than an
+/// The unique filtered index on <c>TicketInteractions (GenesysConversationId,
+/// GenesysServiceRequestId)</c> is what makes "one service request, one
+/// interaction" (and, for a caller that sends no service request id, "one
+/// conversation, one interaction") a database fact rather than an
 /// assumption this repository would otherwise be making.
 /// </summary>
 public sealed class GenesysConversationRepository(TigerCsDbContext dbContext) : IGenesysConversationRepository
@@ -56,8 +57,49 @@ public sealed class GenesysConversationRepository(TigerCsDbContext dbContext) : 
         string genesysConversationId, CancellationToken cancellationToken = default)
     {
         var value = genesysConversationId.Trim();
+        return dbContext.TicketInteractions
+            .Where(i => i.GenesysConversationId == value)
+            .OrderBy(i => i.GenesysServiceRequestId != null)
+            .ThenBy(i => i.TicketInteractionId)
+            .FirstOrDefaultAsync(cancellationToken);
+    }
+
+    public Task<TicketInteraction?> GetByConversationAndServiceRequestAsync(
+        string genesysConversationId, string? serviceRequestId, CancellationToken cancellationToken = default)
+    {
+        var conversation = genesysConversationId.Trim();
+        var serviceRequest = string.IsNullOrWhiteSpace(serviceRequestId) ? null : serviceRequestId.Trim();
         return dbContext.TicketInteractions.FirstOrDefaultAsync(
-            i => i.GenesysConversationId == value, cancellationToken);
+            i => i.GenesysConversationId == conversation && i.GenesysServiceRequestId == serviceRequest, cancellationToken);
+    }
+
+    public Task<TicketInteraction?> GetByConversationAndTicketAsync(
+        string genesysConversationId, long ticketId, CancellationToken cancellationToken = default)
+    {
+        var conversation = genesysConversationId.Trim();
+        return dbContext.TicketInteractions
+            .Where(i => i.GenesysConversationId == conversation && i.TicketId == ticketId)
+            .OrderBy(i => i.TicketInteractionId)
+            .FirstOrDefaultAsync(cancellationToken);
+    }
+
+    public async Task<IReadOnlyDictionary<string, IReadOnlyList<long>>> ListInteractionIdsByConversationIdsAsync(
+        IReadOnlyCollection<string> genesysConversationIds, CancellationToken cancellationToken = default)
+    {
+        if (genesysConversationIds.Count == 0)
+        {
+            return new Dictionary<string, IReadOnlyList<long>>();
+        }
+
+        var rows = await dbContext.TicketInteractions
+            .AsNoTracking()
+            .Where(i => i.GenesysConversationId != null && genesysConversationIds.Contains(i.GenesysConversationId))
+            .Select(i => new { ConversationId = i.GenesysConversationId!, i.TicketInteractionId })
+            .ToListAsync(cancellationToken);
+
+        return rows
+            .GroupBy(r => r.ConversationId)
+            .ToDictionary(g => g.Key, g => (IReadOnlyList<long>)g.Select(r => r.TicketInteractionId).OrderBy(id => id).ToList());
     }
 
     public Task<TicketInteraction?> GetByIdAsync(long ticketInteractionId, CancellationToken cancellationToken = default) =>
