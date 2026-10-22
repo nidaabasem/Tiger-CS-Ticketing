@@ -51,3 +51,13 @@
     .campaign-search { flex-direction: column; align-items: stretch; }
     .campaign-search .field-input { max-width: none; }
 }
+
+/* Count lines: the explanation sits under each figure instead of wrapping beside it */
+.campaign-totals li { display: flex; flex-direction: column; min-width: 0; }
+.campaign-totals li .receivables-meta { display: block; }
+.campaign-advanced > summary { list-style: none; }
+.campaign-advanced > summary::before { content: "▸"; display: inline-block; width: 1em; transition: transform .15s; }
+.campaign-advanced[open] > summary::before { transform: rotate(90deg); }
+.campaign-advanced > summary::-webkit-details-marker { display: none; }
+.campaign-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); margin: 0 0 var(--space-3); }
+.campaign-actions .receivables-meta { flex: 1 1 260px; min-width: 0; }

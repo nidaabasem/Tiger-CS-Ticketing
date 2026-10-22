@@ -157,8 +157,13 @@ public sealed class CampaignsModel(CollectionsApiClient api, Microsoft.Extension
     public string? ExportReviewProblem =>
         Report is not { } report ? "Preview customers first."
         : !report.CanExportReview ? "Your account does not have permission to export campaign lists."
-        : report.Snapshot is { IsReady: false } snapshot ? $"{snapshot.ReadyProblem ?? "The receivables data is not ready."} Reload the data, then export."
+        : report.Snapshot is { IsReady: false } snapshot ? ExportDataProblem(snapshot)
         : null;
+
+    // Stale data needs a reload; a coverage gap's own message already says to load the missing data.
+    private static string ExportDataProblem(TigerCS.Application.Modules.Collections.Dto.SnapshotStatusDto snapshot) =>
+        snapshot.ReadyProblem is not { } problem ? "The receivables data is not ready. Reload the data, then export."
+        : snapshot.IsFresh ? problem : $"{problem} Reload the data, then export.";
 
     /// <summary>Plain-language reasons the eligible customers are not Ready: the report-wide gates first, then the per-customer reasons found on the page shown.</summary>
     public IReadOnlyList<string> NotReadyReasons()

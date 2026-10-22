@@ -52,6 +52,15 @@ public sealed class CollectionsCampaignReadinessTests
     }
 
     [Fact]
+    public async Task ReviewExport_Reason_NamesTheCoverageGapOnce_AndTheStaleAgeWithAReloadHint()
+    {
+        var gap = Regex.Match(await Results(new FakeCollectionsApi { Covered = false }), "data-export-review-reason[^>]*>(.*?)</span>", RegexOptions.Singleline).Groups[1].Value;
+        Assert.Contains("not fully loaded", gap); Assert.Single(Regex.Matches(gap, "Load the missing data")); Assert.DoesNotContain("Reload the data", gap);
+        var stale = Regex.Match(await Results(new FakeCollectionsApi { Stale = true }), "data-export-review-reason[^>]*>(.*?)</span>", RegexOptions.Singleline).Groups[1].Value;
+        Assert.Contains("300 minutes old (limit 90)", stale); Assert.EndsWith("Reload the data, then export.", stale);
+    }
+
+    [Fact]
     public async Task Counts_AreLabelledEligibleReadyAndNeedsReview_AndAddUp()
     {
         var needsReview = await Results(new FakeCollectionsApi());                          // 1 listed, eligible, not ready
