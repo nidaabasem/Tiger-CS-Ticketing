@@ -218,11 +218,12 @@ public sealed class CollectionsCampaignAppServiceTests
         var h = new Harness(); h.Source.Items.Add(Row(tenant: "3009") with { DueDate = new(2026, 11, 5) });   // next month: never read, never listed
         var current = (await h.Service.PreviewAsync(h.Manager, "CurrentMonthReminder", new(2026, 10, 8))).Value!;
         Assert.Empty(current.Items);                        // next month only: not listed at all
-        h.Source.Items.Add(Row(tenant: "3002", day: 25));   // ONLY a coming day of the current month (today is 14 Oct): shown as Due once a unit is a candidate, but alone it is NOT one
-        Assert.All((await h.Service.PreviewAsync(h.Manager, "CurrentMonthReminder", new(2026, 10, 8))).Value!.Items, i => Assert.Equal("NotEligible", i.Status));   // listed (it is Due), but not a send candidate
-        h.Source.Items.Add(Row(tenant: "3002", day: 10));   // an instalment up to today makes the unit a candidate; the coming day then counts in Due
+        h.Source.Items.Add(Row(tenant: "3002", day: 25));   // ONLY a coming day of the current month (today is 14 Oct): Due, and a candidate of the whole-month stage (the same rule Review applies)
+        var coming = Assert.Single((await h.Service.PreviewAsync(h.Manager, "CurrentMonthReminder", new(2026, 10, 8))).Value!.Items);
+        Assert.NotEqual("NotEligible", coming.Status); Assert.Equal(500m, coming.Amount);
+        h.Source.Items.Add(Row(tenant: "3002", day: 10));
         var item = Assert.Single((await h.Service.PreviewAsync(h.Manager, "CurrentMonthReminder", new(2026, 10, 8))).Value!.Items);
-        Assert.Equal(("3002", 1000m, 0m, 500m), (item.TenantId, item.DueAmount, item.OverdueAmount, item.Amount));
+        Assert.Equal(("3002", 1000m, 0m, 1000m), (item.TenantId, item.DueAmount, item.OverdueAmount, item.Amount));
         var overdue = (await h.Service.PreviewAsync(h.Manager, "OverdueReminder", new(2026, 10, 8))).Value!;
         Assert.All(overdue.Items, i => Assert.Equal("NotEligible", i.Status));   // listed (it is Due), never an Overdue candidate
     }

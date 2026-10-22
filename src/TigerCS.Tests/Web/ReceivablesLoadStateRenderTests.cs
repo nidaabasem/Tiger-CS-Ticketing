@@ -74,4 +74,19 @@ public sealed class ReceivablesLoadStateRenderTests
             Assert.True(html.IndexOf("receivables-load-monitor.js", StringComparison.Ordinal) is var m and > 0 && m < html.IndexOf("/js/receivables.js", StringComparison.Ordinal), page);
         }
     }
+
+    [Fact]
+    public async Task WhenNoScheduledRefreshRuns_AStaleListSaysSo_InsteadOfImplyingAnAutomaticRefresh()
+    {
+        var api = new FakeCollectionsApi { Stale = true, ScheduleOff = true };
+        using var factory = CollectionsWebHost.Factory(api); using var client = factory.CreateClient();
+        var html = await (await client.GetAsync("/Collections/Receivables?handler=Results")).Content.ReadAsStringAsync();
+        Assert.Contains("data-refresh-schedule", html);
+        Assert.Contains("Scheduled refresh is OFF", html);
+        var json = await (await client.GetAsync("/Collections/Receivables?handler=Status")).Content.ReadAsStringAsync();
+        Assert.Contains("\"scheduledRefresh\":false", json);
+        // ... and nothing is said when the schedule is simply unknown / on.
+        using var plain = CollectionsWebHost.Factory(new FakeCollectionsApi { Stale = true }); using var plainClient = plain.CreateClient();
+        Assert.DoesNotContain("data-refresh-schedule", await (await plainClient.GetAsync("/Collections/Receivables?handler=Results")).Content.ReadAsStringAsync());
+    }
 }

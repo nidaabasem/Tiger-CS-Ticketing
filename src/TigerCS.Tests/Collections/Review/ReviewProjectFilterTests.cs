@@ -134,20 +134,22 @@ public sealed class ReviewProjectFilterTests
     }
 
     /// <summary>
-    /// KNOWN DIFFERENCE, pinned so it is visible and cannot change unnoticed: an instalment due later in the CURRENT month (e.g. 20 October when today is 14 October) is a
-    /// stage row for Review (its stage window is the whole month and it reads to month end) but not for Campaigns (eligibility ends at today). Both rules predate this work and are
-    /// unchanged; which one is intended is a business decision. Every other combination in the tests above agrees.
+    /// An instalment due later in the CURRENT month (20 October when today is 14 October) was the one pinned difference between Campaigns and Review. Both now apply the stage window
+    /// (the whole month for Current month / Follow up) through the same <c>CollectionsCampaignPolicy</c> call, so it is eligible in both. The broader matrix is in
+    /// <c>CampaignReviewEligibilityParityTests</c>.
     /// </summary>
     [Fact]
-    public async Task KnownDifference_AnInstalmentDueLaterThisMonth_IsReviewEligible_ButNotCampaignEligible()
+    public async Task AnInstalmentDueLaterThisMonth_IsEligibleInBothCampaignsAndReview()
     {
         using var h = await SeededAsync(day: 20);
         var campaigns = new CollectionsCampaignAppService(h.Options, h.Campaign, h.Sql, new(h.Options, new FakeDepartmentRepository()),
             new(h.Options, h.Time), h.Source, NullLogger<CollectionsCampaignAppService>.Instance);
         var preview = (await campaigns.PreviewAsync(h.Manager, "CurrentMonthReminder", towerId: 7, minTotal: 0m, paymentStatus: "Due")).Value!;
-        Assert.Equal(2, preview.TotalCount);                                         // listed (they are Due) ...
-        Assert.All(preview.Items, i => Assert.Equal("NotEligible", i.Status));      // ... but not eligible today
-        Assert.Equal(0m, preview.EligibleTotalAmount);
-        Assert.Equal(2, (await PageAsync(h, new ReviewFilter(TowerId: 7, ReminderType: "CurrentMonth", PaymentStatus: "All"))).Items.Count);
+        Assert.Equal(2, preview.TotalCount);
+        Assert.All(preview.Items, i => Assert.NotEqual("NotEligible", i.Status));
+        Assert.Equal(500m, preview.EligibleTotalAmount);                                                      // 200 + 300
+        var review = await PageAsync(h, new ReviewFilter(TowerId: 7, ReminderType: "CurrentMonth", PaymentStatus: "All"));
+        Assert.Equal(preview.Items.Select(i => i.UnitCode).Order(), review.Items.Select(r => r.UnitCode).Order());
+        Assert.Equal(preview.EligibleTotalAmount, review.Items.Sum(r => r.RemainingAmount ?? 0m));
     }
 }

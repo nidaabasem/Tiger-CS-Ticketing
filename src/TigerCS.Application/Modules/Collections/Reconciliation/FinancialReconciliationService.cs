@@ -10,7 +10,8 @@ namespace TigerCS.Application.Modules.Collections.Reconciliation;
 /// Reconciles the local receivables snapshot (what the pages show and what an approval is built from) with a FRESH, direct read of the same configured PACT procedure, per company,
 /// unit by unit and instalment by instalment (<see cref="FinancialReconciler"/>). It is started only on request (never by a page view), one at a time, with a cooldown.
 /// A run that cannot complete (PACT unreachable, snapshot not fresh, snapshot republished during the run) is an <c>Error</c> - missing evidence, never a "pass" and never a finding.
-/// It proves the snapshot equals the procedure's current output; it does NOT replace the human sign-off that the procedure itself is right against PACT's own ledger.
+/// BASIS (<see cref="ReconciliationBasis"/>): both sides are the output of the SAME PACT procedure (the snapshot via the refresh job's linked-server call, the other side via a direct call), so
+/// this is a SNAPSHOT-CONSISTENCY check, not an independent ledger reconciliation. It never sets or implies the human sign-off, which remains mandatory in <see cref="SourceGate"/>.
 /// </summary>
 public sealed class FinancialReconciliationService(
     CollectionsOptions options, CollectionsCampaignOptions campaignOptions, PactReceivablesOptions sourceOptions,
@@ -132,6 +133,6 @@ public sealed class FinancialReconciliationService(
         logger.LogInformation("Reconciliation run {RunId} company {CompanyId} {Status} in {ElapsedMs:F0} ms: snapshot {SnapshotLines} lines / {SnapshotTotal:N2}, PACT {SourceLines} lines / {SourceTotal:N2}, {Mismatched} unit(s) differ.",
             run.RunId, company, comparison.Matches ? "Passed" : "Failed", Stopwatch.GetElapsedTime(t0).TotalMilliseconds, comparison.SnapshotLines, comparison.SnapshotTotal, comparison.SourceLines, comparison.SourceTotal, comparison.MismatchedUnits);
         return new(company, ReceivablesSnapshotStatusBuilder.CompanyName(company), comparison.Matches ? ReconciliationStates.Passed : ReconciliationStates.Failed, message,
-            started, clock.UtcNow, state.LastSuccessUtc, directSource.ProcedureLabel(company), comparison);
+            started, clock.UtcNow, state.LastSuccessUtc, directSource.ProcedureLabel(company), comparison, ReconciliationBasis.SnapshotSide(company));
     }
 }

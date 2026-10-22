@@ -33,6 +33,19 @@ public sealed class ReconciliationRenderTests
     }
 
     [Fact]
+    public async Task ThePageSaysPlainly_ThatMatchingReadsOfOneProcedureAreNotAnIndependentVerification()
+    {
+        using var factory = CollectionsWebHost.Factory(new FakeCollectionsApi { Reconciliation = Failed() }); using var client = factory.CreateClient();
+        var html = await (await client.GetAsync("/Collections/Reconciliation")).Content.ReadAsStringAsync();
+        Assert.Contains("data-reconciliation-basis", html);
+        Assert.Contains("Snapshot consistency", html);
+        Assert.Contains("Ledger correctness", html);
+        Assert.Contains("not</em> an independent financial verification", html);
+        Assert.Contains("usp_CollectionsRcv_Refresh", html);                  // names the snapshot side
+        Assert.Contains("dbo.p4AccountReceivables", html);                    // names the compared side
+    }
+
+    [Fact]
     public async Task NeverRun_IsShownAsMissingEvidence_NotAsADataProblem()
     {
         using var factory = CollectionsWebHost.Factory(new FakeCollectionsApi()); using var client = factory.CreateClient();

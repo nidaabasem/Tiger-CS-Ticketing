@@ -356,13 +356,13 @@ public sealed class CollectionsCampaignVerificationTests
     {
         var h = new CollectionsCampaignAppServiceTests.Harness();
         h.Campaign.FinancialSourceValidated = true;
-        // 3001: an instalment up to today -> eligible for the current-month stage. 3002: ONLY a coming day of the month -> listed (it is Due) but not eligible.
-        h.Source.Items.AddRange([R(D(2026, 10, 10), 500m, "3001", 101), R(D(2026, 10, 25), 700m, "3002", 102)]);
+        // 3001: an instalment up to today -> eligible for the current-month stage. 3002: ONLY a previous-month instalment -> listed (it is Overdue) but not eligible for THIS stage.
+        h.Source.Items.AddRange([R(D(2026, 10, 10), 500m, "3001", 101), R(D(2026, 9, 25), 700m, "3002", 102)]);
 
         var preview = (await h.Service.PreviewAsync(h.Manager, "CurrentMonthReminder", new(2026, 10, 14), minTotal: null)).Value!;
         Assert.Equal(["3001", "3002"], preview.Items.Select(c => c.TenantId).Order());
         var notEligible = preview.Items.Single(c => c.TenantId == "3002");
-        Assert.Equal(("NotEligible", 700m, 0m), (notEligible.Status, notEligible.DueAmount, notEligible.OverdueAmount));
+        Assert.Equal(("NotEligible", 0m, 700m), (notEligible.Status, notEligible.DueAmount, notEligible.OverdueAmount));
         Assert.Equal(1, preview.NotEligibleCount);
 
         var review = (await h.Service.ExportAsync(h.Manager, "CurrentMonthReminder", "review", new(2026, 10, 14), minTotal: null)).Value!;

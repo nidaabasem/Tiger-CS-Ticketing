@@ -137,10 +137,10 @@ public sealed class DueMonthRuleTests
         var item = Assert.Single((await h.Service.PreviewAsync(h.Manager, "CurrentMonthReminder", minTotal: null)).Value!.Items);
         Assert.Equal((900m, 100m, 1000m), (item.DueAmount, item.OverdueAmount, item.TotalAmount));
         Assert.Equal(new DateOnly(2026, 10, 31), h.Source.LastRequest!.ThroughDate);
-        Assert.Equal(500m, item.Amount);                                                                 // the stage amount: 200 + 300 (up to today); the coming 400 only widens Due
+        Assert.Equal(900m, item.Amount);                                                                 // the stage amount: 200 + 300 + 400, all of October (the 400 on the 31st is a coming day of the stage month)
         var csv = (await h.Service.ExportAsync(h.Manager, "CurrentMonthReminder", "review", minTotal: null)).Value!.Csv;
         Assert.DoesNotContain("800", csv);                                                               // the 1 Nov instalment is not part of the send data
-        Assert.Contains("\"500.00\"", csv);                                                              // the stage amount: the October instalments up to today (200 + 300)
+        Assert.Contains("\"900.00\"", csv);                                                              // the stage amount: all October instalments (200 + 300 + 400)
     }
 
     [Fact]
@@ -167,7 +167,7 @@ public sealed class DueMonthRuleTests
         var preview = (await h.Service.PreviewAsync(h.Manager, "CurrentMonthReminder", minTotal: null)).Value!;
         var item = Assert.Single(preview.Items);
         Assert.Equal(("A", 650m, 600m, 1250m), (item.TenantId, item.DueAmount, item.OverdueAmount, item.TotalAmount));
-        Assert.Equal(250m, item.Amount);
+        Assert.Equal(650m, item.Amount);                                                                  // 400 (25 Oct) + 250 (8 Oct): the stage month; the September 600 is Overdue and not in this stage
     }
 
     [Fact]
@@ -215,16 +215,19 @@ public sealed class DueMonthRuleTests
     }
 
     [Fact]
-    public async Task Campaigns_WideningTheAmountsToTheMonthEnd_NeverWidensEligibilityOrTheStageAmount()
+    public async Task Campaigns_AComingDayOfThisMonth_IsEligibleOnlyForTheWholeMonthStages_LikeReview()
     {
         var h = Campaigns();   // today = 14 Oct 2026
         h.Source.Items.Add(Pay("A", 1, new(2026, 10, 28), 500m, "O28"));
-        foreach (var stage in new[] { "CurrentMonthReminder", "FollowUpReminder", "OverdueReminder", "LegalNotice", "LegalReferral" })
-            Assert.All((await h.Service.PreviewAsync(h.Manager, stage, minTotal: null)).Value!.Items, i => { Assert.Equal("NotEligible", i.Status); Assert.Equal(500m, i.DueAmount); });   // ONLY a coming day: listed with its Due, a candidate for no stage (as before)
+        // The stage window of Current-month and Follow-up is the whole month, so a coming day qualifies for them; the Overdue / Legal stages look at older months and are unaffected.
+        foreach (var stage in new[] { "CurrentMonthReminder", "FollowUpReminder" })
+            Assert.All((await h.Service.PreviewAsync(h.Manager, stage, minTotal: null)).Value!.Items, i => { Assert.NotEqual("NotEligible", i.Status); Assert.Equal((500m, 500m), (i.DueAmount, i.Amount ?? 0m)); });
+        foreach (var stage in new[] { "OverdueReminder", "LegalNotice", "LegalReferral" })
+            Assert.All((await h.Service.PreviewAsync(h.Manager, stage, minTotal: null)).Value!.Items, i => { Assert.Equal("NotEligible", i.Status); Assert.Equal(500m, i.DueAmount); });
         h.Source.Items.Add(Pay("A", 1, new(2026, 10, 9), 100m, "O09"));
         var item = Assert.Single((await h.Service.PreviewAsync(h.Manager, "CurrentMonthReminder", minTotal: null)).Value!.Items);
-        Assert.Equal(100m, item.Amount);                                                                  // the stage amount: only the 9 Oct instalment (up to today)
-        Assert.Equal((600m, 0m, 600m), (item.DueAmount, item.OverdueAmount, item.TotalAmount));          // the shown Due includes the coming 28th
+        Assert.Equal(600m, item.Amount);                                                                  // the stage amount: 9 Oct and 28 Oct, the whole stage month
+        Assert.Equal((600m, 0m, 600m), (item.DueAmount, item.OverdueAmount, item.TotalAmount));
     }
 
     [Fact]

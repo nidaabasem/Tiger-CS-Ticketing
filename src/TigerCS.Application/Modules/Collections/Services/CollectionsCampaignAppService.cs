@@ -304,9 +304,11 @@ public sealed class CollectionsCampaignAppService(
         if (rows.Any(r => r.CompanyId is not (4 or 32) || string.IsNullOrWhiteSpace(r.TenantId)))
             throw new InvalidDataException("PACT returned a receivable without a valid company/customer identity.");
         // The originals can repeat one instalment under different apartments of the same tenant.
-        // ELIGIBILITY ends where it always did - at the earlier of To and TODAY - even though the READ scope now reaches the end of the current month. The days of the month still
-        // to come feed only the Due / Total figures; they never make a unit a candidate, never change a stage amount, flag or review reason, and never move a reminder.
-        var eligibleEnd = today is { } t0 && t0 < to ? t0 : to;
+        // ELIGIBILITY is decided by the stage rule alone (CollectionsCampaignPolicy.StageRange via Evaluate/Qualifying) - the SAME call Review makes - over the rows of the eligibility
+        // scope [eligibleStart, to]. There is deliberately no extra "up to today" cut here any more: for the Current-month and Follow-up stages the stage window is the whole preview month,
+        // so an instalment due later this month is eligible here exactly as it is in Review and in the Genesys upload (which sends the Review amounts). The read window `to` is already
+        // clamped to the end of the current month, so nothing from the next month on can enter.
+        var eligibleEnd = to;
         var eligibleRows = rows.Where(r => DateOnly.FromDateTime(r.DueDate) >= eligibleStart && DateOnly.FromDateTime(r.DueDate) <= eligibleEnd).ToList();
         var ambiguousTenants = eligibleRows.GroupBy(r => (r.CompanyId, Tenant: r.TenantId.Trim()))
             .Where(g => g.GroupBy(r => DateOnly.FromDateTime(r.DueDate))

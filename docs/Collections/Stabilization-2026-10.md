@@ -51,13 +51,13 @@ Root cause of the banner *"The financial source has not been reconciled against 
 
 What was built (fail-closed; nothing is bypassed or auto-approved):
 * One gate definition `SourceGate` used by Campaigns preview, stored review data and approval: **sign-off recorded + procedure unchanged + recent passing automated reconciliation for both companies** (`Collections:Campaigns:RequireAutomatedReconciliation`, default true; evidence max age 24 h).
-* `FinancialReconciliationService`: compares the local snapshot with a **fresh direct read of the same configured PACT procedure** (`PactSqlReceivablesSource`), per unit and per instalment, same validity rules, same window, Dubai-month Due/Overdue buckets, tolerance AED 0.01. Differences: `MissingInSnapshot`, `MissingInSource`, `AmountMismatch`, `DueDateMismatch` (flags instalments that are Due on one side and Overdue on the other).
+* `FinancialReconciliationService`: compares the local snapshot with a **fresh direct read of the same PACT procedure the snapshot refresh calls** (`p4/p32AccountReceivables`, no suffix), per unit and per instalment, same validity rules, same window, Dubai-month Due/Overdue buckets, tolerance AED 0.01. Differences: `MissingInSnapshot`, `MissingInSource`, `AmountMismatch`, `DueDateMismatch` (flags instalments that are Due on one side and Overdue on the other).
 * States: `Passed`, `Failed` (real differences, units listed), `Error` (could not complete: PACT unreachable, snapshot not fresh (>30 min), refresh running, snapshot republished meanwhile – **missing evidence, not a finding**), `NotRun`, `Expired`.
 * Started only by an explicit POST (`/api/collections/reconciliation/run`, permission *send reminders*), single-flight plus 2-minute cooldown; page views and polls never read PACT. UI: `/Collections/Reconciliation` (gate reason, per-company result, unit table), linked from the Campaigns banner.
 * History is in memory by design: after a restart there is no evidence and the gate stays closed until a run is made.
 
 Limits that remain (cannot be closed from this repository):
-* The comparison proves *snapshot = what the configured procedure returns now*. It does **not** prove the procedure agrees with PACT's own ledger tables; that is what the human sign-off (`FinancialSourceValidated` + `ReconciliationReference`) attests and the code still requires it.
+* The comparison is a **snapshot-consistency check** (see §R2.3): both sides are the output of the same procedure, so it proves the snapshot is a faithful, current copy and nothing more. It is **not** an independent ledger reconciliation; that is what the human sign-off (`FinancialSourceValidated` + `ReconciliationReference`) attests and the code still requires it.
 * Direct PACT read is bounded by `CollectionsSource:PactReceivables:CommandTimeoutSeconds` (clamped to 300 s). If the Dubai procedure needs longer the run ends as `Error` (timeout) – never as a pass.
 * Therefore **the 58-customer UAT list will stay "Needs review" until**: (1) someone runs the reconciliation on a fresh snapshot and it passes (or its listed differences are explained), and (2) an authorised person records the sign-off in configuration. I did not and will not set the flag.
 
@@ -72,7 +72,7 @@ Business rules as implemented (documented, tested in `CampaignDateRangeTests`):
 * From/To only choose which instalments are read. To is clamped to the end of the current month (the page shows the effective To); a range wholly in the future is refused; an explicit From earlier than a unit's old overdue instalments does exclude them (it is an explicit range).
 * Both = Due + Overdue without overlap; Minimum Total is on the selected status's amounts.
 * Total qualifying amount = **stage amount** of eligible customers (what Genesys receives), over the whole filtered list; outstanding balance = Due + Overdue of those customers. They differ by design; the page now says so and shows the difference.
-**Known difference (pre-existing, pinned by a test, needs a business decision):** an instalment due later *this month* is eligible in Review but not in Campaigns (eligibility ends at today).
+**Resolved in round 2 (§R2.2):** an instalment due later *this month* is now eligible in both Review and Campaigns.
 
 ## 10. "The preview date is not today's scheduled send date: preview only"
 Expected. `Current month reminder - day 14` is sendable only on the 14th (`CollectionsCampaignPolicy.ScheduledDates`); any other day is preview-only. The message now names the stage, its allowed day(s), today's date and the reason, and says the list cannot be sent outside the schedule. Nothing overrides the schedule; no unscheduled dispatch path was added.
@@ -92,9 +92,10 @@ Review CSV and Genesys CSV are produced from the same `PreviewAsync` result (sam
 ## 14. Open decisions (need approval; nothing below was changed)
 1. Positive-identification rule before PACT fills missing CRM fields (§5).
 2. De-duplication of exact repeated PACT instalments (§3).
-3. Eligible-later-this-month: Review vs Campaigns (§6–9).
+3. ~~Eligible-later-this-month: Review vs Campaigns~~ resolved in round 2 (§R2.2); please confirm the business effect described there.
 4. Whether `BackgroundJobs:Enabled` must be true in production so the 2-hourly refresh actually runs.
-5. Whether the reconciliation should also be scheduled (daily) – currently manual by design.
+5. Whether the consistency check should also be scheduled (daily) – currently manual by design.
+6. Whether an independent ledger comparison is wanted, and against which source (§R2.3).
 
 ## 15. UAT verification steps
 1. Deploy SQL: re-run `R003` (idempotent). Deploy app. Run `tools/diagnose_receivables_refresh.sql`; record sections 2-4 for company 4 and 32.
@@ -104,3 +105,44 @@ Review CSV and Genesys CSV are produced from the same `PreviewAsync` result (sam
 5. Refresh Dubai, then within 30 min press *Run reconciliation*. Expected outcomes: *Passed* (gate then needs the sign-off), *Failed* (unit list = the differences to explain), or *Error* (message says why; run again).
 6. Only after Passed and an authorised sign-off (`FinancialSourceValidated=true`, `ValidatedProcedureSuffix`, `ReconciliationReference`) does Ready/Approve become possible, and only on the stage's scheduled day.
 7. Genesys: keep `Campaign.Enabled/AllowCreate` false until the payload is checked in the API Explorer; then test with a throw-away contact list.
+
+
+---
+
+# Round 2 – remaining inconsistencies
+
+## R2.1 Dubai refresh failure – status: **not diagnosed, not fixed**
+No diagnostic output was available in this session or the repository, so the failing SQL operation is **not identified** and nothing is claimed fixed.
+What was added so the next run produces decisive evidence (read-only; not executed here because no SQL Server was reachable – review before running):
+* `diagnose_receivables_refresh.sql` §1b: the linked server's `query_timeout` / `connect_timeout` and the server-wide `remote query timeout (s)` (SQL Server default 600 s). These cap a linked-server call **independently of** the application's 1,800 s `RefreshCommandTimeoutSeconds`. A Dubai-only failure after ≈ 600 s with "Query timeout expired" would be this; it is a hypothesis to test, not a finding.
+* §3b: failures per company and error number with shortest/longest duration and how many failed before the fetch finished. A cluster of one error at one duration names the limit that was hit.
+How to read it: `FailedBeforeTheFetchFinished > 0` → the PACT call (linked server / procedure / layout); error 50010-50013 → our own validation or publish checks; `Seconds ≈ 600` → remote query timeout; `≈ 1800` → the application command timeout; 213/8152/245 → result layout.
+Send the output (sections 1, 1b, 2, 3, 3b, 4) and the failing operation can be named.
+
+## R2.2 Campaigns vs Review eligibility – **fixed**
+Cause: both call `CollectionsCampaignPolicy.Evaluate` (stage window = `StageRange`), but Campaigns first cut its rows at *today* (`eligibleEnd = min(To, today)`), Review did not. For the two whole-month stages (Current month, Follow-up) the stage window is the whole month, so an instalment due on, say, the 20th was eligible in Review/approval/Genesys but not in the Preview.
+Fix: the extra cut is removed. Eligibility is now the stage rule alone over the eligibility scope, in one place, for Preview, Review, approval, both CSV exports and the Genesys upload (which sends the Review amounts). The read window is still clamped to the end of the current month, so nothing from next month enters.
+**Business-visible effect (please confirm):** for Current-month and Follow-up, the Campaigns *stage amount*, *qualifying amount* and the Genesys CSV now include the rest of the month's instalments (e.g. 14 Oct, instalments due 20 and 31 Oct count). This makes the Preview equal what Review already held and what dispatch already uploaded. Overdue / Legal Notice / Legal Referral are unaffected (their windows end before the current month). Schedule rules (`ScheduledDates`), thresholds, Due/Overdue classification, minimum total, safety gates and the reconciliation gate are unchanged.
+Evidence: `CampaignReviewEligibilityParityTests` (every stage: Campaigns' eligible units and amounts equal the Review records; Ready units and amounts equal on the send day; the Genesys CSV carries the Review amounts). With the old cut restored these tests fail (mutation-checked). Nine existing tests that encoded the old cut were updated deliberately; each change is a number moving from "up to today" to "whole month".
+Not touched: the archived SQL campaign engine (`legacy/V007`), which is on an older day-based rule and not deployed (note added on `PactCampaignRequest`).
+
+## R2.3 What the reconciliation compares – exactly
+| Side | Origin |
+| --- | --- |
+| Snapshot | `dbo.CollectionsRcvLine` (published run), filled by `usp_CollectionsRcv_Refresh`, which executes `[10.10.10.94].[PACTRPT].dbo.p{4|32}AccountReceivables` over the **linked server** |
+| "PACT" | the **same** procedure `dbo.p{4|32}AccountReceivables`, called now over the **direct** `PACTRPT` connection (`PactSqlReceivablesSource`) |
+
+So the check **is a snapshot-consistency check, not an independent financial verification**. Matching proves the refresh copied the procedure's output faithfully and nothing changed since (within 30 min snapshot age). It proves nothing about the procedure's remaining amounts, unit allocation or Due/Overdue dates against PACT's ledger.
+Changes: the direct side now always reads the unsuffixed procedure the refresh calls (before, it used `ProcedureSuffix`, which the snapshot ignores, so with a suffix it could compare two different procedures); results, gate and the diagnostics page carry `Basis = SnapshotConsistency`, name both sides, and state in words what is and is not proven; the gate warns when `ProcedureSuffix` is set (the sign-off must cover `p4/p32AccountReceivables`, which is what is read); wording no longer says "matches PACT".
+Mandatory controls preserved and tested: a passing check never replaces the sign-off, and a sign-off never replaces the check (`SourceGate`); fail-closed on NotRun / Failed / Error / Expired; the check never sets `FinancialSourceValidated`.
+Independent verification would need a different data path. Candidates exist in the repository (EDSM `due-installments`, `payment-summary`) but whether EDSM computes from the same procedure is **unknown**, so building one now would risk a false sense of independence. Decision needed: which independent source Finance accepts.
+
+## R2.4 Background jobs – verified, **not changed**
+* `BackgroundJobs:Enabled` is `false` in `appsettings.json` and `appsettings.Development.json`; `appsettings.UAT.json` does not override it (test-pinned). The effective value on any server comes from environment variables / secrets not visible here: **check it on each server**. The API logs a startup warning when it is false.
+* The switch is global (`AddHangfire` + `AddHangfireServer`). Enabling it also starts: SLA sweep and deadline checks, **chatbot-inactivity ticket closure**, the **Outbox dispatcher** (delivers pending outbound effects/emails), CRM-owners refresh (`15 * * * *` + at start, reads the CRM database), the receivables refresh (below), the suppression sweep (only if Genesys upload + suppression are on), collections reminders (only if scheduling is on). It also provides the workers for the **Review refresh and the dispatch job**: with it off, `Approve & Send` cannot prepare approval data ("Background jobs are disabled on this server") — so any UAT of approval/sending requires it on.
+* Receivables refresh when on: one recurring job per company, cron `0 */2 * * *` Asia/Dubai, `RefreshOnStartup = true` (**every API start/deploy triggers both PACT pulls immediately**; a restart during a long Dubai refresh abandons it), overlap protected by the per-company SQL application lock, Hangfire retries off.
+* Not enabled by this change. Before enabling anywhere: confirm Hangfire's `HangfireSla` schema/DB access, review the Outbox backlog that would start sending, decide `RefreshOnStartup`, and make sure the PACT linked server can absorb two pulls at each restart.
+* Added (informational only): the pages now state when no scheduled refresh runs ("Scheduled refresh is OFF on this server …") instead of implying an automatic refresh; the status endpoint reports `scheduledRefresh` and the sentence.
+
+## R2.5 Still requires live UAT
+Dubai refresh diagnosis (R2.1); effective `BackgroundJobs:Enabled` and `RefreshOnStartup` per server; the first real consistency check on a fresh snapshot (Passed / Failed / Error); business confirmation of the R2.2 amount change on real Current-month lists (compare the Preview total with what Review shows); Genesys API contract and a test contact list; CRM-linked contacts on real data.

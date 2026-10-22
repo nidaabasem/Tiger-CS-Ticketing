@@ -31,6 +31,8 @@ public static class CollectionsDisplay
         {
             available = true,
             active = status.LoadInProgress,
+            scheduledRefresh = status.ScheduledRefreshActive,
+            schedule = status.RefreshSchedule,
             companies = status.Companies.Select(c => new
             {
                 id = c.CompanyId, name = c.CompanyName, state = c.State, loading = c.IsLoading, hasData = c.HasData,

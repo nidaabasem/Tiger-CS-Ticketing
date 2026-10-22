@@ -54,7 +54,8 @@ public sealed record CoverageGapDto(int CompanyId, string CompanyName, DateOnly 
 
 public sealed record SnapshotStatusDto(
     IReadOnlyList<SnapshotCompanyStatusDto> Companies, IReadOnlyList<UnmatchedTowerDto> UnmatchedTowers, int MaxAgeMinutes,
-    DateOnly? RequestedFrom = null, DateOnly? RequestedThrough = null, IReadOnlyList<CoverageGapDto>? CoverageGaps = null)
+    DateOnly? RequestedFrom = null, DateOnly? RequestedThrough = null, IReadOnlyList<CoverageGapDto>? CoverageGaps = null,
+    bool? ScheduledRefreshActive = null, string? RefreshSchedule = null)
 {
     public IReadOnlyList<CoverageGapDto> Gaps => CoverageGaps ?? [];
     /// <summary>The whole requested From/To range is inside the loaded coverage of every loaded company in scope.</summary>

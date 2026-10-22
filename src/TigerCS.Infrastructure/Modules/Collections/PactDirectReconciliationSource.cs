@@ -1,18 +1,25 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using TigerCS.Application.Modules.Collections;
 using TigerCS.Application.Modules.Collections.Abstractions;
 using TigerCS.Application.Modules.Collections.Reconciliation;
 
 namespace TigerCS.Infrastructure.Modules.Collections;
 
-/// <summary>The independent side of a reconciliation: the configured PACT report procedure read directly (the code path the snapshot job used before the local snapshot existed), never the snapshot.</summary>
-public sealed class PactDirectReconciliationSource(PactSqlReceivablesSource pact, PactReceivablesOptions options) : IReconciliationSource
+/// <summary>
+/// The "PACT" side of a snapshot-consistency check: the procedure the snapshot refresh itself calls (<c>p4AccountReceivables</c> / <c>p32AccountReceivables</c>, NO suffix - see
+/// <c>usp_CollectionsRcv_Refresh</c>), read over a direct connection (<c>PACTRPT</c>) instead of the linked server. Same procedure, same logic, different transport and time: it can
+/// show that the refresh copied the procedure's output faithfully; it cannot show that the procedure is right. <c>CollectionsSource:PactReceivables:ProcedureSuffix</c> is deliberately
+/// NOT used here, because the snapshot ignores it.
+/// </summary>
+public sealed class PactDirectReconciliationSource(PactSqlReceivablesSource pact) : IReconciliationSource
 {
-    public string ProcedureLabel(int companyId) => PactSqlReceivablesSource.ProcedureName(companyId, options.ProcedureSuffix);
+    /// <summary>The suffix of the procedure the refresh reads: none.</summary>
+    public const string SnapshotProcedureSuffix = "";
+
+    public string ProcedureLabel(int companyId) => PactSqlReceivablesSource.ProcedureName(companyId, SnapshotProcedureSuffix);
 
     public async Task<IReadOnlyList<PactReceivableInstalment>> ReadAsync(int companyId, DateOnly from, DateOnly through, CancellationToken cancellationToken) =>
-        (await pact.ReadAsync(new PactReceivablesRequest(from, through, companyId), cancellationToken)).Items;
+        (await pact.ReadAsync(new PactReceivablesRequest(from, through, companyId), SnapshotProcedureSuffix, cancellationToken)).Items;
 }
 
 /// <summary>Runs a registered reconciliation on a background task of this process (own DI scope, not tied to the request).</summary>

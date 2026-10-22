@@ -62,7 +62,7 @@ public sealed class CampaignSnapshotTests
             Row("c1", "TP124-2", 2, day: 1, amount: 250m)]);
         var items = (await h.Service.PreviewAsync(h.Manager, "CurrentMonthReminder", new DateOnly(2026, 10, 14), minTotal: null)).Value!.Items;
         var one = items.Single(i => i.UnitCode == "TP124-1");
-        Assert.Equal(800m, one.Amount);                                                                  // the stage amount: 5 and 14 Oct only (up to today); the coming 700 is shown, not sent
+        Assert.Equal(1500m, one.Amount);                                                                 // the stage amount: 5, 14 and 20 Oct (the stage window is the whole month); the December 900 is in neither
         Assert.Equal((1500m, 0m, 1500m), (one.DueAmount, one.OverdueAmount, one.TotalAmount));      // Total = Due + Overdue = 500 + 300 + 700; the December 900 is in neither
         var two = items.Single(i => i.UnitCode == "TP124-2");
         Assert.Equal((250m, 0m, 250m), (two.DueAmount, two.OverdueAmount, two.TotalAmount));        // another apartment of the same customer is never added in

@@ -14,7 +14,7 @@
     <div class="page-header">
         <div>
             <p class="receivables-eyebrow">Collections</p>
-            <h1 class="page-title">Financial reconciliation</h1>
+            <h1 class="page-title">Financial source: snapshot consistency and sign-off</h1>
         </div>
         <div class="page-header__actions"><a class="btn" href="/Collections/Campaigns">Campaigns</a></div>
     </div>
@@ -33,12 +33,17 @@
                 Sign-off: <strong>@(gate.SignOffRecorded ? "recorded" : "not recorded")</strong>@(gate.Reference is { } r ? $" ({r})" : "")
                 @if (gate.EvidenceAtUtc is { } at) { <text> · Automated evidence: <strong>@CollectionsDisplay.DubaiTime(at)</strong></text> }
             </p>
-            <p class="receivables-meta">
-                The automated run compares the local snapshot with a fresh, direct read of the same configured PACT procedure, unit by unit and instalment by instalment. It proves the data being approved is what the procedure returns now;
-                it does not replace the sign-off that the procedure itself is right. A run that could not complete is shown as such: it is missing evidence, not a finding.
-            </p>
+            @if (gate.Warning is { } warning) { <p class="receivables-notice receivables-notice--warning" role="alert" data-gate-warning>@warning</p> }
+            <div class="reconciliation-basis" data-reconciliation-basis>
+                <p><strong>Two different things are checked here:</strong></p>
+                <ul>
+                    <li><strong>Snapshot consistency (automated, this page).</strong> @ReconciliationBasis.Proves</li>
+                    <li><strong>Ledger correctness (a person, recorded sign-off).</strong> @ReconciliationBasis.DoesNotProve The snapshot and the fresh read below come from the <em>same</em> PACT procedure, so their agreement is <em>not</em> an independent financial verification.</li>
+                </ul>
+                <p class="receivables-meta">Ledger verification attested by sign-off: <strong data-ledger-attested>@(gate.LedgerVerificationAttested ? "yes" : "no")</strong>. Approval and sending need the sign-off AND a recent passing consistency check.</p>
+            </div>
             <form method="post" asp-page-handler="Run" class="snapshot-status__load">
-                <button class="btn btn-primary" type="submit" data-run-reconciliation disabled="@Model.Running">Run reconciliation (both companies)</button>
+                <button class="btn btn-primary" type="submit" data-run-reconciliation disabled="@Model.Running">Run snapshot-consistency check (both companies)</button>
                 <button class="btn" type="submit" name="companyId" value="4" disabled="@Model.Running">Dubai only</button>
                 <button class="btn" type="submit" name="companyId" value="32" disabled="@Model.Running">Sharjah only</button>
             </form>
@@ -52,7 +57,7 @@
                 {
                     <div class="reconciliation-company" data-company="@c.CompanyId" data-company-status="@c.Status">
                         <h3>@c.CompanyName: @ReconciliationModel.StateText(c.Status)</h3>
-                        <p class="receivables-meta">Procedure @c.Procedure@(c.SnapshotSuccessUtc is { } s ? $" · snapshot published {CollectionsDisplay.DubaiTime(s)}" : "")</p>
+                        <p class="receivables-meta">@(c.SnapshotOrigin ?? ReconciliationBasis.SnapshotSide(c.CompanyId)) @ReconciliationBasis.SourceSide(c.CompanyId) Procedure @c.Procedure@(c.SnapshotSuccessUtc is { } s ? $" · snapshot published {CollectionsDisplay.DubaiTime(s)}" : "")</p>
                         @if (c.Message is { } message) { <p>@message</p> }
                         @if (c.Comparison is { } cmp)
                         {

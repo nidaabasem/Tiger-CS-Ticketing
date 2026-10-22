@@ -40,6 +40,7 @@
         <div class="receivables-notice receivables-notice--warning load-problem" role="alert" data-load-problem>
             @if (failedOrMissing.Count > 0) { <span>Could not load data for <strong>@CollectionsDisplay.CompanyList(failedOrMissing)</strong>.</span> }
             @if (staleOnly.Count > 0) { <span>Data for <strong>@CollectionsDisplay.CompanyList(staleOnly)</strong> is out of date.</span> }
+            @if (Model.RefreshSchedule is { } schedule && Model.ScheduledRefreshActive != true) { <span class="receivables-meta" data-refresh-schedule>@schedule</span> }
             @foreach (var c in problem)
             {
                 <div class="load-problem__company" data-company-state="@c.CompanyId" data-state="@c.State">

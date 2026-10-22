@@ -27,7 +27,7 @@ public sealed class ReconciliationModel(CollectionsApiClient api) : PageModel
     public async Task<IActionResult> OnPostRunAsync(int? companyId, CancellationToken ct)
     {
         var result = await api.StartReconciliationAsync(companyId, ct);
-        Notice = result.IsSuccess ? "The reconciliation was started. This page refreshes while it runs."
+        Notice = result.IsSuccess ? "The snapshot-consistency check was started. This page refreshes while it runs."
             : result.Outcome == ApiOutcome.Forbidden ? "Your account does not have permission to run a reconciliation."
             : result.Detail ?? "The reconciliation could not be started.";
         return RedirectToPage();
@@ -35,7 +35,7 @@ public sealed class ReconciliationModel(CollectionsApiClient api) : PageModel
 
     public static string StateText(string state) => state switch
     {
-        ReconciliationStates.Passed => "Passed: the snapshot matches PACT",
+        ReconciliationStates.Passed => "Passed: the snapshot is consistent with the PACT procedure",
         ReconciliationStates.Failed => "Failed: real differences found",
         ReconciliationStates.Error => "Could not be completed (no finding about the data)",
         ReconciliationStates.Running => "Running",

@@ -17,7 +17,7 @@ namespace TigerCS.Infrastructure.Modules.Collections;
 /// </summary>
 public sealed class RcvReceivablesSource(
     IConfiguration configuration, ReceivablesSnapshotOptions options, PactReceivablesOptions pactOptions,
-    TimeProvider timeProvider, ILogger<RcvReceivablesSource> logger) : IPactReceivablesSource, IPactInstalmentUnitSource, IUnitReceivablesSource, ISnapshotStatusSource
+    TimeProvider timeProvider, ILogger<RcvReceivablesSource> logger, ISnapshotSchedule? schedule = null) : IPactReceivablesSource, IPactInstalmentUnitSource, IUnitReceivablesSource, ISnapshotStatusSource
 {
     public Task<PactReceivablesSnapshot> ReadAsync(DateOnly throughDate, CancellationToken cancellationToken) =>
         ReadAsync(new PactReceivablesRequest(null, throughDate), cancellationToken);
@@ -74,6 +74,7 @@ public sealed class RcvReceivablesSource(
         }
 
         var snapshot = ReceivablesSnapshotComposer.Compose(from, request.ThroughDate, companies, [], rows, timeProvider.GetUtcNow().UtcDateTime, options.MaxAgeMinutes, MaxRunMinutes);
+        snapshot = snapshot with { Snapshot = WithSchedule(snapshot.Snapshot!) };
         logger.LogInformation("Receivables snapshot read: {Rows} rows, {Loaded}/{Scope} companies loaded, oldest success {ReadAt:O}, window {From:yyyy-MM-dd}..{To:yyyy-MM-dd}.",
             rows.Count, snapshot.Snapshot!.Companies.Count(c => c.HasSnapshot), snapshot.Snapshot.Companies.Count, snapshot.ReadAtUtc, from, request.ThroughDate);
         return snapshot;
@@ -146,7 +147,7 @@ public sealed class RcvReceivablesSource(
             throw new PactReceivablesSourceException("The local receivables snapshot could not be read.");
         }
         var now = timeProvider.GetUtcNow().UtcDateTime;
-        var status = ReceivablesSnapshotComposer.BuildStatus(request.From, request.To, companies, [], now, options.MaxAgeMinutes, MaxRunMinutes);
+        var status = WithSchedule(ReceivablesSnapshotComposer.BuildStatus(request.From, request.To, companies, [], now, options.MaxAgeMinutes, MaxRunMinutes));
         var units = heads.Select(h => new PactInstalmentUnitDto(h.Company, ReceivablesSnapshotStatusBuilder.CompanyName(h.Company), h.Tower, h.TowerName, (int)h.UnitId, h.UnitCode,
             h.Tenant, h.Name, h.Count, h.Total, h.Latest,
             byUnit.TryGetValue((h.Company, h.Tenant, h.UnitId, h.UnitCode), out var rows) ? rows.Select(r => r with { TowerNumber = h.Tower, TowerName = h.TowerName, CustomerName = h.Name }).ToList() : [],
@@ -201,7 +202,7 @@ public sealed class RcvReceivablesSource(
             throw new PactReceivablesSourceException("The local receivables snapshot could not be read.");
         }
         var now = timeProvider.GetUtcNow().UtcDateTime;
-        var status = ReceivablesSnapshotComposer.BuildStatus(today, today, companies, [], now, options.MaxAgeMinutes, MaxRunMinutes);
+        var status = WithSchedule(ReceivablesSnapshotComposer.BuildStatus(today, today, companies, [], now, options.MaxAgeMinutes, MaxRunMinutes));
         return new PactUnitReceivables(status, identities, instalments, links, crmLoaded, ReceivablesSnapshotComposer.ReadAt(status));
     }
 
@@ -254,6 +255,8 @@ public sealed class RcvReceivablesSource(
         await reader.NextResultAsync(cancellationToken);
     }
 
+    private SnapshotStatusDto WithSchedule(SnapshotStatusDto status) => schedule is null ? status : status with { ScheduledRefreshActive = schedule.ScheduledRefreshActive, RefreshSchedule = schedule.Describe() };
+
     /// <summary>The longest a refresh may legitimately run: its SQL command timeout plus five minutes. A "Running" attempt older than this is reported as Stuck.</summary>
     private int MaxRunMinutes => Math.Clamp(options.RefreshCommandTimeoutSeconds, 5, 7200) / 60 + 5;
 
@@ -277,7 +280,7 @@ public sealed class RcvReceivablesSource(
             throw new PactReceivablesSourceException("The receivables snapshot status could not be read.");
         }
         var today = DateOnly.FromDateTime(timeProvider.GetUtcNow().UtcDateTime.AddHours(4));
-        return ReceivablesSnapshotComposer.BuildStatus(today, today, companies, [], timeProvider.GetUtcNow().UtcDateTime, options.MaxAgeMinutes, MaxRunMinutes);
+        return WithSchedule(ReceivablesSnapshotComposer.BuildStatus(today, today, companies, [], timeProvider.GetUtcNow().UtcDateTime, options.MaxAgeMinutes, MaxRunMinutes));
     }
 
     /// <summary>One row of <c>usp_CollectionsRcv_GetStatus</c>. Coverage is the configured window (the whole window is always stored); nothing about paid instalments or breakdowns is claimed.</summary>

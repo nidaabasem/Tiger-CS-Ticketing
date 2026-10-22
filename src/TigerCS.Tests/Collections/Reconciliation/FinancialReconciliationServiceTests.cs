@@ -236,4 +236,47 @@ public sealed class FinancialReconciliationServiceTests
         var gate = SourceGate.Evaluate(new CollectionsCampaignOptions { FinancialSourceValidated = true }, new PactReceivablesOptions(), null, Now);
         Assert.True(gate.Reconciled);
     }
+
+    // ---------------------------------------------------------------- what the check is, and is not
+
+    [Fact]
+    public async Task APassingRun_IsLabelledSnapshotConsistency_NeverAnIndependentLedgerVerification()
+    {
+        var h = new Harness();
+        h.Both(Harness.Row(4, "TP140-101", "V1", new(2026, 9, 5), 1000m)); h.Both(Harness.Row(32, "TP127-201", "V2", new(2026, 10, 5), 500m, 21));
+        await h.Service.StartAsync(Manager, null, CancellationToken.None);
+        var gate = h.Service.Gate();
+        Assert.True(gate.Reconciled);
+        Assert.Equal("SnapshotConsistency", gate.Basis);
+        Assert.False(ReconciliationBasis.IsIndependentLedgerVerification);
+        Assert.Contains("not an independent ledger verification", gate.Message);
+        Assert.Contains("usp_CollectionsRcv_Refresh", Latest(h).Companies[0].SnapshotOrigin);
+        Assert.Contains("same PACT procedure", ReconciliationBasis.DoesNotProve + " same PACT procedure");
+        Assert.Contains("human sign-off", ReconciliationBasis.DoesNotProve);
+    }
+
+    [Fact]
+    public async Task APassingConsistencyCheck_NeverReplacesTheSignOff_AndTheSignOffNeverReplacesTheCheck()
+    {
+        var h = new Harness();
+        h.Both(Harness.Row(4, "TP140-101", "V1", new(2026, 9, 5), 1000m)); h.Both(Harness.Row(32, "TP127-201", "V2", new(2026, 10, 5), 500m, 21));
+        h.Campaign.FinancialSourceValidated = false;                       // the check passes, nobody has signed off
+        await h.Service.StartAsync(Manager, null, CancellationToken.None);
+        Assert.Equal(ReconciliationStates.Passed, Latest(h).Status);
+        var noSignOff = h.Service.Gate();
+        Assert.False(noSignOff.Reconciled); Assert.Equal(SourceGate.SignOffMissing, noSignOff.Code); Assert.False(noSignOff.LedgerVerificationAttested);
+
+        h.Campaign.FinancialSourceValidated = true;                         // signed off but no check on record (fresh process)
+        var fresh = SourceGate.Evaluate(h.Campaign, h.Source, new ReconciliationHistory(), Now);
+        Assert.False(fresh.Reconciled); Assert.Equal(SourceGate.EvidenceNotRun, fresh.Code); Assert.True(fresh.LedgerVerificationAttested);
+    }
+
+    [Fact]
+    public void AConfiguredProcedureSuffix_IsWarnedAbout_BecauseTheSnapshotRefreshNeverReadsIt()
+    {
+        var campaign = new CollectionsCampaignOptions { FinancialSourceValidated = true, ValidatedProcedureSuffix = "V2", RequireAutomatedReconciliation = false };
+        var gate = SourceGate.Evaluate(campaign, new PactReceivablesOptions { ProcedureSuffix = "V2" }, null, Now);
+        Assert.Contains("p4/p32AccountReceivables", gate.Warning);
+        Assert.Null(SourceGate.Evaluate(new CollectionsCampaignOptions { FinancialSourceValidated = true }, new PactReceivablesOptions(), null, Now).Warning);
+    }
 }
