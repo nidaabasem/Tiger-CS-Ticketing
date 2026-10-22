@@ -87,7 +87,8 @@ namespace TigerCS.Application.Modules.GenesysIntegration.Services;
 /// configured automatic assignment runs, and its SLA policy is applied to
 /// the running period without restarting the clock. A missing or unusable
 /// request type is not an error: the ticket is created with the default
-/// priority and joins the human classification queue. An explicitly
+/// priority, stays Unclassified and is left to the existing manual classification
+/// workflow (it is not a human handoff). An explicitly
 /// <i>invalid</i> request type (unknown, inactive, ambiguous, cannot route) is
 /// refused with 422 before anything is written.
 /// </para>
@@ -149,7 +150,7 @@ public sealed class GenesysInquiryIngestionAppService(
         }
 
         // An EXPLICITLY supplied request type is validated before anything is written. Absent is fine (the ticket is created on the
-        // default priority and joins the human classification queue); present-but-unusable is the caller's mistake and is refused
+        // default priority and stays Unclassified for manual classification); present-but-unusable is the caller's mistake and is refused
         // with nothing created, so a retry with a corrected value works and no half-classified ticket is left behind.
         if (inquiry.RequestType is { IsSupplied: true } supplied)
         {
@@ -329,19 +330,21 @@ public sealed class GenesysInquiryIngestionAppService(
 
     /// <summary>
     /// A request type the bot supplied (already validated before the ticket was
-    /// written) is applied now; a missing one leaves the ticket awaiting
-    /// classification in the human queue. If a validated type still cannot be
-    /// applied (it changed in the instant between validation and write, or a
-    /// concurrent update won) the ticket, which now exists, is queued for a
-    /// human rather than lost.
+    /// written) is applied now; a missing one leaves the ticket
+    /// <b>Unclassified</b> for the existing manual classification workflow —
+    /// <b>no human handoff is raised for it</b>: whether the customer needs a
+    /// person is Genesys' explicit signal to give (the handoff contract), never
+    /// something inferred from a missing field. If a validated type still cannot
+    /// be applied (it changed in the instant between validation and write, or a
+    /// concurrent update won) the ticket, which now exists, stays Unclassified
+    /// rather than being lost.
     /// </summary>
     private async Task<GenesysClassificationResult> ClassifyOrQueueAsync(
         Guid callerEmployeeId, long ticketId, string conversationId, GenesysInquiryDto inquiry, CancellationToken cancellationToken)
     {
         if (inquiry.RequestType is not { IsSupplied: true } requestType)
         {
-            return await classificationAppService.AwaitClassificationAsync(
-                callerEmployeeId, conversationId, "no request type was supplied.", cancellationToken);
+            return GenesysRequestTypeClassificationAppService.AwaitClassification("no request type was supplied.");
         }
 
         var classified = await classificationAppService.ClassifyAsync(
@@ -349,9 +352,8 @@ public sealed class GenesysInquiryIngestionAppService(
 
         return classified.Outcome is GenesysClassificationOutcome.Classified or GenesysClassificationOutcome.AlreadyClassified
             ? classified
-            : await classificationAppService.AwaitClassificationAsync(
-                callerEmployeeId, conversationId,
-                classified.Detail ?? $"the supplied request type could not be applied ({classified.Outcome}).", cancellationToken);
+            : GenesysRequestTypeClassificationAppService.AwaitClassification(
+                classified.Detail ?? $"the supplied request type could not be applied ({classified.Outcome}).");
     }
 
     /// <summary>
@@ -457,21 +459,29 @@ public sealed class GenesysInquiryIngestionAppService(
         {
             var result = await customerSearchAppService.SearchByPhoneAsync(phoneNumber, cancellationToken);
 
-            var crmName = result.CrmBuyers
+            // A phone number is not an identity: when it matches more than one customer (a shared or reassigned number), no display name is
+            // taken from the lookup at all — naming the interaction after whichever record came first would attach one customer's name to
+            // another's conversation. Exactly one distinct customer is required to enrich the name.
+            var candidates = result.CrmBuyers
                 .Select(b => b.Customer.FullNameEnglish ?? b.Customer.FullNameArabic)
-                .FirstOrDefault(name => !string.IsNullOrWhiteSpace(name));
-
-            var externalName = result.ExternalSources
-                .SelectMany(source => source.Customers)
-                .Select(c => c.DisplayName)
-                .FirstOrDefault(name => !string.IsNullOrWhiteSpace(name));
+                .Concat(result.ExternalSources
+                    .SelectMany(source => source.Customers)
+                    .Select(c => (string?)c.DisplayName))
+                .Where(name => !string.IsNullOrWhiteSpace(name))
+                .DistinctBy(name => name!.Trim(), StringComparer.OrdinalIgnoreCase)
+                .ToList();
 
             var found = result.CrmStatus == "Found"
                 || result.ExternalSources.Any(s => s.Status == "Found");
 
+            if (candidates.Count > 1)
+            {
+                return new CustomerLookupSummary($"Found(Ambiguous:{candidates.Count} customers share this number)", null);
+            }
+
             return new CustomerLookupSummary(
                 found ? "Found" : $"NotFound(Crm={result.CrmStatus})",
-                crmName ?? externalName);
+                candidates.FirstOrDefault());
         }
         catch (Exception ex)
         {
@@ -534,6 +544,9 @@ public static class GenesysAuditActions
     public const string ConversationEntityType = "GenesysConversation";
     public const string InquiryIngested = "GenesysInquiryIngested";
     public const string ConversationEnded = "GenesysConversationEnded";
+
+    /// <summary>Messages of a live conversation were stored before it ended (the incremental transcript).</summary>
+    public const string TranscriptAppended = "GenesysTranscriptAppended";
 
     /// <summary>The conversation moved to another queue or agent (a transfer, an agent connecting) — before/after carry the full routing, so the audit trail holds every queue and agent it passed through.</summary>
     public const string RoutingChanged = "GenesysRoutingChanged";

@@ -29,7 +29,7 @@
 | `Genesys:Enabled` | `true` | `false` → every `/api/genesys/*` returns 503 |
 | `Genesys:CustomerInactivityTimeoutMinutes` | `10` | Website/Chatbot "customer inactive" rule (from the last customer interaction); `Genesys:AwaitingReplyTimeoutMinutes` (`5`) keeps the original bot-prompt rule for untracked tickets |
 | `Genesys:DefaultTicketPriority` | `Normal` | name of the priority a new Genesys ticket starts on; "Normal" resolves to the Medium tier. Blank = no default (no priority/SLA until classified) |
-| `Genesys:HumanQueueForUnclassified` | `true` | a Genesys ticket with no request type supplied joins the human follow-up queue ("Awaiting classification"); `false` is a rollout kill switch |
+| `Genesys:AutoRaiseHandoffOnConversationEnd` | `false` | rollback lever: `true` restores the old behaviour of raising an `AiConnectionLost` handoff when an AI conversation ends with no human. Off by default — ending a conversation is not a request for a human. (`Genesys:HumanQueueForUnclassified` was removed; a missing request type never creates a handoff, and a leftover key is ignored) |
 | `CrmDocuments:Enabled` | `false` | OTP + document copy; Production also needs `AllowInProduction=true` |
 | `CrmDocuments:AcceptedVerificationMethods` | `Otp`, `AuthenticatedDigitalUser` | |
 | `CrmDocuments:Otp*` | lifetime 10 min, 5 attempts, 3 sends, 60 s resend, 5 challenges/customer/h | shared by the email and SMS channels |

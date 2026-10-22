@@ -38,6 +38,7 @@ public sealed record TicketInteractionMessageDto(
 /// <param name="Status">"Ended" once an end was recorded, otherwise "Active" — the INTERACTION's own lifecycle, which is independent of the ticket's status.</param>
 /// <param name="Messages">The transcript, in order. Empty for a voice call, and for a chat with nothing recorded.</param>
 /// <param name="Handoff">The pending human work raised from this interaction, when there is any — so an agent opening the ticket sees <b>why</b> a human was asked for and where that work stands, beside the transcript that led to it. Null when this interaction never needed a human.</param>
+/// <param name="HandlingState">Who is handling a Genesys interaction right now: "Ai" (the virtual agent is the only participant), "WaitingForHuman" (a human was explicitly requested and nobody has taken it) or "Human" (a person took it, spoke, or — on the phone — answered). Null for an interaction Ticketing created itself. Independent of the ticket's status and of whether the interaction has ended.</param>
 public sealed record TicketInteractionDto(
     long TicketInteractionId,
     bool IsOriginatingInteraction,
@@ -58,7 +59,8 @@ public sealed record TicketInteractionDto(
     string? EndReason,
     string Status,
     IReadOnlyList<TicketInteractionMessageDto> Messages,
-    AgentHandoffSummaryDto? Handoff = null);
+    AgentHandoffSummaryDto? Handoff = null,
+    string? HandlingState = null);
 
 /// <summary>
 /// The pending-human-work summary shown inside Ticket Details' Conversation
@@ -74,6 +76,7 @@ public sealed record TicketInteractionDto(
 /// <param name="GenesysAgentId">Genesys' own agent identifier, when supplied.</param>
 /// <param name="ResolvedAtUtc">When the work stopped being outstanding. Null while still pending.</param>
 /// <param name="ResolutionNote">What was recorded on finishing, or the required reason for cancelling.</param>
+/// <param name="Trigger">Who/what initiated the request, as Genesys stated it: CustomerRequestedHuman, AiEscalated, RoutingDecision (business rule), AiConnectionLost or AgentTransfer. Null when Genesys did not state it — shown as "not stated", never guessed.</param>
 public sealed record AgentHandoffSummaryDto(
     long TicketAgentHandoffId,
     string Status,
@@ -83,7 +86,8 @@ public sealed record AgentHandoffSummaryDto(
     Guid? AssignedEmployeeId,
     string? GenesysAgentId,
     DateTime? ResolvedAtUtc,
-    string? ResolutionNote);
+    string? ResolutionNote,
+    string? Trigger = null);
 
 /// <summary>
 /// A ticket's whole conversation history: every interaction it accumulated,

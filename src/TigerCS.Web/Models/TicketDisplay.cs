@@ -73,6 +73,56 @@ public static class TicketDisplay
     };
 
     /// <summary>
+    /// Who handles a Genesys interaction, in agent-facing words. Null (an
+    /// interaction Ticketing created itself) renders as nothing — the caller
+    /// skips the row — and an unknown value is shown verbatim rather than
+    /// guessed at.
+    /// </summary>
+    public static string HandlingStateLabel(string? state, string? humanAgentName = null) => state switch
+    {
+        "Ai" => "AI (virtual agent) — no human involved",
+        "WaitingForHuman" => "AI — a human was requested and has not yet taken it",
+        "Human" => string.IsNullOrWhiteSpace(humanAgentName) ? "Human agent" : $"Human agent — {humanAgentName}",
+        null or "" => "—",
+        _ => state
+    };
+
+    /// <summary>
+    /// Who or what initiated a human handoff, exactly as Genesys stated it.
+    /// An unstated trigger says so — it is never defaulted to "customer".
+    /// </summary>
+    public static string HandoffInitiatorLabel(string? trigger) => trigger switch
+    {
+        "CustomerRequestedHuman" => "Customer asked for a human",
+        "AiEscalated" => "AI escalated — it could not resolve the request",
+        "RoutingDecision" => "Business rule / routing decision",
+        "AiConnectionLost" => "AI conversation ended without a human taking it",
+        "AgentTransfer" => "Transferred by another agent",
+        null or "" => "Not stated by Genesys",
+        _ => trigger
+    };
+
+    /// <summary>
+    /// The activity-feed wording for a <c>HandoffRequested</c> event. The event
+    /// note is written as "{Trigger} — {reason}" (or "Handoff requested — …"
+    /// when Genesys stated no trigger), so the sentence follows the stated
+    /// initiator instead of always claiming the customer asked.
+    /// </summary>
+    public static string HandoffRequestedActivity(string? note)
+    {
+        var trigger = note?.Split(" — ", 2)[0].Trim();
+        return trigger switch
+        {
+            "CustomerRequestedHuman" => "customer asked for a human agent",
+            "AiEscalated" => "AI escalated the conversation to a human agent",
+            "RoutingDecision" => "a routing rule requested a human agent",
+            "AiConnectionLost" => "the AI conversation ended without a human agent taking it",
+            "AgentTransfer" => "an agent transferred the interaction to another human agent",
+            _ => "a human agent was requested"
+        };
+    }
+
+    /// <summary>
     /// How the human is expected to continue. Null renders as "Not specified"
     /// rather than defaulting to Callback: which mode applies on which channel
     /// is Genesys' behaviour to state, and inventing one here would be the

@@ -35,7 +35,8 @@ public class AiHumanHandoffFlowTests
     private static async Task<(GenesysServiceFixture Fixture, long TicketId, int DepartmentId)> AiConversationAsync(
         string conversationId = "conv-ai")
     {
-        var f = new GenesysServiceFixture();
+        // The legacy safety net is a rollback lever, off by default: these tests exercise it explicitly.
+        var f = new GenesysServiceFixture(autoRaiseHandoffOnConversationEnd: true);
         var (department, _) = f.SeedGenesysDepartment("Customer Service", "CS");
         var created = await f.Ingestion.IngestAsync(
             ServiceAccount,

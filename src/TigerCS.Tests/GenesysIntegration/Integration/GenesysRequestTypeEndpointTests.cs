@@ -8,6 +8,7 @@ using TigerCS.Application.Modules.IdentityAndAccess.Dto;
 using TigerCS.Domain.Modules.GenesysIntegration;
 using TigerCS.Domain.Modules.IdentityAndAccess;
 using TigerCS.Domain.Modules.SlaAndEscalation;
+using TigerCS.Domain.Modules.Ticketing;
 using TigerCS.Infrastructure.Persistence;
 using TigerCS.Tests.IdentityAndAccess.Integration;
 
@@ -22,8 +23,7 @@ namespace TigerCS.Tests.GenesysIntegration.Integration;
 /// </summary>
 public sealed class GenesysRequestTypeEndpointTests : IDisposable
 {
-    // The shared test host turns the human classification queue off; this contract is about exactly that queue, so it is switched on.
-    private readonly TigerCsApiFactory factory = new() { ExtraConfiguration = new() { ["Genesys:HumanQueueForUnclassified"] = "true" } };
+    private readonly TigerCsApiFactory factory = new();
 
     public void Dispose() => factory.Dispose();
 
@@ -59,7 +59,7 @@ public sealed class GenesysRequestTypeEndpointTests : IDisposable
     }
 
     [Fact]
-    public async Task MissingRequestType_Returns201_OnNormalPriority_AwaitingClassificationInTheHumanQueue()
+    public async Task MissingRequestType_Returns201_OnNormalPriority_StaysUnclassified_WithNoHumanHandoff()
     {
         var client = await ClientAsync();
         var queueId = await SeedQueueAsync();
@@ -77,8 +77,10 @@ public sealed class GenesysRequestTypeEndpointTests : IDisposable
         var ticket = await db.Tickets.AsNoTracking().SingleAsync(t => t.TicketId == body.TicketId);
         Assert.Equal((byte)PriorityLevel.Medium, ticket.PriorityId);                  // Normal
         Assert.Null(ticket.RequestTypeId);
-        Assert.Contains(await db.TicketAgentHandoffs.AsNoTracking().Where(h => h.TicketId == body.TicketId).ToListAsync(),
-            h => h.RequestReason!.StartsWith("Awaiting classification", StringComparison.Ordinal));
+        // A missing classification is NOT a request for a human: no handoff row, so nothing reads "Waiting for agent".
+        Assert.Empty(await db.TicketAgentHandoffs.AsNoTracking().Where(h => h.TicketId == body.TicketId).ToListAsync());
+        Assert.Empty(await db.TicketWorkflowEvents.AsNoTracking()
+            .Where(e => e.TicketId == body.TicketId && e.EventType == WorkflowEventType.HandoffRequested).ToListAsync());
     }
 
     [Theory]

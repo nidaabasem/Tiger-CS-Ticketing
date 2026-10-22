@@ -80,16 +80,12 @@ public sealed class GenesysOptions
     public string? DefaultTicketPriority { get; set; } = DefaultDefaultTicketPriority;
 
     /// <summary>
-    /// Whether a Genesys ticket with no request type supplied is put
-    /// in the human follow-up queue ("awaiting classification") instead of
-    /// being left for the bot alone. On by default — the business rule is that
-    /// an unclassified Genesys ticket is never left without a human owner of
-    /// the classification; switch it off
-    /// (<c>Genesys:HumanQueueForUnclassified</c> = false) only as a rollout kill
-    /// switch. The queue entry is stood down automatically when the request type
-    /// is later classified.
+    /// Whether ending an AI conversation that no human ever took raises pending human work on TigerCS' own initiative
+    /// (<c>HandoffTrigger.AiConnectionLost</c>). <b>Off by default</b>: a conversation ending — the AI finished, the customer left, the
+    /// browser closed — is not a request for a human, and only an explicit Genesys signal (<c>handoff.required = true</c>) may record one.
+    /// Switch it on (<c>Genesys:AutoRaiseHandoffOnConversationEnd</c> = true) only to restore the previous safety-net behaviour.
     /// </summary>
-    public bool HumanQueueForUnclassified { get; set; } = true;
+    public bool AutoRaiseHandoffOnConversationEnd { get; set; }
 
     /// <summary>The configured timeout, or null when automatic closure is switched off.</summary>
     public TimeSpan? CustomerInactivityTimeout =>

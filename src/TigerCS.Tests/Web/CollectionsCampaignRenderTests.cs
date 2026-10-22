@@ -51,7 +51,7 @@ public sealed class CollectionsCampaignRenderTests
         // Eligible customers and the total qualifying amount, and the exact Genesys campaign name the stage will use.
         Assert.Contains("data-eligible-count", html); Assert.Contains("data-eligible-total", html);
         Assert.Contains("data-campaign-name>Current month reminder - day 14<", html);
-        foreach (var gone in new[] { "Earliest unpaid due date", "Qualifying balance", "Needs review", "Financial source reconciliation", "Data details", "Scheduled:", "Data refreshed", "campaign-summary", "Source:", "Preview only" })
+        foreach (var gone in new[] { "Earliest unpaid due date", "Qualifying balance", "Financial source reconciliation", "Data details", "Scheduled:", "Data refreshed", "campaign-summary", "Source:", "Preview only" })
             Assert.DoesNotContain(gone, html);
         // Export links carry exactly the previewed filters (incl. the minimum), so the file matches the list.
         Assert.Contains("handler=Export", html); Assert.Contains("minTotal=250.5", html); Assert.Contains("towerId=7", html); Assert.Contains("dateFrom=2026-10-01", html);
@@ -141,7 +141,8 @@ public sealed class CollectionsCampaignRenderTests
         var html = await (await client.GetAsync("/Collections/Campaigns?handler=Results&stage=CurrentMonthReminder&towerId=7&businessDate=2026-10-14")).Content.ReadAsStringAsync();
         Assert.Contains("Could not load data for <strong>Tiger Group Dubai</strong>.", html);
         Assert.Contains(">Retry<", html);
-        Assert.DoesNotContain("Export review CSV", html); Assert.DoesNotContain("Export Genesys CSV", html);   // an export of old data stays blocked
+        Assert.DoesNotContain("handler=Export", html); Assert.DoesNotContain("Export Genesys CSV", html);   // an export of old data stays blocked
+        Assert.Contains("data-export-review-unavailable", html);                                          // ... but the button is still there, disabled, with its reason
         foreach (var gone in new[] { "Export is disabled", "This data is stale", "data-snapshot-warning", "data-export-blocked", "Data details" }) Assert.DoesNotContain(gone, html);
     }
 
@@ -152,7 +153,7 @@ public sealed class CollectionsCampaignRenderTests
         using var factory = CollectionsWebHost.Factory(api); using var client = factory.CreateClient();
         var html = await (await client.GetAsync("/Collections/Campaigns?handler=Results&stage=CurrentMonthReminder&businessDate=2026-03-15&dateFrom=2025-09-15&dateTo=2026-03-15")).Content.ReadAsStringAsync();
         Assert.Contains("Could not load data for <strong>Tiger Group Dubai</strong>.", html); Assert.Contains("data-load-button", html);
-        Assert.DoesNotContain("Export review CSV", html);
+        Assert.DoesNotContain("handler=Export", html); Assert.Contains("data-export-review-unavailable", html);
         Assert.DoesNotContain("data-coverage-gap", html); Assert.DoesNotContain("Load missing data", html);
     }
 
@@ -179,7 +180,7 @@ public sealed class CollectionsCampaignRenderTests
         Assert.Contains("name=\"companyId\" value=\"32\"", line); Assert.Contains(">Retry<", line);
         Assert.Single(Regex.Matches(html, "data-load-problem"));
         Assert.Contains("Campaign Customer", html);
-        Assert.DoesNotContain("Export review CSV", html);                          // incomplete data is never exported
+        Assert.DoesNotContain("handler=Export", html);                             // incomplete data is never exported (the disabled button says why)
         foreach (var gone in new[] { "Export is disabled", "Data details", "error 7399", "consecutive" }) Assert.DoesNotContain(gone, html);
     }
 }

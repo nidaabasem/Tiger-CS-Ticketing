@@ -30,6 +30,7 @@
         dueToday = Model.DueToday ? "true" : null,
         backlogAge = Model.BacklogAge,
         pendingApproval = Model.PendingApproval ? "true" : null,
+        unclassified = Model.Unclassified ? "true" : null,
         createdFrom = Model.CreatedFrom?.ToString("yyyy-MM-dd"),
         createdTo = Model.CreatedTo?.ToString("yyyy-MM-dd")
     }) ?? Model.View.Href();
@@ -125,6 +126,14 @@
             {
                 <option value="@v" selected="@(Model.VerificationStatus == v)">@TicketDisplay.VerificationStatusLabel(v)</option>
             }
+        </select>
+    </div>
+
+    <div class="field-group">
+        <label class="field-label" for="unclassified">Classification</label>
+        <select class="field-select" id="unclassified" name="unclassified" data-autosubmit>
+            <option value="">All</option>
+            <option value="true" selected="@Model.Unclassified">Unclassified</option>
         </select>
     </div>
 

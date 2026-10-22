@@ -77,6 +77,7 @@ public sealed class GenesysServiceFixture
     /// <summary>The ticket's typed event log — where the handoff story is recorded for Ticket Activity.</summary>
     public FakeTicketWorkflowEventRepository WorkflowEvents { get; } = new();
     public FakeTicketStatusHistoryRepository StatusHistory { get; } = new();
+    public FakeTicketApprovalRepository Approvals { get; } = new();
 
     /// <summary>The SLA services ticket creation runs through — exposed so a test can assert that an unclassified inquiry opened no period at all.</summary>
     public SlaServiceFixture Sla { get; }
@@ -121,15 +122,13 @@ public sealed class GenesysServiceFixture
     public FakeTicketPendingRecordRepository PendingRecords { get; } = new();
     public FakeOutboxWriter Outbox { get; } = new();
 
-    /// <param name="queueUnclassifiedForHuman">
-    /// Whether a ticket with no request type joins the human follow-up queue
-    /// (production default: true). Off here so the many tests of OTHER Genesys
-    /// behavior (handoffs, the inactivity timer…) are not disturbed by an
-    /// extra work item; the routing tests switch it on.
+    /// <param name="autoRaiseHandoffOnConversationEnd">
+    /// The rollback lever <c>Genesys:AutoRaiseHandoffOnConversationEnd</c> (production default: false — ending a conversation is not a
+    /// request for a human). Tests of the legacy safety net switch it on.
     /// </param>
-    public GenesysServiceFixture(bool enabled = true, int? inactivityTimeoutMinutes = null, bool queueUnclassifiedForHuman = false)
+    public GenesysServiceFixture(bool enabled = true, int? inactivityTimeoutMinutes = null, bool autoRaiseHandoffOnConversationEnd = false)
     {
-        Options = new GenesysOptions { Enabled = enabled, HumanQueueForUnclassified = queueUnclassifiedForHuman };
+        Options = new GenesysOptions { Enabled = enabled, AutoRaiseHandoffOnConversationEnd = autoRaiseHandoffOnConversationEnd };
         if (inactivityTimeoutMinutes is { } minutes)
         {
             Options.CustomerInactivityTimeoutMinutes = minutes;
@@ -183,9 +182,9 @@ public sealed class GenesysServiceFixture
             Options, Conversations, Handoffs, WorkflowEvents, Tickets, UnitOfWork, Audit, TimeProvider.System);
 
         RequestTypeClassification = new GenesysRequestTypeClassificationAppService(
-            Options, Tickets, Conversations, Handoffs,
+            Tickets, Approvals, Conversations, Handoffs,
             new TicketRequestTypeRoutingService(
-                RequestTypes, WorkflowTemplates, Departments, autoAssignment, sla.DueDates, StatusHistory, Audit),
+                RequestTypes, WorkflowTemplates, Departments, autoAssignment, sla.DueDates, StatusHistory, Audit, WorkflowEvents),
             new GenesysDefaultPriorityResolver(Options, new FakePriorityRepository()),
             AgentHandoff, UnitOfWork, TimeProvider.System);
 

@@ -75,7 +75,8 @@ public sealed class TicketQueryAppService(
             // Calendar days are UTC days — the dashboard's existing "today" convention.
             CreatedFromUtc: request.CreatedFrom?.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc),
             CreatedToUtc: request.CreatedTo?.AddDays(1).ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc),
-            NowUtc: timeProvider.GetUtcNow().UtcDateTime);
+            NowUtc: timeProvider.GetUtcNow().UtcDateTime,
+            Unclassified: request.Unclassified == true);
 
         var result = await ticketRepository.SearchAsync(query, cancellationToken);
 

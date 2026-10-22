@@ -1,0 +1,159 @@
+--- a/GenesysController.cs
++++ b/GenesysController.cs
+@@ -4,6 +4,7 @@
+ using Microsoft.AspNetCore.Http.Features;
+ using Microsoft.AspNetCore.Mvc;
+ using Microsoft.Extensions.Options;
++using System.Diagnostics;
+ using System.Globalization;
+ using System.Text.Json;
+ using Tiger.TigerGroupWeb.Genesys;
+@@ -93,44 +94,21 @@
+         // /api/genesys/tickets
+         // =========================================================
+         [HttpPost("tickets")]
+-        public async Task<IActionResult> CreateTicket(
+-            [FromBody] JsonElement body)
++        public Task<IActionResult> CreateTicket(
++            [FromBody] JsonElement body,
++            CancellationToken cancellationToken)
+         {
+-            try
+-            {
+-                var requestJson =
+-                    body.GetRawText();
+-
+-                using var response =
+-                    await _ticketingService.CreateTicketAsync(
+-                        requestJson);
+-
+-                var responseBody =
+-                    await response.Content.ReadAsStringAsync();
+-
+-                return new ContentResult
+-                {
+-                    StatusCode = (int)response.StatusCode,
+-                    Content = responseBody,
+-                    ContentType =
+-                        response.Content.Headers.ContentType?.ToString()
+-                        ?? "application/json"
+-                };
+-            }
+-            catch (Exception ex)
+-            {
+-                _logger.LogError(
+-                    ex,
+-                    "Genesys ticket creation failed while communicating with TigerCS Ticketing.");
+-
+-                return StatusCode(
+-                    StatusCodes.Status502BadGateway,
+-                    new
+-                    {
+-                        message =
+-                            "Unable to communicate with TigerCS Ticketing."
+-                    });
+-            }
++            // GetRawText() is the request body exactly as received, so
++            // requestType, transcript and every other field reach TigerCS
++            // untouched; the answer (status, bytes, content type,
++            // ProblemDetails, Retry-After) comes back as TigerCS gave it.
++            var requestJson = body.GetRawText();
++
++            return ForwardTicketJson(
++                "ticket creation",
++                ticketId: null,
++                token => _ticketingService.CreateTicketAsync(requestJson, token),
++                cancellationToken);
+         }
+ 
+         // =========================================================
+@@ -140,38 +118,67 @@
+         // /api/genesys/tickets/{ticketId}
+         // =========================================================
+         [HttpPatch("tickets/{ticketId:long}")]
+-        public async Task<IActionResult> UpdateTicket(
++        public Task<IActionResult> UpdateTicket(
+             long ticketId,
+-            [FromBody] JsonElement body)
++            [FromBody] JsonElement body,
++            CancellationToken cancellationToken)
+         {
++            var requestJson = body.GetRawText();
++
++            return ForwardTicketJson(
++                "ticket update",
++                ticketId,
++                token => _ticketingService.UpdateTicketAsync(ticketId, requestJson, token),
++                cancellationToken);
++        }
++
++        // Shared by ticket creation and update. The caller's disconnect and
++        // the forwarding budget both cancel the call; a timeout or network
++        // failure is NEVER retried here (the outcome is unknown - TigerCS
++        // is idempotent per conversationId, so the CALLER may resend the
++        // identical request). Nothing from the request or the response body
++        // is logged: only the operation, the status and the elapsed time.
++        private async Task<IActionResult> ForwardTicketJson(
++            string operation,
++            long? ticketId,
++            Func<CancellationToken, Task<HttpResponseMessage>> forward,
++            CancellationToken cancellationToken)
++        {
++            Response.Headers["Cache-Control"] = "no-store";
++
++            var clock = Stopwatch.StartNew();
++
+             try
+             {
+-                var requestJson =
+-                    body.GetRawText();
++                using var response = await forward(cancellationToken);
+ 
+-                using var response =
+-                    await _ticketingService.UpdateTicketAsync(
+-                        ticketId,
+-                        requestJson);
++                _logger.LogInformation(
++                    "Genesys {Operation} (TicketId {TicketId}) answered by TigerCS Ticketing: {StatusCode} in {ElapsedMs} ms.",
++                    operation, ticketId, (int)response.StatusCode, clock.ElapsedMilliseconds);
+ 
+-                var responseBody =
+-                    await response.Content.ReadAsStringAsync();
++                return await RelayAsync(response, cancellationToken);
++            }
++            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
++            {
++                _logger.LogWarning(
++                    "Genesys {Operation} (TicketId {TicketId}) timed out waiting for TigerCS Ticketing after {ElapsedMs} ms.",
++                    operation, ticketId, clock.ElapsedMilliseconds);
+ 
+-                return new ContentResult
+-                {
+-                    StatusCode = (int)response.StatusCode,
+-                    Content = responseBody,
+-                    ContentType =
+-                        response.Content.Headers.ContentType?.ToString()
+-                        ?? "application/json"
+-                };
++                return StatusCode(
++                    StatusCodes.Status504GatewayTimeout,
++                    new
++                    {
++                        message =
++                            "TigerCS Ticketing did not respond in time. " +
++                            "The result is unknown; resend the identical request - it is idempotent."
++                    });
+             }
+-            catch (Exception ex)
++            catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
+             {
++                // Exception type only: messages can carry URLs or credentials.
+                 _logger.LogError(
+-                    ex,
+-                    "Genesys ticket update failed for TicketId {TicketId} while communicating with TigerCS Ticketing.",
+-                    ticketId);
++                    "Genesys {Operation} (TicketId {TicketId}) failed while communicating with TigerCS Ticketing ({ErrorType}).",
++                    operation, ticketId, ex.GetType().Name);
+ 
+                 return StatusCode(
+                     StatusCodes.Status502BadGateway,

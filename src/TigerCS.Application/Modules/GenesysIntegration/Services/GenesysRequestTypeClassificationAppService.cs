@@ -17,14 +17,32 @@ namespace TigerCS.Application.Modules.GenesysIntegration.Services;
 ///
 /// <para>
 /// <b>Idempotent and conservative.</b> Re-sending the request type a ticket
-/// already has changes nothing; a <i>different</i> one is refused rather than
-/// silently reclassifying the ticket; an invalid one is refused before any
-/// write. Classification never touches the first-human-response measurement.
+/// already has changes nothing; an invalid one is refused before any write.
+/// Classification never touches the first-human-response measurement.
+/// </para>
+///
+/// <para>
+/// <b>The AI may refine its own classification — until a person has worked
+/// the ticket.</b> A <i>different</i> request type replaces the current one
+/// (history kept: <c>RequestTypeReclassified</c> workflow event + audit entry)
+/// only while <see cref="GetReclassificationBlockAsync"/> finds nothing in the way: the ticket is Open, nobody
+/// classified it by hand (no Category), no human has responded or accepted the
+/// interaction, and no approval was raised under the old type. Otherwise the
+/// change is refused with <see cref="GenesysClassificationOutcome.RequestTypeConflict"/>
+/// and the ticket is left exactly as it was.
+/// </para>
+///
+/// <para>
+/// <b>A missing classification is not a human request.</b> A ticket without a
+/// request type stays Unclassified and is picked up by the existing manual
+/// classification workflow (Classify Ticket / the Unclassified filters); no
+/// handoff row is written for it. Human work exists only when Genesys signals
+/// it explicitly through the handoff contract.
 /// </para>
 /// </summary>
 public sealed class GenesysRequestTypeClassificationAppService(
-    GenesysOptions options,
     ITicketRepository ticketRepository,
+    ITicketApprovalRepository approvalRepository,
     IGenesysConversationRepository conversationRepository,
     ITicketAgentHandoffRepository handoffRepository,
     TicketRequestTypeRoutingService routingService,
@@ -33,7 +51,10 @@ public sealed class GenesysRequestTypeClassificationAppService(
     ITicketingUnitOfWork unitOfWork,
     TimeProvider timeProvider)
 {
-    /// <summary>The handoff reason prefix that marks human work as "this ticket is waiting to be classified" — what lets a later classification stand exactly that work down and nothing else.</summary>
+    /// <summary>
+    /// The handoff reason prefix older versions of this service wrote on human work raised only because a ticket was unclassified. New tickets
+    /// never get such work; the prefix is kept so a later classification still stands down any that already exists.
+    /// </summary>
     public const string AwaitingClassificationReason = "Awaiting classification";
 
     /// <summary>
@@ -70,14 +91,23 @@ public sealed class GenesysRequestTypeClassificationAppService(
 
         var resolved = resolution.RequestType!;
 
+        var reclassify = false;
         if (ticket.RequestTypeId is { } existing)
         {
-            return existing == resolved.RequestTypeId
-                ? new GenesysClassificationResult(
-                    GenesysClassificationOutcome.AlreadyClassified, resolved.RequestTypeId, resolved.Name, ticket.CurrentDepartmentId)
-                : GenesysClassificationResult.Failure(
+            if (existing == resolved.RequestTypeId)
+            {
+                return new GenesysClassificationResult(
+                    GenesysClassificationOutcome.AlreadyClassified, resolved.RequestTypeId, resolved.Name, ticket.CurrentDepartmentId);
+            }
+
+            if (await GetReclassificationBlockAsync(ticket, cancellationToken) is { } block)
+            {
+                return GenesysClassificationResult.Failure(
                     GenesysClassificationOutcome.RequestTypeConflict,
-                    $"Ticket {ticket.TicketNumber} is already classified as request type {existing}; it is not reclassified by Genesys.");
+                    $"Ticket {ticket.TicketNumber} is classified as request type {existing} and was not changed to {resolved.RequestTypeId}: {block}");
+            }
+
+            reclassify = true;
         }
 
         if (ticket.TicketStatus == TicketStatus.Closed)
@@ -100,7 +130,7 @@ public sealed class GenesysRequestTypeClassificationAppService(
             try
             {
                 routed = await routingService.ApplyAsync(
-                    ticket, resolution, callerEmployeeId, source, defaultPriority, now, correlationId, cancellationToken);
+                    ticket, resolution, callerEmployeeId, source, defaultPriority, now, correlationId, cancellationToken, reclassify);
                 await unitOfWork.SaveChangesAsync(cancellationToken);
             }
             catch (TicketConcurrentlyModifiedException)
@@ -121,35 +151,46 @@ public sealed class GenesysRequestTypeClassificationAppService(
     }
 
     /// <summary>
-    /// The request type is missing or could not be resolved: the ticket stays
-    /// awaiting classification and joins the existing human follow-up queue
-    /// (the same pending work an agent accepts from Pending Interactions),
-    /// with the reason recorded on the work item.
+    /// The request type is missing: the ticket stays <b>Unclassified</b> and is left to the existing manual classification workflow.
+    /// <b>No handoff is raised</b> — a missing classification says nothing about whether the customer needs a person, and recording a
+    /// human request for it is what put "Waiting for agent" on conversations the bot was still handling.
     /// </summary>
-    public async Task<GenesysClassificationResult> AwaitClassificationAsync(
-        Guid callerEmployeeId, string conversationId, string reason, CancellationToken cancellationToken = default)
+    public static GenesysClassificationResult AwaitClassification(string reason) =>
+        new(GenesysClassificationOutcome.AwaitingClassification, Detail: reason);
+
+    /// <summary>
+    /// Why the AI may not replace this ticket's request type, or null when it may. The AI refines its own work only: once a person has
+    /// classified, answered, accepted or started an approval on the ticket, the classification is theirs.
+    /// </summary>
+    internal async Task<string?> GetReclassificationBlockAsync(Ticket ticket, CancellationToken cancellationToken)
     {
-        if (!options.HumanQueueForUnclassified)
+        if (ticket.TicketStatus != TicketStatus.Open)
         {
-            return new GenesysClassificationResult(
-                GenesysClassificationOutcome.AwaitingClassification,
-                Detail: $"{reason} The human follow-up queue is switched off (Genesys:HumanQueueForUnclassified).");
+            return $"the ticket is {ticket.TicketStatus}.";
         }
 
-        var handoff = await agentHandoffAppService.RequestAsync(
-            callerEmployeeId,
-            new GenesysHandoffRequestDto(
-                conversationId,
-                AgentAvailable: false,
-                Reason: $"{AwaitingClassificationReason}: {reason}",
-                Trigger: nameof(HandoffTrigger.RoutingDecision)),
-            cancellationToken);
+        if (ticket.CategoryId is not null)
+        {
+            return "a person classified it.";
+        }
 
-        var recorded = handoff.Outcome is GenesysHandoffOutcome.HandoffRecorded or GenesysHandoffOutcome.AlreadyRequested;
-        return new GenesysClassificationResult(
-            GenesysClassificationOutcome.AwaitingClassification,
-            HandoffStatus: recorded ? handoff.Status : null,
-            Detail: recorded ? reason : $"{reason} (human follow-up could not be queued: {handoff.Outcome})");
+        if (ticket.FirstHumanResponseAtUtc is not null)
+        {
+            return "a person has already responded to the customer.";
+        }
+
+        if ((await approvalRepository.ListByTicketIdAsync(ticket.TicketId, cancellationToken)).Count > 0)
+        {
+            return "an approval was already raised under the current request type.";
+        }
+
+        var handoffs = await handoffRepository.ListByTicketIdAsync(ticket.TicketId, cancellationToken);
+        if (handoffs.Any(h => h.Status is AgentHandoffStatus.Assigned or AgentHandoffStatus.InProgress or AgentHandoffStatus.Completed))
+        {
+            return "a human agent has taken the interaction.";
+        }
+
+        return null;
     }
 
     private async Task StandDownAwaitingClassificationWorkAsync(
