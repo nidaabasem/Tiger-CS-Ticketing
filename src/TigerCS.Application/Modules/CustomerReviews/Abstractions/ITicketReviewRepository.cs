@@ -20,6 +20,12 @@ public interface ITicketReviewRepository
     /// </summary>
     Task<bool> TryAddReviewAsync(TicketReview review, CancellationToken cancellationToken = default);
 
+    /// <summary>Every submitted review of the ticket (all cycles, test and production), oldest cycle first.</summary>
+    Task<IReadOnlyList<TicketReview>> ListReviewsForTicketAsync(long ticketId, CancellationToken cancellationToken = default);
+
+    /// <summary>Every review link issued for the ticket — read only to tell "asked, not yet answered" from "never asked". Callers must not expose tokens.</summary>
+    Task<IReadOnlyList<TicketReviewInvitation>> ListInvitationsForTicketAsync(long ticketId, CancellationToken cancellationToken = default);
+
     /// <summary>Production satisfaction figures. Test reviews (<c>IsTest</c>) are never included.</summary>
     Task<TicketReviewSummary> GetProductionSummaryAsync(CancellationToken cancellationToken = default);
 }

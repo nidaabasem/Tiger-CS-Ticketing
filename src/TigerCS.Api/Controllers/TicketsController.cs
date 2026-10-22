@@ -34,6 +34,7 @@ public class TicketsController(
     CustomerProfileAppService customerProfileAppService,
     TicketApprovalAppService ticketApprovalAppService,
     TicketInteractionQueryAppService ticketInteractionQueryAppService,
+    TigerCS.Application.Modules.CustomerReviews.Services.TicketReviewQueryAppService ticketReviewQueryAppService,
     TicketClassificationAppService ticketClassificationAppService) : ControllerBase
 {
     /// <summary>Create a ticket from an IntakeRecord. CS Agent/CS Supervisor only.</summary>
@@ -229,6 +230,36 @@ public class TicketsController(
         }
 
         var result = await ticketInteractionQueryAppService.GetForTicketAsync(
+            employeeId.Value, GetRoles(), ticketId, cancellationToken);
+        return result.Outcome switch
+        {
+            TicketQueryOutcome.Success => Ok(result.Response),
+            TicketQueryOutcome.Forbidden => Forbid(),
+            _ => NotFound()
+        };
+    }
+
+    /// <summary>The ticket's customer satisfaction reviews — one entry per review cycle (original resolution, then each reopen). Staff only.</summary>
+    /// <remarks>
+    /// Read from the persisted review store. A cycle is <c>Reviewed</c> only once the customer submitted a rating; a requested but
+    /// unanswered cycle is <c>Pending</c> and carries no rating. Test-mode reviews are flagged <c>IsTest</c>. Review tokens are
+    /// never returned. Visible to exactly the callers who can see the ticket itself.
+    /// </remarks>
+    /// <param name="ticketId">The ticket.</param>
+    /// <response code="200">The ticket's review cycles (possibly empty).</response>
+    /// <response code="404">No such ticket, or it is not visible to the caller.</response>
+    [HttpGet("{ticketId:long}/reviews")]
+    [ProducesResponseType<TigerCS.Application.Modules.CustomerReviews.Dto.TicketReviewsDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetReviews(long ticketId, CancellationToken cancellationToken)
+    {
+        var employeeId = GetEmployeeId();
+        if (employeeId is null)
+        {
+            return Unauthorized();
+        }
+
+        var result = await ticketReviewQueryAppService.GetForTicketAsync(
             employeeId.Value, GetRoles(), ticketId, cancellationToken);
         return result.Outcome switch
         {

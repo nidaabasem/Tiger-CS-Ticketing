@@ -219,6 +219,7 @@ public class SwaggerDocumentTests(SwaggerDocumentFixture fixture) : IClassFixtur
         "POST /api/pending-customer-interactions/{handoffId}/complete",
         "POST /api/pending-customer-interactions/{handoffId}/cancel",
         "GET /api/tickets/{ticketId}/interactions",
+        "GET /api/tickets/{ticketId}/reviews",
         "GET /api/admin/sla/configuration",
         "GET /api/admin/genesys/queue-mappings",
         "POST /api/admin/genesys/queue-mappings",

@@ -74,6 +74,11 @@ public sealed class TicketDetailsModel(
     /// <summary>True when the interactions call failed, so the tab says so instead of implying the ticket has no conversations.</summary>
     public bool InteractionsUnavailable { get; private set; }
 
+    /// <summary>Customer satisfaction review cycles; empty when none was requested or the viewer may not see them.</summary>
+    public IReadOnlyList<TigerCS.Application.Modules.CustomerReviews.Dto.TicketReviewCycleDto> Reviews { get; private set; } = [];
+
+    public bool ReviewsUnavailable { get; private set; }
+
     // ---- The customer behind this ticket (the Customer summary card). ----
     // Identity comes from the ticket's own persisted facts as the Api's
     // customer-history read resolves them: CRM Buyer id, else the external
@@ -808,11 +813,15 @@ public sealed class TicketDetailsModel(
         var approvalsTask = ticketsApiClient.GetApprovalsAsync(TicketId, cancellationToken);
         var interactionsTask = ticketsApiClient.GetInteractionsAsync(TicketId, cancellationToken);
         var historyTask = ticketsApiClient.GetLifecycleHistoryAsync(TicketId, cancellationToken);
+        var reviewsTask = ticketsApiClient.GetReviewsAsync(TicketId, cancellationToken);
         var downgradesTask = slaApiClient.GetPriorityDowngradeRequestsAsync(TicketId, cancellationToken);
 
         await Task.WhenAll(
             slaTask, notesTask, escalationsTask, assignableTask, assignableUsersTask, customerHistoryTask, approvalsTask, interactionsTask,
-            historyTask, downgradesTask);
+            historyTask, downgradesTask, reviewsTask);
+
+        Reviews = reviewsTask.Result.IsSuccess && reviewsTask.Result.Value is not null ? reviewsTask.Result.Value.Cycles : [];
+        ReviewsUnavailable = !reviewsTask.Result.IsSuccess;
 
         PendingDowngrade = downgradesTask.Result.IsSuccess && downgradesTask.Result.Value is not null
             ? downgradesTask.Result.Value.FirstOrDefault(r => r.Status == nameof(PriorityDowngradeRequestStatus.Pending))

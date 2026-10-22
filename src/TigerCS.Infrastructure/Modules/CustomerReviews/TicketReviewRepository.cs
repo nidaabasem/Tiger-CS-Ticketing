@@ -33,6 +33,18 @@ public sealed class TicketReviewRepository(TigerCsDbContext dbContext) : ITicket
         }
     }
 
+    public async Task<IReadOnlyList<TicketReview>> ListReviewsForTicketAsync(long ticketId, CancellationToken cancellationToken = default) =>
+        await dbContext.TicketReviews.AsNoTracking()
+            .Where(r => r.TicketId == ticketId)
+            .OrderBy(r => r.ReopenCycle).ThenBy(r => r.IsTest)
+            .ToListAsync(cancellationToken);
+
+    public async Task<IReadOnlyList<TicketReviewInvitation>> ListInvitationsForTicketAsync(long ticketId, CancellationToken cancellationToken = default) =>
+        await dbContext.TicketReviewInvitations.AsNoTracking()
+            .Where(i => i.TicketId == ticketId)
+            .OrderBy(i => i.ReopenCycle).ThenBy(i => i.CreatedAtUtc)
+            .ToListAsync(cancellationToken);
+
     public async Task<TicketReviewSummary> GetProductionSummaryAsync(CancellationToken cancellationToken = default)
     {
         var ratings = await dbContext.TicketReviews.AsNoTracking()

@@ -50,7 +50,7 @@ public sealed class CustomerContactResolver(
             snapshot?.SnapshotContactDisplayName,
             ticket.CrmBuyerCustomerName,
             originating?.CustomerName,
-            interactions.Select(i => i.CustomerName).LastOrDefault(n => !string.IsNullOrWhiteSpace(n)));
+            interactions.Select(i => i.CustomerName).LastOrDefault(CustomerNameValidator.IsValid));
 
         var candidates = new List<string?>
         {
@@ -101,7 +101,7 @@ public sealed class CustomerContactResolver(
     }
 
     private static string? FirstNonBlank(params string?[] values) =>
-        values.Select(v => v?.Trim()).FirstOrDefault(v => !string.IsNullOrEmpty(v));
+        values.Select(CustomerNameValidator.Sanitize).FirstOrDefault(v => v is not null);
 }
 
 /// <param name="DisplayName">Customer name for the greeting, when any source recorded one.</param>

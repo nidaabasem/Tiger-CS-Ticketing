@@ -3,6 +3,7 @@ using System.Net;
 using System.Text;
 using TigerCS.Application.Modules.CustomerReviews.Dto;
 using TigerCS.Application.Modules.Notifications.Abstractions;
+using TigerCS.Application.Modules.Notifications.Services;
 using TigerCS.Domain.Modules.Ticketing;
 
 namespace TigerCS.Application.Modules.Notifications.Templates;
@@ -164,8 +165,15 @@ public static class CustomerEmailTemplates
         }
     }
 
-    private static string FormatDate(DateTime utc) =>
-        utc.ToString("dd MMMM yyyy, HH:mm 'UTC'", CultureInfo.InvariantCulture);
+    /// <summary>The UAE has no daylight saving: local time is always UTC+4.</summary>
+    private static readonly TimeSpan UaeOffset = TimeSpan.FromHours(4);
+
+    /// <summary>Every date in a customer email is UAE time (UTC+4), whatever the host's own zone.</summary>
+    internal static string FormatDate(DateTime utc)
+    {
+        var instant = utc.Kind == DateTimeKind.Local ? utc.ToUniversalTime() : DateTime.SpecifyKind(utc, DateTimeKind.Utc);
+        return instant.Add(UaeOffset).ToString("dd MMMM yyyy, HH:mm 'GST (UTC+4)'", CultureInfo.InvariantCulture);
+    }
 
     private static CustomerEmailContent Render(
         CustomerEmailTicketModel model,
@@ -176,7 +184,8 @@ public static class CustomerEmailTemplates
         ReviewInvitationLinks? review)
     {
         var t = Text.For(model.Language);
-        var greeting = string.IsNullOrWhiteSpace(model.CustomerName) ? t.GreetingAnonymous : t.Greeting(model.CustomerName.Trim());
+        var validName = CustomerNameValidator.Sanitize(model.CustomerName);
+        var greeting = validName is null ? t.GreetingAnonymous : t.Greeting(validName);
         var branding = model.Branding ?? CustomerEmailBranding.Default;
         var safeReview = SafeReview(review);
 
@@ -289,7 +298,7 @@ public static class CustomerEmailTemplates
 
         // Header: logo (or the brand name when no logo URL is configured) over a gold rule.
         sb.Append("<tr><td align=\"center\" style=\"padding:26px 24px 20px 24px;border-bottom:1px solid #e5e5e5;background-color:#ffffff;\" bgcolor=\"#ffffff\">");
-        if (IsHttpUrl(branding.LogoUrl))
+        if (CustomerEmailBranding.IsPublicHttpsUrl(branding.LogoUrl))
         {
             sb.Append("<img src=\"").Append(E(branding.LogoUrl!)).Append("\" alt=\"").Append(E(BrandName))
               .Append("\" width=\"110\" style=\"display:block;margin:0 auto;border:0;outline:none;text-decoration:none;width:110px;height:auto;\">");
@@ -425,7 +434,7 @@ public static class CustomerEmailTemplates
         public string ReopenedOn => P("Reopened on", "تاريخ إعادة الفتح");
         public string Closed => P("Closed", "مغلقة");
 
-        public string GreetingAnonymous => P("Dear Customer,", "عزيزي العميل،");
+        public string GreetingAnonymous => P("Dear Customer,", "عزيزنا العميل،");
         public string Greeting(string name) => P($"Dear {name},", $"عزيزي/عزيزتي {name}،");
 
         public string KindRegards => P("Kind regards,", "مع أطيب التحيات،");

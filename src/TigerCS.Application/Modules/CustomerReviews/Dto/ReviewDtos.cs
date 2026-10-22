@@ -46,3 +46,27 @@ public sealed record ReviewTokenRequestDto(string? Token);
 
 /// <summary>The token, the star rating and the optional comment.</summary>
 public sealed record SubmitTicketReviewRequestDto(string? Token, int Rating, string? Comment);
+
+/// <summary>
+/// One review cycle of a ticket as shown in Ticket Details. Carries no token, token hash or link — only what the customer
+/// submitted and when. <paramref name="Rating"/>, <paramref name="Comment"/> and <paramref name="SubmittedAtUtc"/> are
+/// <c>null</c> until the customer has actually submitted.
+/// </summary>
+/// <param name="ReopenCycle">0 for the original resolution; 1, 2 … after each reopen.</param>
+/// <param name="Status"><c>Pending</c> (a review was requested, none submitted) or <c>Reviewed</c>.</param>
+/// <param name="IsTest">Submitted through a Test-mode link; excluded from production statistics.</param>
+/// <param name="Rating">The submitted 1–5 rating; null while Pending.</param>
+/// <param name="Comment">The customer's optional comment; null when none was given.</param>
+/// <param name="SubmittedAtUtc">When the customer submitted, in UTC; null while Pending.</param>
+/// <param name="RequestedAtUtc">When the review was (first) requested by email, in UTC.</param>
+public sealed record TicketReviewCycleDto(
+    int ReopenCycle,
+    string Status,
+    bool IsTest,
+    int? Rating,
+    string? Comment,
+    DateTime? SubmittedAtUtc,
+    DateTime? RequestedAtUtc);
+
+/// <summary>The customer satisfaction reviews of one ticket, oldest cycle first.</summary>
+public sealed record TicketReviewsDto(long TicketId, IReadOnlyList<TicketReviewCycleDto> Cycles);
