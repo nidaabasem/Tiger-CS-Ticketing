@@ -19,6 +19,9 @@ builder.Services.AddRazorPages(options =>
     // Genesys Secure Screen Pop: opened in a browser with no TigerCS cookie;
     // the one-time token it carries is what signs the agent in.
     options.Conventions.AllowAnonymousToPage("/ScreenPop");
+    // Customer satisfaction review: opened from an email link by a customer with no TigerCS login. The opaque token is the
+    // credential and TigerCS.Api validates it on every call; a GET never saves anything.
+    options.Conventions.AllowAnonymousToPage("/Review");
 
     // Administration area: System Administrator only. This only decides what
     // the Web renders — every api/admin/* endpoint enforces the same policy
@@ -48,6 +51,9 @@ builder.Services.AddScoped<TicketNameResolver>();
 // nothing); logout and change-password run inside one and need the token.
 builder.Services.AddHttpClient<AuthApiClient>(client => client.BaseAddress = new Uri(apiBaseUrl))
     .AddHttpMessageHandler<BearerTokenHandler>();
+
+// The public review page calls anonymous endpoints: no session exists, so no bearer handler.
+builder.Services.AddHttpClient<ReviewsApiClient>(client => client.BaseAddress = new Uri(apiBaseUrl));
 
 // Every other client calls authenticated endpoints.
 builder.Services.AddHttpClient<TicketsApiClient>(client => client.BaseAddress = new Uri(apiBaseUrl))

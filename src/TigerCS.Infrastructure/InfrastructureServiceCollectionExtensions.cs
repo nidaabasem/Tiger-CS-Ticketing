@@ -18,6 +18,8 @@ using TigerCS.Application.Modules.Collections.Services;
 using TigerCS.Application.Modules.CrmDocuments;
 using TigerCS.Application.Modules.CrmDocuments.Abstractions;
 using TigerCS.Application.Modules.CrmDocuments.Services;
+using TigerCS.Application.Modules.CustomerReviews.Abstractions;
+using TigerCS.Application.Modules.CustomerReviews.Services;
 using TigerCS.Application.Modules.CustomerVerification.Abstractions;
 using TigerCS.Application.Modules.CustomerVerification.Services;
 using TigerCS.Application.Modules.GenesysIntegration;
@@ -41,6 +43,7 @@ using TigerCS.Infrastructure.Audit;
 using TigerCS.Infrastructure.BackgroundJobs;
 using TigerCS.Infrastructure.Identity;
 using TigerCS.Infrastructure.Modules.Collections;
+using TigerCS.Infrastructure.Modules.CustomerReviews;
 using TigerCS.Infrastructure.Modules.CustomerVerification.Repositories;
 using TigerCS.Infrastructure.Modules.GenesysIntegration.Repositories;
 using TigerCS.Infrastructure.Modules.IdentityAndAccess.Authorization;
@@ -439,6 +442,12 @@ public static class InfrastructureServiceCollectionExtensions
         // later consumer (SLA breach alerts, Genesys event processing) is one
         // registration with no dispatcher change.
         services.AddScoped<CustomerContactResolver>();
+        services.AddScoped<CustomerTicketSubjectResolver>();
+
+        // Customer satisfaction reviews: secure review links in Resolved/Closed emails and the public page's server logic.
+        services.AddScoped<ITicketReviewRepository, TicketReviewRepository>();
+        services.AddScoped<TicketReviewInvitationService>();
+        services.AddScoped<TicketReviewAppService>();
         services.AddScoped<IOutboxEventHandler, TicketAcknowledgementHandler>();
         services.AddScoped<IOutboxEventHandler, TicketResolvedNotificationHandler>();
         services.AddScoped<IOutboxEventHandler, TicketClosedNotificationHandler>();

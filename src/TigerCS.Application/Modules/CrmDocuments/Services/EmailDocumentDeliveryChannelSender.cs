@@ -66,6 +66,7 @@ public sealed class EmailDocumentDeliveryChannelSender(IEmailSender emailSender,
         {
             EmailSendOutcome.Sent => new DocumentDeliveryResult(DocumentDeliveryOutcome.Sent, TestRedirected: route.Redirected),
             EmailSendOutcome.TransientFailure => new DocumentDeliveryResult(DocumentDeliveryOutcome.TransientFailure, "EMAIL_TRANSIENT_FAILURE"),
+            EmailSendOutcome.Suppressed => new DocumentDeliveryResult(DocumentDeliveryOutcome.PermanentFailure, "CUSTOMER_NOTIFICATIONS_SUPPRESSED"),
             _ => new DocumentDeliveryResult(DocumentDeliveryOutcome.PermanentFailure, "EMAIL_REJECTED")
         };
     }

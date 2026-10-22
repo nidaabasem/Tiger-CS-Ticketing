@@ -48,9 +48,23 @@ public interface IEmailSender
 /// <param name="CorrelationId">ADR-0014's correlation ID, propagated into provider calls so a delivery is traceable end-to-end.</param>
 /// <param name="HtmlBody">Optional rendered HTML alternative. Adapters that support multipart mail send both; the plain text is the fallback.</param>
 /// <param name="Attachments">Optional files (customer document copies). Held in memory for the send only.</param>
+/// <param name="Audience">
+/// Who the recipient is. Defaults to <see cref="EmailAudience.Customer"/> so that a caller which forgets to say is treated as
+/// customer-facing and is therefore subject to <c>CustomerNotifications:IsTestMode</c> — the safe direction.
+/// </param>
 public sealed record EmailMessage(
     string ToAddress, string Subject, string Body, Guid CorrelationId, string? HtmlBody = null,
-    IReadOnlyList<EmailAttachment>? Attachments = null);
+    IReadOnlyList<EmailAttachment>? Attachments = null, EmailAudience Audience = EmailAudience.Customer);
+
+/// <summary>Who an <see cref="EmailMessage"/> is for. The final delivery guard applies <c>CustomerNotifications:IsTestMode</c> to everything that is not <see cref="Internal"/>.</summary>
+public enum EmailAudience
+{
+    /// <summary>A customer's mailbox. Redirected to <c>TestEmail</c> when <c>CustomerNotifications:IsTestMode</c> is on.</summary>
+    Customer = 0,
+
+    /// <summary>A staff or administrator mailbox. Never affected by the customer notification mode.</summary>
+    Internal = 1
+}
 
 /// <summary>A file sent with an email — used for customer document copies. Held in memory only for the length of the send; never logged and never persisted by the sender.</summary>
 public sealed record EmailAttachment(string FileName, string ContentType, byte[] Content);
@@ -65,7 +79,10 @@ public enum EmailSendOutcome
     TransientFailure = 2,
 
     /// <summary>A failure no retry can fix — a rejected address, a refused sender identity. Dead-letters immediately rather than burning the whole retry budget on a certainty.</summary>
-    PermanentFailure = 3
+    PermanentFailure = 3,
+
+    /// <summary>Deliberately not sent: the customer notification mode forbids it. Terminal, expected, and never retried.</summary>
+    Suppressed = 4
 }
 
 /// <param name="Outcome">How the attempt ended.</param>
@@ -77,4 +94,6 @@ public sealed record EmailSendResult(EmailSendOutcome Outcome, string? Error = n
     public static EmailSendResult Transient(string error) => new(EmailSendOutcome.TransientFailure, error);
 
     public static EmailSendResult Permanent(string error) => new(EmailSendOutcome.PermanentFailure, error);
+
+    public static EmailSendResult Suppressed(string reason) => new(EmailSendOutcome.Suppressed, reason);
 }

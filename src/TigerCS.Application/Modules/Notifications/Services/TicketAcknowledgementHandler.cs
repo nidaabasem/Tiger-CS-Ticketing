@@ -38,10 +38,11 @@ public sealed class TicketAcknowledgementHandler(
     IAuditEntryWriter auditWriter,
     CustomerNotificationPolicy policy,
     TimeProvider timeProvider,
+    CustomerNotificationModePolicy modePolicy,
     IRequestTypeRepository requestTypeRepository,
     ICategoryRepository categoryRepository)
     : CustomerTicketEmailHandler(
-        ticketRepository, notificationRepository, contactResolver, emailSender, auditWriter, policy, timeProvider)
+        ticketRepository, notificationRepository, contactResolver, emailSender, auditWriter, policy, timeProvider, modePolicy)
 {
     public override string EventType => OutboxEventTypes.TicketCreated;
 
@@ -75,6 +76,9 @@ public sealed class TicketAcknowledgementHandler(
             ticket.TicketNumber,
             contact.DisplayName,
             ticket.CreatedAtUtc,
-            RequestTypeName: requestTypeName));
+            RequestTypeName: requestTypeName,
+            Language: contact.Language,
+            Branding: ModePolicy.Branding,
+            IsTest: ModePolicy.IsTest));
     }
 }

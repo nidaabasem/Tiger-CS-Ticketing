@@ -287,6 +287,11 @@ public class ProtectedEndpointInventoryTests : IClassFixture<TigerCsApiFactory>
         // credential is a one-time, one-hour Screen Pop token issued only to
         // the authenticated Genesys service account, and the session it
         // yields is the mapped user's ordinary one (GenesysScreenPopEndpointsTests).
+        //
+        // /api/public/ticket-reviews/{lookup,submit} are anonymous because they serve the customer satisfaction review
+        // page, opened from an email link by a customer with no login. The credential is a random 256-bit single-ticket
+        // token (only its hash is stored, it expires, and one review is accepted per ticket); lookup is read-only and
+        // submit is the only write (PublicTicketReviewEndpointsTests, TicketReviewFlowTests).
         using var scope = _factory.Services.CreateScope();
         var endpoints = scope.ServiceProvider.GetRequiredService<EndpointDataSource>();
 
@@ -302,6 +307,8 @@ public class ProtectedEndpointInventoryTests : IClassFixture<TigerCsApiFactory>
             [
                 "/api/auth/login",
                 "/api/auth/screen-pop/redeem",
+                "/api/public/ticket-reviews/lookup",
+                "/api/public/ticket-reviews/submit",
                 "/health",
                 "/openapi/{documentName}.json",
                 "/swagger/{documentName}/swagger.json"

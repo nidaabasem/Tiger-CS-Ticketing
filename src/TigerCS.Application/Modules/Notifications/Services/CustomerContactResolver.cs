@@ -74,13 +74,30 @@ public sealed class CustomerContactResolver(
             sawCandidate = true;
             if (CustomerEmailAddress.IsValid(normalized))
             {
-                return CustomerContact.Deliverable(displayName, normalized);
+                return CustomerContact.Deliverable(displayName, normalized) with { Language = LanguageFor(displayName) };
             }
         }
 
         return CustomerContact.NotDeliverable(
             displayName,
-            sawCandidate ? CustomerEmailSkipReasons.InvalidCustomerEmail : CustomerEmailSkipReasons.NoCustomerEmail);
+            sawCandidate ? CustomerEmailSkipReasons.InvalidCustomerEmail : CustomerEmailSkipReasons.NoCustomerEmail)
+            with { Language = LanguageFor(displayName) };
+    }
+
+    /// <summary>
+    /// No ticket stores a preferred language, so the email language follows the customer's name: a name written mostly in
+    /// Arabic script gets the Arabic (right-to-left) email, anything else English.
+    /// </summary>
+    public static string LanguageFor(string? displayName)
+    {
+        if (string.IsNullOrWhiteSpace(displayName))
+        {
+            return "en";
+        }
+
+        var letters = displayName.Count(char.IsLetter);
+        var arabic = displayName.Count(c => c is >= '\u0600' and <= '\u06FF' or >= '\u0750' and <= '\u077F');
+        return letters > 0 && arabic * 2 >= letters ? "ar" : "en";
     }
 
     private static string? FirstNonBlank(params string?[] values) =>
@@ -90,7 +107,8 @@ public sealed class CustomerContactResolver(
 /// <param name="DisplayName">Customer name for the greeting, when any source recorded one.</param>
 /// <param name="EmailAddress">A validated, trimmed address — or <c>null</c> when none is usable.</param>
 /// <param name="SkipReason">A <see cref="CustomerEmailSkipReasons"/> code when <see cref="EmailAddress"/> is <c>null</c>.</param>
-public sealed record CustomerContact(string? DisplayName, string? EmailAddress, string? SkipReason)
+/// <param name="Language">Email language, <c>en</c> or <c>ar</c>.</param>
+public sealed record CustomerContact(string? DisplayName, string? EmailAddress, string? SkipReason, string Language = "en")
 {
     public bool IsDeliverable => EmailAddress is not null;
 
