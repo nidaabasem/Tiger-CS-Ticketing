@@ -93,7 +93,7 @@ public class GenesysController(
     /// assignment runs (no eligible employee leaves it in the department
     /// queue) and its SLA policy replaces the Normal-priority targets
     /// without restarting the clock. With no request type supplied the ticket
-    /// stays awaiting classification in the existing human follow-up queue;
+    /// stays Unclassified for the existing manual classification workflow (no human handoff is recorded);
     /// the bot can send it later on <c>PATCH</c>. A repeated delivery of the
     /// same <c>conversationId</c> changes nothing.
     /// </para>
@@ -321,7 +321,7 @@ public class GenesysController(
 
             GenesysTicketUpdateOutcome.ConcurrencyConflict => Problem(
                 type: "https://tigercs.internal/problems/concurrency-conflict",
-                title: "The ticket changed while it was being classified",
+                title: "The ticket or conversation changed while the request was applied",
                 detail: result.Detail,
                 statusCode: StatusCodes.Status409Conflict),
 

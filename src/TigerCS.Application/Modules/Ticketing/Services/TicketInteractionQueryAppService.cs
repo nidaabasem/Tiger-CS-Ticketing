@@ -131,5 +131,36 @@ public sealed class TicketInteractionQueryAppService(
                 handoff.AssignedEmployeeId,
                 handoff.GenesysAgentId,
                 handoff.ResolvedAtUtc,
-                handoff.ResolutionNote));
+                handoff.ResolutionNote,
+                handoff.Trigger?.ToString()),
+        DescribeHandlingState(interaction, messages, handoff));
+
+    /// <summary>
+    /// Who is handling the interaction, from facts only: a person took the
+    /// requested work, a person's line is in the transcript, a Ticketing user is
+    /// recorded as handler, or — on the phone, where a person always answers —
+    /// Genesys named an agent. A conversation with no human signal is the AI's,
+    /// and an outstanding explicit handoff request reads as "waiting", never as
+    /// a human being present.
+    /// </summary>
+    private static string? DescribeHandlingState(
+        TicketInteraction interaction, IReadOnlyList<TicketInteractionMessage> messages, TicketAgentHandoff? handoff)
+    {
+        if (interaction.Source != InteractionContextSource.Genesys)
+        {
+            return null;
+        }
+
+        var humanTookIt =
+            handoff is { Status: AgentHandoffStatus.Assigned or AgentHandoffStatus.InProgress or AgentHandoffStatus.Completed }
+            || interaction.HandledByUserId is not null
+            || messages.Any(m => m.Sender == InteractionMessageSender.HumanAgent)
+            || (interaction.ChannelId == WellKnownChannels.Phone && !string.IsNullOrWhiteSpace(interaction.GenesysAgentId));
+        if (humanTookIt)
+        {
+            return "Human";
+        }
+
+        return handoff is { Status: AgentHandoffStatus.WaitingForAgent } ? "WaitingForHuman" : "Ai";
+    }
 }

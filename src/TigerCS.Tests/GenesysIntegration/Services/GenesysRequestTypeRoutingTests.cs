@@ -17,7 +17,8 @@ namespace TigerCS.Tests.GenesysIntegration.Services;
 /// later by the bot — routes the ticket to its configured department, runs
 /// the existing automatic assignment and applies its SLA policy without
 /// restarting the clock. A missing/unusable request type leaves the ticket
-/// awaiting classification in the human follow-up queue.
+/// Unclassified for the existing manual classification workflow — never a
+/// human handoff.
 /// </summary>
 public class GenesysRequestTypeRoutingTests
 {
@@ -27,9 +28,9 @@ public class GenesysRequestTypeRoutingTests
     private sealed record World(
         GenesysServiceFixture F, Department Arrival, Department Finance, RequestType RequestType);
 
-    private static World Build(bool queueUnclassified = false)
+    private static World Build()
     {
-        var f = new GenesysServiceFixture(queueUnclassifiedForHuman: queueUnclassified);
+        var f = new GenesysServiceFixture();
         var (arrival, _) = f.SeedGenesysDepartment("Customer Service", "CS");
         var finance = f.Departments.AddDepartment("Finance", "FIN");
         var template = f.WorkflowTemplates.Add(TestWorkflows.PublishedStandard(workflowId: 300));
@@ -148,9 +149,9 @@ public class GenesysRequestTypeRoutingTests
     // ---- Missing / unresolved request type → human classification queue ----
 
     [Fact]
-    public async Task MissingRequestType_StaysAwaitingClassification_InTheHumanFollowUpQueue()
+    public async Task MissingRequestType_StaysUnclassified_AndRaisesNoHumanHandoff()
     {
-        var w = Build(queueUnclassified: true);
+        var w = Build();
 
         var result = await w.F.Ingestion.IngestAsync(ServiceAccount, Inquiry(w, "conv-missing"));
 
@@ -158,15 +159,15 @@ public class GenesysRequestTypeRoutingTests
         Assert.Equal("AwaitingClassification", result.Classification!.Status);
         Assert.Null(ticket.RequestTypeId);
         Assert.Equal(w.Arrival.DepartmentId, ticket.CurrentDepartmentId);
-        var work = Assert.Single(w.F.Handoffs.All);
-        Assert.Equal(AgentHandoffStatus.WaitingForAgent, work.Status);
-        Assert.StartsWith(GenesysRequestTypeClassificationAppService.AwaitingClassificationReason, work.RequestReason);
+        // Missing classification is NOT a request for a human.
+        Assert.Empty(w.F.Handoffs.All);
+        Assert.DoesNotContain(w.F.WorkflowEvents.All, e => e.EventType == WorkflowEventType.HandoffRequested);
     }
 
     [Fact]
-    public async Task MissingRequestType_CreatesTheTicketOnNormalPriority_AndPlacesItInTheHumanClassificationQueue()
+    public async Task MissingRequestType_CreatesTheTicketOnNormalPriority_AndLeavesItForManualClassification()
     {
-        var w = Build(queueUnclassified: true);
+        var w = Build();
 
         var result = await w.F.Ingestion.IngestAsync(ServiceAccount, Inquiry(w, "conv-missing-normal"));
         var blank = await w.F.Ingestion.IngestAsync(ServiceAccount, Inquiry(w, "conv-blank-normal", new GenesysRequestTypeDto(Name: "   ")));
@@ -181,8 +182,7 @@ public class GenesysRequestTypeRoutingTests
             Assert.False(t.IsClassified);
             Assert.Equal(SlaState.Running, t.SlaState);                       // the Normal SLA runs from creation
         });
-        Assert.Equal(2, w.F.Handoffs.All.Count);                              // one human work item per ticket
-        Assert.All(w.F.Handoffs.All, h => Assert.StartsWith(GenesysRequestTypeClassificationAppService.AwaitingClassificationReason, h.RequestReason));
+        Assert.Empty(w.F.Handoffs.All);                                       // no human work item for a missing classification
         Assert.All([result, blank], r => Assert.Equal("AwaitingClassification", r.Classification!.Status));
     }
 
@@ -193,7 +193,7 @@ public class GenesysRequestTypeRoutingTests
     [InlineData("ambiguous-name")]
     public async Task ExplicitlyInvalidRequestType_IsRefused_BeforeAnythingIsWritten(string kind)
     {
-        var w = Build(queueUnclassified: true);
+        var w = Build();
         var inactive = w.F.RequestTypes.Add(new RequestType(
             w.Finance.DepartmentId, "Retired", w.RequestType.WorkflowId, (byte)PriorityLevel.Medium, false, true, true, true, isActive: false));
         var other = w.F.Departments.AddDepartment("Legal", "LGL");
@@ -246,9 +246,9 @@ public class GenesysRequestTypeRoutingTests
     // ---- Classification received later → routing without losing SLA history ----
 
     [Fact]
-    public async Task ClassificationReceivedLater_Routes_StandsDownTheQueue_AndNeverRestartsTheSlaClock()
+    public async Task ClassificationReceivedLater_Routes_AndNeverRestartsTheSlaClock()
     {
-        var w = Build(queueUnclassified: true);
+        var w = Build();
         var employee = AddFinanceEmployee(w);
         w.F.AssignmentRules.Add(RequestTypeAssignmentRule.ForSpecificEmployee(w.RequestType.RequestTypeId, employee));
         // A request-type SLA on the Normal tier: 8 calendar hours to resolve.
@@ -260,7 +260,7 @@ public class GenesysRequestTypeRoutingTests
         var before = Assert.Single(w.F.Sla.SlaInstances.All);
         var startedAt = before.PeriodStartAtUtc;
         var priorResolutionDue = before.ResolutionDueAtUtc;
-        Assert.Single(w.F.Handoffs.All);
+        Assert.Empty(w.F.Handoffs.All);
 
         var result = await w.F.TicketUpdate.UpdateAsync(
             ServiceAccount, ticket.TicketId,
@@ -272,8 +272,8 @@ public class GenesysRequestTypeRoutingTests
         Assert.Equal(w.Arrival.DepartmentId, ticket.OriginatingDepartmentId);
         Assert.Equal(employee, ticket.CurrentOwnerEmployeeId);
 
-        // The "awaiting classification" work was stood down — only that work.
-        Assert.Equal(AgentHandoffStatus.Cancelled, Assert.Single(w.F.Handoffs.All).Status);
+        // Classification raises no human work and leaves none behind.
+        Assert.Empty(w.F.Handoffs.All);
 
         // The SAME period, from the SAME start: the request-type policy was
         // applied to it, measured from the original clock start.
@@ -312,7 +312,7 @@ public class GenesysRequestTypeRoutingTests
     }
 
     [Fact]
-    public async Task Update_RepeatingTheSameRequestType_IsIdempotent_AnInvalidOrDifferentOneIsRefused()
+    public async Task Update_RepeatingTheSameRequestType_IsIdempotent_AnInvalidOneIsRefused_ADifferentOneReclassifiesWhileNoHumanHasWorkedTheTicket()
     {
         var w = Build();
         var ticket = await IngestAsync(w, "conv-idem");
@@ -330,8 +330,9 @@ public class GenesysRequestTypeRoutingTests
         Assert.Equal(auditCount, w.F.Audit.Entries.Count); // nothing re-audited, nothing re-routed
 
         var different = await w.F.TicketUpdate.UpdateAsync(ServiceAccount, ticket.TicketId, Update(new GenesysRequestTypeDto(other.RequestTypeId)));
-        Assert.Equal(GenesysTicketUpdateOutcome.RequestTypeConflict, different.Outcome);
-        Assert.Equal(w.RequestType.RequestTypeId, ticket.RequestTypeId);
+        Assert.Equal(GenesysTicketUpdateOutcome.Applied, different.Outcome);
+        Assert.Equal(GenesysClassificationOutcome.Classified, different.Classification!.Outcome);
+        Assert.Equal(other.RequestTypeId, ticket.RequestTypeId);
 
         var invalid = await w.F.TicketUpdate.UpdateAsync(ServiceAccount, ticket.TicketId, Update(new GenesysRequestTypeDto(Name: "No Such Thing")));
         Assert.Equal(GenesysTicketUpdateOutcome.InvalidRequestType, invalid.Outcome); // validated first, whatever the ticket already has

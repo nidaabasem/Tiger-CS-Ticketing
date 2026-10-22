@@ -1,0 +1,478 @@
+--- a/TicketingGenesysService.cs
++++ b/TicketingGenesysService.cs
+@@ -17,6 +17,80 @@
+ 
+         private const string TokenCacheKey = "TigerCS_Genesys_AccessToken";
+ 
++        // One login at a time per process: the cache is per process too, so a
++        // burst of calls with an empty cache makes ONE login, not one each.
++        private static readonly SemaphoreSlim TokenLock = new(1, 1);
++
++        // The login call is always bounded, even for callers that pass no token.
++        private static readonly TimeSpan LoginTimeout = TimeSpan.FromSeconds(15);
++
++        private static readonly TimeSpan TokenRenewMargin = TimeSpan.FromMinutes(2);
++        private static readonly TimeSpan TokenMaximumLifetime = TimeSpan.FromMinutes(20);
++        private static readonly TimeSpan TokenMinimumLifetime = TimeSpan.FromSeconds(10);
++
++        // A token must still be accepted for at least this long when it is issued, so that
++        // it covers the forwarded call (ForwardBudget) and Ticketing's clock skew.
++        private static readonly TimeSpan TokenMinimumUsableValidity = TimeSpan.FromSeconds(60);
++
++        /// <summary>What to do with a freshly issued service token.</summary>
++        public enum TokenUse
++        {
++            /// <summary>Use it and keep it in the cache for <see cref="TokenLifetime.CacheFor"/>.</summary>
++            Cache,
++
++            /// <summary>Valid for the call at hand but too close to expiry to be worth keeping: use it once, never cache it.</summary>
++            UseOnce,
++
++            /// <summary>Already expired, or valid for less than the minimum usable time: it is neither cached nor used.</summary>
++            Reject
++        }
++
++        /// <summary>The decision <see cref="ComputeTokenLifetime"/> makes about a token.</summary>
++        public readonly record struct TokenLifetime(TokenUse Use, TimeSpan CacheFor);
++
++        /// <summary>
++        /// One time budget for a forwarded Create/Update (and the OTP/document POSTs): TigerCS login, the call, buffering
++        /// the response and the single authentication retry. When it runs out the call is cancelled (the controller answers 504).
++        /// Keep it below the timeout configured on the Genesys data action.
++        /// </summary>
++        public TimeSpan ForwardBudget { get; init; } = TimeSpan.FromSeconds(30);
++
++        /// <summary>
++        /// Decides what happens to a token whose login answer said it stops being accepted at <paramref name="expiresAtUtc"/>:
++        /// <list type="bullet">
++        /// <item><description>No expiry in the answer: cached for the previous fixed 20 minutes (the 401 refresh covers a wrong guess).</description></item>
++        /// <item><description>Expired, or valid for less than 60 seconds: <see cref="TokenUse.Reject"/> - never cached, never used.</description></item>
++        /// <item><description>Valid, but less than 2 minutes + 10 seconds remain: <see cref="TokenUse.UseOnce"/> - used for this call only, never cached.</description></item>
++        /// <item><description>Otherwise: cached until 2 minutes before it expires, at most 20 minutes.</description></item>
++        /// </list>
++        /// </summary>
++        public static TokenLifetime ComputeTokenLifetime(DateTimeOffset? expiresAtUtc, DateTimeOffset now)
++        {
++            if (expiresAtUtc is null)
++            {
++                return new TokenLifetime(TokenUse.Cache, TokenMaximumLifetime);
++            }
++
++            var remaining = expiresAtUtc.Value - now;
++
++            if (remaining < TokenMinimumUsableValidity)
++            {
++                return new TokenLifetime(TokenUse.Reject, TimeSpan.Zero);
++            }
++
++            var cacheFor = remaining - TokenRenewMargin;
++
++            if (cacheFor < TokenMinimumLifetime)
++            {
++                return new TokenLifetime(TokenUse.UseOnce, TimeSpan.Zero);
++            }
++
++            return new TokenLifetime(
++                TokenUse.Cache,
++                cacheFor > TokenMaximumLifetime ? TokenMaximumLifetime : cacheFor);
++        }
++
++
+         public TicketingGenesysService(
+             IHttpClientFactory httpClientFactory,
+             IMemoryCache cache,
+@@ -41,79 +115,128 @@
+                 return cachedToken;
+             }
+ 
+-            var client = _httpClientFactory.CreateClient();
++            await TokenLock.WaitAsync(cancellationToken);
+ 
+-            var loginUrl =
+-                $"{_options.BaseUrl.TrimEnd('/')}/api/auth/login";
+-
+-            var loginRequest = new
++            try
+             {
+-                username = _options.Username,
+-                password = _options.Password
+-            };
++                // Another call may have logged in while this one waited.
++                if (_cache.TryGetValue(
++                        TokenCacheKey,
++                        out cachedToken) &&
++                    !string.IsNullOrWhiteSpace(cachedToken))
++                {
++                    return cachedToken;
++                }
+ 
+-            var json = JsonSerializer.Serialize(loginRequest);
++                // Credentials go to the no-redirect client: a 307/308 must never
++                // re-send the username and password somewhere else. The login is
++                // bounded by its own timeout and by the caller's token.
++                var client = _httpClientFactory.CreateClient(NoRedirectClientName);
++                client.Timeout = Timeout.InfiniteTimeSpan;
++
++                using var loginBudget =
++                    CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
++                loginBudget.CancelAfter(LoginTimeout);
+ 
+-            using var content = new StringContent(
+-                json,
+-                Encoding.UTF8,
+-                "application/json");
++                var loginUrl =
++                    $"{_options.BaseUrl.TrimEnd('/')}/api/auth/login";
+ 
+-            using var response = await client.PostAsync(
+-                loginUrl,
+-                content,
+-                cancellationToken);
++                var loginRequest = new
++                {
++                    username = _options.Username,
++                    password = _options.Password
++                };
+ 
+-            var responseBody =
+-                await response.Content.ReadAsStringAsync(cancellationToken);
++                var json = JsonSerializer.Serialize(loginRequest);
+ 
+-            if (!response.IsSuccessStatusCode)
+-            {
+-                throw new Exception(
+-                    $"TigerCS authentication failed. " +
+-                    $"StatusCode: {(int)response.StatusCode}");
+-            }
++                using var content = new StringContent(
++                    json,
++                    Encoding.UTF8,
++                    "application/json");
+ 
+-            using var document =
+-                JsonDocument.Parse(responseBody);
++                using var response = await client.PostAsync(
++                    loginUrl,
++                    content,
++                    loginBudget.Token);
+ 
+-            var root = document.RootElement;
++                var responseBody =
++                    await response.Content.ReadAsStringAsync(loginBudget.Token);
+ 
+-            string? token = null;
++                if (!response.IsSuccessStatusCode)
++                {
++                    // Status only: never the body, the username or the password.
++                    throw new InvalidOperationException(
++                        $"TigerCS authentication failed. " +
++                        $"StatusCode: {(int)response.StatusCode}");
++                }
+ 
+-            // We will confirm the exact property
+-            // from the real TigerCS login response.
+-            if (root.TryGetProperty("token", out var tokenElement))
+-            {
+-                token = tokenElement.GetString();
+-            }
+-            else if (root.TryGetProperty(
+-                         "accessToken",
+-                         out var accessTokenElement))
+-            {
+-                token = accessTokenElement.GetString();
+-            }
+-            else if (root.TryGetProperty(
+-                         "jwtToken",
+-                         out var jwtTokenElement))
+-            {
+-                token = jwtTokenElement.GetString();
+-            }
++                using var document =
++                    JsonDocument.Parse(responseBody);
+ 
+-            if (string.IsNullOrWhiteSpace(token))
+-            {
+-                throw new Exception(
+-                    "TigerCS login succeeded but access token was not found.");
+-            }
++                var root = document.RootElement;
++
++                string? token = null;
+ 
+-            // Temporary cache.
+-            // Later we can align it with the actual JWT expiry.
+-            _cache.Set(
+-                TokenCacheKey,
+-                token,
+-                TimeSpan.FromMinutes(20));
++                // TigerCS answers { "accessToken": ..., "expiresAtUtc": ... };
++                // the older property names stay accepted.
++                if (root.TryGetProperty("token", out var tokenElement))
++                {
++                    token = tokenElement.GetString();
++                }
++                else if (root.TryGetProperty(
++                             "accessToken",
++                             out var accessTokenElement))
++                {
++                    token = accessTokenElement.GetString();
++                }
++                else if (root.TryGetProperty(
++                             "jwtToken",
++                             out var jwtTokenElement))
++                {
++                    token = jwtTokenElement.GetString();
++                }
++
++                if (string.IsNullOrWhiteSpace(token))
++                {
++                    throw new InvalidOperationException(
++                        "TigerCS login succeeded but access token was not found.");
++                }
++
++                // The field is UTC by name: a timestamp without an offset is read as UTC,
++                // never as the server's local time. A missing or unreadable value means
++                // "expiry unknown" (the previous 20-minute cache applies).
++                DateTimeOffset? expiresAtUtc = null;
++                if (root.TryGetProperty("expiresAtUtc", out var expiresElement) &&
++                    expiresElement.ValueKind == JsonValueKind.String &&
++                    DateTimeOffset.TryParse(
++                        expiresElement.GetString(),
++                        CultureInfo.InvariantCulture,
++                        DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
++                        out var parsedExpiry))
++                {
++                    expiresAtUtc = parsedExpiry;
++                }
++
++                var lifetime = ComputeTokenLifetime(expiresAtUtc, DateTimeOffset.UtcNow);
++
++                if (lifetime.Use == TokenUse.Reject)
++                {
++                    // An expired (or nearly expired) token is neither cached nor sent.
++                    throw new InvalidOperationException(
++                        "TigerCS issued an access token that is already expired or too close to expiry to use.");
++                }
+ 
+-            return token;
++                if (lifetime.Use == TokenUse.Cache)
++                {
++                    _cache.Set(TokenCacheKey, token, lifetime.CacheFor);
++                }
++
++                return token;
++            }
++            finally
++            {
++                TokenLock.Release();
++            }
+         }
+ 
+ 
+@@ -143,6 +266,17 @@
+             _cache.Remove(TokenCacheKey);
+         }
+ 
++        // Drops the cached token only if it is still the one that was refused,
++        // so a newer token another call just installed is never thrown away.
++        private void ClearToken(string refusedToken)
++        {
++            if (_cache.TryGetValue(TokenCacheKey, out string? currentToken) &&
++                string.Equals(currentToken, refusedToken, StringComparison.Ordinal))
++            {
++                ClearToken();
++            }
++        }
++
+ 
+         // =====================================================
+         // 1. CUSTOMER LOOKUP
+@@ -184,107 +318,41 @@
+ 
+         // =====================================================
+         // 2. CREATE / REUSE TICKET
++        //
++        // The body is forwarded exactly as received. Idempotent in
++        // TigerCS (one ticket per conversationId), but never replayed
++        // after a timeout or a network failure: the caller decides.
+         // =====================================================
+-        public async Task<HttpResponseMessage> CreateTicketAsync(
+-            string requestJson)
++        public Task<HttpResponseMessage> CreateTicketAsync(
++            string requestJson,
++            CancellationToken cancellationToken = default)
+         {
+-            var url =
+-                $"{_options.BaseUrl.TrimEnd('/')}" +
+-                "/api/genesys/tickets";
+-
+-            var client =
+-                await GetAuthenticatedClientAsync();
+-
+-            using var content =
+-                new StringContent(
+-                    requestJson,
+-                    Encoding.UTF8,
+-                    "application/json");
+-
+-            var response =
+-                await client.PostAsync(
+-                    url,
+-                    content);
+-
+-            if (response.StatusCode == HttpStatusCode.Unauthorized)
+-            {
+-                response.Dispose();
+-
+-                ClearToken();
+-
+-                client =
+-                    await GetAuthenticatedClientAsync();
+-
+-                using var retryContent =
+-                    new StringContent(
+-                        requestJson,
+-                        Encoding.UTF8,
+-                        "application/json");
+-
+-                response =
+-                    await client.PostAsync(
+-                        url,
+-                        retryContent);
+-            }
+-
+-            return response;
++            return ForwardJsonAsync(
++                HttpMethod.Post,
++                "/api/genesys/tickets",
++                requestJson,
++                idempotencyKey: null,
++                cancellationToken);
+         }
+ 
+ 
+         // =====================================================
+         // 3. UPDATE TICKET
++        //
++        // PATCH carries requestType, transcript, handoff, routing,
++        // ended ... unchanged; TigerCS validates and applies them.
+         // =====================================================
+-        public async Task<HttpResponseMessage> UpdateTicketAsync(
++        public Task<HttpResponseMessage> UpdateTicketAsync(
+             long ticketId,
+-            string requestJson)
++            string requestJson,
++            CancellationToken cancellationToken = default)
+         {
+-            var url =
+-                $"{_options.BaseUrl.TrimEnd('/')}" +
+-                $"/api/genesys/tickets/{ticketId}";
+-
+-            var client =
+-                await GetAuthenticatedClientAsync();
+-
+-            using var request =
+-                new HttpRequestMessage(
+-                    HttpMethod.Patch,
+-                    url);
+-
+-            request.Content =
+-                new StringContent(
+-                    requestJson,
+-                    Encoding.UTF8,
+-                    "application/json");
+-
+-            var response =
+-                await client.SendAsync(request);
+-
+-            if (response.StatusCode == HttpStatusCode.Unauthorized)
+-            {
+-                response.Dispose();
+-
+-                ClearToken();
+-
+-                client =
+-                    await GetAuthenticatedClientAsync();
+-
+-                using var retryRequest =
+-                    new HttpRequestMessage(
+-                        HttpMethod.Patch,
+-                        url);
+-
+-                retryRequest.Content =
+-                    new StringContent(
+-                        requestJson,
+-                        Encoding.UTF8,
+-                        "application/json");
+-
+-                response =
+-                    await client.SendAsync(
+-                        retryRequest);
+-            }
+-
+-            return response;
++            return ForwardJsonAsync(
++                HttpMethod.Patch,
++                $"/api/genesys/tickets/{ticketId.ToString(CultureInfo.InvariantCulture)}",
++                requestJson,
++                idempotencyKey: null,
++                cancellationToken);
+         }
+ 
+ 
+@@ -595,7 +663,19 @@
+         // in Program.cs); authentication uses the existing helper.
+         public const string NoRedirectClientName = "TigerCS-NoRedirect";
+ 
+-        private async Task<HttpResponseMessage> ForwardPostAsync(
++        private Task<HttpResponseMessage> ForwardPostAsync(
++            string path,
++            string requestJson,
++            string? idempotencyKey,
++            CancellationToken cancellationToken)
++        {
++            return ForwardJsonAsync(
++                HttpMethod.Post, path, requestJson, idempotencyKey, cancellationToken);
++        }
++
++        // The one safe forwarding pattern for JSON writes (POST and PATCH).
++        private async Task<HttpResponseMessage> ForwardJsonAsync(
++            HttpMethod method,
+             string path,
+             string requestJson,
+             string? idempotencyKey,
+@@ -608,17 +688,17 @@
+             // The budget below bounds the call, not HttpClient.Timeout.
+             client.Timeout = Timeout.InfiniteTimeSpan;
+ 
+-            // One 30-second budget covers login, request, response
+-            // buffering and the single authentication retry.
++            // One budget (ForwardBudget, 30 s by default) covers login, request,
++            // response buffering and the single authentication retry.
+             using var budgetSource =
+                 CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+-            budgetSource.CancelAfter(TimeSpan.FromSeconds(30));
++            budgetSource.CancelAfter(ForwardBudget);
+ 
+             for (var attempt = 0; attempt < 2; attempt++)
+             {
+                 var token = await GetAccessTokenAsync(budgetSource.Token);
+ 
+-                using var request = new HttpRequestMessage(HttpMethod.Post, url);
++                using var request = new HttpRequestMessage(method, url);
+                 request.Headers.Authorization =
+                     new AuthenticationHeaderValue("Bearer", token);
+                 request.Content = new StringContent(
+@@ -647,11 +727,7 @@
+                     response.Dispose();
+ 
+                     // Keep a newer cached token installed by another call.
+-                    if (_cache.TryGetValue(TokenCacheKey, out string? currentToken) &&
+-                        string.Equals(currentToken, token, StringComparison.Ordinal))
+-                    {
+-                        ClearToken();
+-                    }
++                    ClearToken(token);
+ 
+                     continue;
+                 }

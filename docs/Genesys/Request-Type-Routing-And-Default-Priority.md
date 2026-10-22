@@ -20,9 +20,11 @@ A new Genesys ticket is created on the configured default priority instead of a 
 5. **SLA**: see below.
 6. **Audit**: `ClassifyRequestType`, `Transfer`, `AutoAssign`, `ReapplySlaPolicy`.
 
-Idempotency: the same request type again ⇒ `AlreadyClassified`, no writes; a different one ⇒ `409`; ticket closed ⇒ `409`.
+Idempotency: the same request type again ⇒ `AlreadyClassified`, no writes; ticket closed ⇒ `409`.
 
-**Missing request type** (none supplied; an explicitly invalid one is a `422`, see Validate above): the ticket is created with Normal priority, stays unclassified in its arrival department and a human follow-up item is raised through the existing handoff queue (trigger `RoutingDecision`, reason prefix `Awaiting classification`). When a request type is classified later, that item — and only an item with that reason — is cancelled. `Genesys:HumanQueueForUnclassified=false` disables the queue entry.
+**Changing the classification.** A different valid request type *replaces* the current one (the AI refining its own classification) only while no person has worked the ticket: status `Open`, no Category set by hand, no first human response, no human agent has accepted the interaction, and no approval has been raised. The change runs the same transfer / auto-assignment / SLA re-policy path (clock never restarted; `OriginatingDepartmentId` untouched), re-pins the workflow version, and keeps history as a `RequestTypeReclassified` workflow event plus a `ReclassifyRequestType` audit entry. Once a person has worked the ticket, a different request type is refused with `409` and nothing changes.
+
+**Missing request type** (none supplied; an explicitly invalid one is a `422`, see Validate above): the ticket is created with Normal priority and stays **Unclassified** in its arrival department, for the existing manual classification workflow (Classify Ticket). **No human handoff is recorded**: a missing field says nothing about whether the customer wants a person, and only an explicit Genesys handoff signal may do that. (Earlier versions raised a `RoutingDecision` handoff with reason `Awaiting classification…` and a `Genesys:HumanQueueForUnclassified` switch; both are gone. Rows that earlier version already wrote are stood down automatically when the ticket is classified, and can be cleaned up in bulk with `CancelLegacyAwaitingClassificationHandoffs.sql`.)
 
 Response fields: `classificationStatus` (`Classified` | `AwaitingClassification`), `requestTypeId`, `departmentId`, `assignedEmployeeId` (null = department queue), `classificationDetail`.
 
@@ -39,5 +41,5 @@ Response fields: `classificationStatus` (`Classified` | `AwaitingClassification`
 
 * No schema change and no migration.
 * Requires the `Priorities` rows and the Medium `SlaPolicies` row (already seeded everywhere), and request types with a published workflow, a department, optionally an assignment rule and SLA rows.
-* Optional keys: `Genesys:DefaultTicketPriority`, `Genesys:HumanQueueForUnclassified`.
+* Optional keys: `Genesys:DefaultTicketPriority`.
 * Genesys data actions `02` (create) and `03` (update routing) gained an optional `requestTypeName` input. Existing flows keep working unchanged.

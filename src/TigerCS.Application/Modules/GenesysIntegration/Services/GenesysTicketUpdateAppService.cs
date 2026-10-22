@@ -122,6 +122,38 @@ public sealed class GenesysTicketUpdateAppService(
                 "customerConfirmation records only an explicit confirmation — send confirmedResolved: true, or omit the part.");
         }
 
+        // The handoff vocabulary is checked up front too: a request that will be refused for an unrecognized mode or trigger must not
+        // leave its classification applied behind it (no partial writes on a refused update).
+        if (request.Handoff is { Required: true } handoffToCheck)
+        {
+            if (!string.IsNullOrWhiteSpace(handoffToCheck.Mode) && !NamedEnum.TryParse<AgentHandoffMode>(handoffToCheck.Mode, out _))
+            {
+                return GenesysTicketUpdateResult.Failure(
+                    GenesysTicketUpdateOutcome.InvalidHandoffMode,
+                    $"'{handoffToCheck.Mode}' is not a recognized follow-up mode. Use Callback, ContinueChat, ReplyInChannel or HumanTakeover, or omit it.");
+            }
+
+            if (!string.IsNullOrWhiteSpace(handoffToCheck.Trigger) && !NamedEnum.TryParse<HandoffTrigger>(handoffToCheck.Trigger, out _))
+            {
+                return GenesysTicketUpdateResult.Failure(
+                    GenesysTicketUpdateOutcome.InvalidHandoffTrigger,
+                    $"'{handoffToCheck.Trigger}' is not a recognized handoff trigger. Use CustomerRequestedHuman, "
+                    + "AiConnectionLost, AiEscalated, RoutingDecision or AgentTransfer, or omit it.");
+            }
+        }
+
+        // Transcript messages are validated up front for the same reason: a malformed live message must not leave a classification or a
+        // handoff applied behind a refused update.
+        if (request.Transcript is { Count: > 0 } liveMessages && !GenesysConversationEndAppService.IsValidTranscript(liveMessages, out var liveError))
+        {
+            return GenesysTicketUpdateResult.Failure(GenesysTicketUpdateOutcome.InvalidTranscript, liveError);
+        }
+
+        if (request.Ended?.Transcript is { Count: > 0 } finalMessages && !GenesysConversationEndAppService.IsValidTranscript(finalMessages, out var finalError))
+        {
+            return GenesysTicketUpdateResult.Failure(GenesysTicketUpdateOutcome.InvalidTranscript, finalError);
+        }
+
         // The request type the bot identified, validated and applied before
         // anything else: an invalid or conflicting one refuses the update
         // outright, and the department / owner it sets is what the handoff,
@@ -147,6 +179,32 @@ public sealed class GenesysTicketUpdateAppService(
             {
                 return GenesysTicketUpdateResult.Failure(failure, classification.Detail);
             }
+        }
+
+        // Live transcript first among the conversation facts: whoever picks the interaction up next (the handoff below may be what asks for
+        // them) finds everything said so far already stored, and a human line in it is what satisfies First Response.
+        var transcriptCount = (int?)null;
+        if (request.Transcript is { Count: > 0 })
+        {
+            var appended = await conversationEndAppService.AppendTranscriptAsync(
+                callerEmployeeId, conversationId, request.Transcript, cancellationToken);
+
+            if (appended.Outcome == GenesysTranscriptAppendOutcome.Conflict)
+            {
+                return GenesysTicketUpdateResult.Failure(GenesysTicketUpdateOutcome.ConcurrencyConflict, appended.Detail);
+            }
+
+            if (appended.Outcome is GenesysTranscriptAppendOutcome.InvalidTranscript or GenesysTranscriptAppendOutcome.ConversationNotFound
+                or GenesysTranscriptAppendOutcome.IntegrationDisabled)
+            {
+                return GenesysTicketUpdateResult.Failure(
+                    appended.Outcome == GenesysTranscriptAppendOutcome.InvalidTranscript
+                        ? GenesysTicketUpdateOutcome.InvalidTranscript
+                        : GenesysTicketUpdateOutcome.ConversationNotFound,
+                    appended.Detail);
+            }
+
+            transcriptCount = appended.Total;
         }
 
         // Human handoff first: a conversation that ends in the same update
@@ -253,7 +311,7 @@ public sealed class GenesysTicketUpdateAppService(
         // The conversation's own ending — transcript included. Write-once in
         // the domain, so a redelivered end answers AlreadyEnded without
         // moving the recorded time or re-storing the transcript.
-        var transcriptCount = await conversationRepository.CountMessagesAsync(interaction.TicketInteractionId, cancellationToken);
+        transcriptCount = await conversationRepository.CountMessagesAsync(interaction.TicketInteractionId, cancellationToken);
 
         if (request.Ended is { } ended)
         {
@@ -332,7 +390,7 @@ public sealed class GenesysTicketUpdateAppService(
             // contract closed, resolved or otherwise moved the ticket.
             ticket.TicketStatus.ToString(),
             interaction.IsEnded,
-            transcriptCount,
+            transcriptCount ?? 0,
             handoffStatus,
             handoffId,
             AwaitingCustomerReply: interaction.AwaitingCustomerReplySinceUtc is not null,

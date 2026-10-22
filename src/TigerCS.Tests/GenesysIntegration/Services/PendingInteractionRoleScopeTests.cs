@@ -33,6 +33,7 @@ public class PendingInteractionRoleScopeTests
             ServiceAccount, created.Ticket!.TicketId,
             new GenesysTicketUpdateDto(
                 "conv-scope",
+                Handoff: new GenesysHandoffUpdateDto(Required: true, Trigger: "AiEscalated", Reason: "The bot could not finish."),
                 Ended: new GenesysConversationEndUpdateDto(
                     DateTime.UtcNow.AddMinutes(-5), "CustomerDisconnect",
                     [new GenesysTranscriptMessageDto("VirtualAgent", DateTime.UtcNow.AddMinutes(-6), "Hello?", SenderName: "Tiger Bot", SenderId: "bot-1")])));

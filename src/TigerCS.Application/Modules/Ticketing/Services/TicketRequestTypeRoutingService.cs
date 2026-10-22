@@ -89,7 +89,8 @@ public sealed class TicketRequestTypeRoutingService(
     TicketAutoAssignmentService autoAssignmentService,
     SlaDueDateService slaDueDateService,
     ITicketStatusHistoryRepository statusHistoryRepository,
-    IAuditEntryWriter auditWriter)
+    IAuditEntryWriter auditWriter,
+    ITicketWorkflowEventRepository workflowEventRepository)
 {
     /// <summary>Resolves a request type by id (preferred) or by exact name, and validates that it can govern a ticket.</summary>
     public async Task<RequestTypeResolution> ResolveAsync(
@@ -154,6 +155,16 @@ public sealed class TicketRequestTypeRoutingService(
     /// Applies a <b>valid</b> resolution to a ticket that has no request type
     /// yet. Throws <see cref="TicketRequestTypeAlreadySetException"/> (domain
     /// guard) when one is set — the caller decides idempotency before calling.
+    ///
+    /// <para>
+    /// <c>reclassify: true</c> is the one exception: it replaces the request
+    /// type (and pinned workflow version) of an already-classified ticket. The
+    /// caller owns the decision that this is allowed; everything else —
+    /// transfer semantics, automatic assignment, SLA re-policy without a
+    /// clock restart — is the same code path, and the previous classification
+    /// is kept as an append-only <see cref="WorkflowEventType.RequestTypeReclassified"/>
+    /// event plus a <c>ReclassifyRequestType</c> audit entry.
+    /// </para>
     /// </summary>
     /// <remarks>
     /// <c>defaultPriority</c> is for a ticket that predates default priorities
@@ -169,7 +180,8 @@ public sealed class TicketRequestTypeRoutingService(
         Priority? defaultPriority,
         DateTime nowUtc,
         Guid correlationId,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        bool reclassify = false)
     {
         ArgumentNullException.ThrowIfNull(ticket);
         if (!resolution.IsValid || resolution.RequestType is null || resolution.PublishedWorkflow is null)
@@ -180,9 +192,17 @@ public sealed class TicketRequestTypeRoutingService(
         var requestType = resolution.RequestType;
         var previousDepartmentId = ticket.CurrentDepartmentId;
         var previousOwner = ticket.CurrentOwnerEmployeeId;
+        var previousRequestTypeId = ticket.RequestTypeId;
 
-        ticket.ClassifyRequestType(requestType.RequestTypeId);
-        ticket.PinWorkflowVersion(resolution.PublishedWorkflow.WorkflowTemplateId);
+        if (reclassify)
+        {
+            ticket.ReclassifyRequestType(requestType.RequestTypeId, resolution.PublishedWorkflow.WorkflowTemplateId);
+        }
+        else
+        {
+            ticket.ClassifyRequestType(requestType.RequestTypeId);
+            ticket.PinWorkflowVersion(resolution.PublishedWorkflow.WorkflowTemplateId);
+        }
 
         // Department FIRST, exactly as TransferAsync does: the responsible
         // department is the primary assignment, OriginatingDepartmentId is
@@ -216,9 +236,20 @@ public sealed class TicketRequestTypeRoutingService(
 
         var slaOutcome = await ApplySlaAsync(ticket, defaultPriority, actorEmployeeId, nowUtc, correlationId, cancellationToken);
 
+        if (reclassify)
+        {
+            await workflowEventRepository.AddAsync(
+                new TicketWorkflowEvent(
+                    ticket.TicketId, WorkflowEventType.RequestTypeReclassified, nowUtc, actorEmployeeId: null,
+                    ticketApprovalId: null,
+                    note: $"Request type changed from {previousRequestTypeId} to '{requestType.Name}' ({requestType.RequestTypeId}) — {source}.",
+                    correlationId),
+                cancellationToken);
+        }
+
         await auditWriter.WriteAsync(
-            actorEmployeeId, "ClassifyRequestType", "Ticket", ticket.TicketId.ToString(),
-            beforeValue: $"RequestTypeId=(none);DepartmentId={previousDepartmentId};AssignedEmployeeId={previousOwner?.ToString() ?? "DepartmentQueue"}",
+            actorEmployeeId, reclassify ? "ReclassifyRequestType" : "ClassifyRequestType", "Ticket", ticket.TicketId.ToString(),
+            beforeValue: $"RequestTypeId={previousRequestTypeId?.ToString() ?? "(none)"};DepartmentId={previousDepartmentId};AssignedEmployeeId={previousOwner?.ToString() ?? "DepartmentQueue"}",
             afterValue:
                 $"RequestTypeId={requestType.RequestTypeId};RequestType={requestType.Name};DepartmentId={ticket.CurrentDepartmentId};"
                 + $"OriginatingDepartmentId={ticket.OriginatingDepartmentId};Transferred={transferred};"

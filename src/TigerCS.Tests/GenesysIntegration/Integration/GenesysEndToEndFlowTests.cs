@@ -612,17 +612,8 @@ public sealed class GenesysEndToEndFlowTests : IClassFixture<TigerCsApiFactory>
         Assert.Equal(endedAt, interaction!.EndedAtUtc);
         Assert.Equal(endReason, interaction.EndReason);
 
-        // An AI conversation nobody took is left as waiting human work.
-        var handoff = await GetOpenHandoffAsync(created.TicketId);
-        if (aiOnly)
-        {
-            Assert.Equal(AgentHandoffStatus.WaitingForAgent, handoff!.Status);
-            Assert.Equal(HandoffTrigger.AiConnectionLost, handoff.Trigger);
-        }
-        else
-        {
-            Assert.Null(handoff);
-        }
+        // Ending a conversation — AI-only or not — is never a request for a human: only an explicit Genesys handoff signal records one.
+        Assert.Null(await GetOpenHandoffAsync(created.TicketId));
     }
 
     /// <summary>A ticket an agent is already working stays InProgress when the call ends — the end never rewinds or finishes it.</summary>

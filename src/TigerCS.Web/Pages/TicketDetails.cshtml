@@ -186,6 +186,68 @@ else
                         </details>
                         }
 
+                        @if (Model.CanClassify)
+                        {
+                            @* Classify an Unclassified ticket: category, priority and request type for the ticket's own department.
+                               This only classifies — it never requests a human handoff. *@
+                            <details class="disclosure" open="@(Model.OpenSection == "classify" ? "open" : null)">
+                                <summary class="btn btn-gold btn-sm">Classify</summary>
+                                <div class="disclosure__panel">
+                                    <form method="post" asp-page-handler="Classify" class="action-form">
+                                        <input type="hidden" asp-for="Classify.RowVersionBase64" />
+                                        <div class="field-group">
+                                            <label class="field-label" asp-for="Classify.CategoryId">Category</label>
+                                            <select class="field-select" asp-for="Classify.CategoryId">
+                                                @foreach (var c in Model.ClassifyCategories)
+                                                {
+                                                    <option value="@c.CategoryId">@c.Name</option>
+                                                }
+                                            </select>
+                                        </div>
+                                        <input type="hidden" asp-for="Classify.RequestTypeAlreadySet" />
+                                        @if (Model.Classify.RequestTypeAlreadySet)
+                                        {
+                                            <div class="field-group">
+                                                <span class="field-label">Request type</span>
+                                                <span>@(t.RequestTypeName ?? "Already set")</span>
+                                            </div>
+                                        }
+                                        else
+                                        {
+                                            <div class="field-group">
+                                                <label class="field-label" asp-for="Classify.RequestTypeId">Request type</label>
+                                                <select class="field-select" asp-for="Classify.RequestTypeId">
+                                                    @foreach (var r in Model.ClassifyRequestTypes)
+                                                    {
+                                                        <option value="@r.RequestTypeId">@r.Name</option>
+                                                    }
+                                                </select>
+                                            </div>
+                                        }
+                                        <div class="field-group">
+                                            <label class="field-label" asp-for="Classify.PriorityId">Priority</label>
+                                            <select class="field-select" asp-for="Classify.PriorityId">
+                                                @foreach (var p in Model.ClassifyPriorities)
+                                                {
+                                                    <option value="@p">@TicketDisplay.PriorityLabel(p)</option>
+                                                }
+                                            </select>
+                                            <span class="field-hint">Only the current priority or a more urgent one — lowering it needs an approved downgrade.</span>
+                                        </div>
+                                        @if (Model.ClassifyOptionsUnavailable)
+                                        {
+                                            <span class="field-hint field-hint--error">The category / request type lists could not be loaded. Reload the page.</span>
+                                        }
+                                        else if (Model.ClassifyCategories.Count == 0 || (!Model.Classify.RequestTypeAlreadySet && Model.ClassifyRequestTypes.Count == 0))
+                                        {
+                                            <span class="field-hint">This department has no active category or no request type with a published workflow to choose from.</span>
+                                        }
+                                        <div class="action-form__footer"><button type="submit" class="btn btn-gold btn-sm" disabled="@(Model.ClassifyCategories.Count == 0 || (!Model.Classify.RequestTypeAlreadySet && Model.ClassifyRequestTypes.Count == 0) ? "disabled" : null)">Classify</button></div>
+                                    </form>
+                                </div>
+                            </details>
+                        }
+
                         @if (Model.CanTransfer)
                         {
                             <details class="disclosure" open="@(Model.OpenSection == "transfer" ? "open" : null)">
@@ -519,13 +581,18 @@ else
                                deactivated since still shows its name here. *@
                             <div class="facts-row"><dt>Channel</dt><dd>@(t.OriginatingChannelName ?? "Unknown channel")</dd></div>
                         }
-                        @if (t.RequestTypeName is not null)
-                        {
-                            <div class="facts-row"><dt>Request Type</dt><dd>@t.RequestTypeName</dd></div>
-                        }
+                        @* Always shown: an unclassified ticket says so instead of hiding the row. *@
+                        <div class="facts-row"><dt>Request Type</dt><dd>@(t.RequestTypeName ?? "Unclassified")</dd></div>
                         @if (t.WorkflowName is not null)
                         {
                             <div class="facts-row"><dt>Workflow</dt><dd>@t.WorkflowName <span class="badge badge-neutral">V@(t.WorkflowVersionNumber)</span></dd></div>
+                        }
+                        @if (Model.Interactions.LastOrDefault(i => i.HandlingState is not null) is { } handlingInteraction)
+                        {
+                            @* AI versus human handling comes from the Genesys interaction, never from
+                               the ticket owner: a department queue or an auto-assigned employee does not
+                               mean a person is talking to the customer. *@
+                            <div class="facts-row"><dt>Handled by</dt><dd>@TicketDisplay.HandlingStateLabel(handlingInteraction.HandlingState, handlingInteraction.AgentName)</dd></div>
                         }
                         <div class="facts-row"><dt>Assigned To</dt><dd>@TicketDisplay.AssignedToLabel(t.CurrentOwnerEmployeeId, Model.OwnerName, t.CurrentDepartmentId, Model.DepartmentName)</dd></div>
                         <div class="facts-row"><dt>Escalation level</dt><dd>@TicketDisplay.EscalationLevelLabel(t.EscalationLevel)</dd></div>
@@ -825,15 +892,23 @@ else
                                 </div>
                                 <dl>
                                     <div class="facts-row">
-                                        <dt>When</dt>
-                                        <dd>
-                                            @interaction.StartedAtUtc.ToLocalTime().ToString("dd MMM yyyy HH:mm")
-                                            @(interaction.EndedAtUtc is { } endedAt ? $" – {endedAt.ToLocalTime():HH:mm}" : "")
-                                        </dd>
+                                        <dt>Started</dt>
+                                        <dd>@interaction.StartedAtUtc.ToLocalTime().ToString("dd MMM yyyy HH:mm")</dd>
                                     </div>
-                                    @if (!string.IsNullOrWhiteSpace(interaction.AgentName))
+                                    <div class="facts-row">
+                                        <dt>Ended</dt>
+                                        <dd>@(interaction.EndedAtUtc is { } endedAt ? endedAt.ToLocalTime().ToString("dd MMM yyyy HH:mm") : "Not ended")</dd>
+                                    </div>
+                                    @* A named agent is shown only when a person is actually
+                                       handling the interaction — an AI-only conversation never
+                                       displays a human agent. *@
+                                    @if (interaction.HandlingState is "Human" && !string.IsNullOrWhiteSpace(interaction.AgentName))
                                     {
                                         <div class="facts-row"><dt>Agent</dt><dd>@interaction.AgentName</dd></div>
+                                    }
+                                    @if (interaction.HandlingState is not null)
+                                    {
+                                        <div class="facts-row"><dt>Handled by</dt><dd>@TicketDisplay.HandlingStateLabel(interaction.HandlingState, interaction.AgentName)</dd></div>
                                     }
                                     @if (!string.IsNullOrWhiteSpace(interaction.CustomerName))
                                     {
@@ -856,10 +931,15 @@ else
                                        the context an agent taking over most needs, and a
                                        status deliberately separate from the ticket's own:
                                        completing the human work never closes the ticket. *@
+                                    @if (interaction.HandlingState is not null)
+                                    {
+                                        <div class="facts-row"><dt>Handoff requested</dt><dd>@(interaction.Handoff is null ? "No" : "Yes")</dd></div>
+                                    }
                                     @if (interaction.Handoff is { } handoff)
                                     {
+                                        <div class="facts-row"><dt>Initiated by</dt><dd>@TicketDisplay.HandoffInitiatorLabel(handoff.Trigger)</dd></div>
                                         <div class="facts-row">
-                                            <dt>Human agent</dt>
+                                            <dt>Handoff status</dt>
                                             <dd>
                                                 <span class="badge badge-handoff-@TicketDisplay.HandoffStatusCssKey(handoff.Status)">
                                                     @TicketDisplay.HandoffStatusLabel(handoff.Status)
@@ -875,7 +955,7 @@ else
                                         </div>
                                         @if (!string.IsNullOrWhiteSpace(handoff.RequestReason))
                                         {
-                                            <div class="facts-row"><dt>Why a human</dt><dd>@handoff.RequestReason</dd></div>
+                                            <div class="facts-row"><dt>Handoff reason</dt><dd>@handoff.RequestReason</dd></div>
                                         }
                                         @if (!string.IsNullOrWhiteSpace(handoff.ResolutionNote))
                                         {
@@ -889,7 +969,7 @@ else
                                     <p class="text-secondary">
                                         @(interaction.Status == "Ended"
                                             ? "No transcript was recorded for this interaction."
-                                            : "No transcript yet — this conversation has not ended.")
+                                            : "No messages have been recorded for this conversation yet.")
                                     </p>
                                 }
                                 else
@@ -903,7 +983,12 @@ else
                                                must be able to tell what a human said from what the
                                                virtual agent said. *@
                                             var senderLabel = message.SenderName
-                                                ?? (message.Sender == "VirtualAgent" ? "Virtual agent" : message.Sender);
+                                                ?? (message.Sender switch
+                                                {
+                                                    "VirtualAgent" => "Virtual agent",
+                                                    "HumanAgent" => "Human agent",
+                                                    _ => message.Sender
+                                                });
                                             <li class="timeline-item">
                                                 <span class="timeline-icon @iconCss"><svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="4" fill="currentColor" /></svg></span>
                                                 <div class="timeline-row">
