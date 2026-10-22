@@ -79,7 +79,74 @@ public sealed record GenesysInquiryRequest(
 /// </summary>
 /// <param name="RequestTypeId">The configured request type's id (see <c>GET /api/request-types</c>).</param>
 /// <param name="Name">The request type's exact name (case-insensitive). Refused as ambiguous if more than one department has it.</param>
+[JsonConverter(typeof(GenesysRequestTypePartConverter))]
 public sealed record GenesysRequestTypePart(int? RequestTypeId = null, string? Name = null);
+
+/// <summary>
+/// Accepts the request type either as the documented object (<c>{"requestTypeId":17}</c> / <c>{"name":"Leasing"}</c>) or as a bare string,
+/// which is read as the request type's <b>name</b> (<c>"requestType": "Leasing"</c>). The name still has to match a configured request type
+/// exactly — nothing is guessed from it.
+/// </summary>
+public sealed class GenesysRequestTypePartConverter : JsonConverter<GenesysRequestTypePart>
+{
+    public override GenesysRequestTypePart? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+    {
+        switch (reader.TokenType)
+        {
+            case JsonTokenType.Null:
+                return null;
+            case JsonTokenType.String:
+                return new GenesysRequestTypePart(Name: reader.GetString());
+            case JsonTokenType.StartObject:
+                int? id = null;
+                string? name = null;
+                while (reader.Read() && reader.TokenType != JsonTokenType.EndObject)
+                {
+                    var property = reader.GetString();
+                    reader.Read();
+                    if (string.Equals(property, "requestTypeId", StringComparison.OrdinalIgnoreCase))
+                    {
+                        id = reader.TokenType switch
+                        {
+                            JsonTokenType.Number => reader.GetInt32(),
+                            JsonTokenType.String when int.TryParse(reader.GetString(), out var parsed) => parsed,
+                            JsonTokenType.String when string.IsNullOrWhiteSpace(reader.GetString()) => null,
+                            JsonTokenType.Null => null,
+                            _ => throw new JsonException("requestTypeId must be a number.")
+                        };
+                    }
+                    else if (string.Equals(property, "name", StringComparison.OrdinalIgnoreCase))
+                    {
+                        name = reader.TokenType == JsonTokenType.Null ? null : reader.GetString();
+                    }
+                    else
+                    {
+                        reader.Skip();
+                    }
+                }
+
+                return new GenesysRequestTypePart(id, name);
+            default:
+                throw new JsonException("requestType must be an object or the request type's name.");
+        }
+    }
+
+    public override void Write(Utf8JsonWriter writer, GenesysRequestTypePart value, JsonSerializerOptions options)
+    {
+        writer.WriteStartObject();
+        if (value.RequestTypeId is { } id)
+        {
+            writer.WriteNumber("requestTypeId", id);
+        }
+        else
+        {
+            writer.WriteNull("requestTypeId");
+        }
+
+        writer.WriteString("name", value.Name);
+        writer.WriteEndObject();
+    }
+}
 
 /// <summary>The transport shape of a conversation-end report, with the transcript available up to that moment. See <see cref="GenesysInquiryRequest"/> for why this record exists at the edge.</summary>
 /// <param name="ConversationId">Required. The conversation being ended — the id it was ingested under.</param>

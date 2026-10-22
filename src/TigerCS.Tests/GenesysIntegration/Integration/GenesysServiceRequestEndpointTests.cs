@@ -148,4 +148,24 @@ public sealed class GenesysServiceRequestEndpointTests : IDisposable
         Assert.Equal(HttpStatusCode.Conflict, mismatch.StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, unknown.StatusCode);
     }
+
+    [Theory]
+    [InlineData("\"Leasing\"")]
+    [InlineData("{\"name\":\"Leasing\"}")]
+    public async Task RequestType_AsABareNameOrAnObject_IsReadAsTheName_AndAnUnknownNameIsRefusedNotGuessed(string requestType)
+    {
+        var client = await ClientAsync();
+        var queueId = await SeedQueueAsync();
+
+        var response = await client.PostAsync(
+            "/api/genesys/tickets",
+            new StringContent(
+                $"{{\"conversationId\":\"TEST-CONVERSATION-001\",\"serviceRequestId\":\"leasing-001\",\"channel\":\"LiveChat\",\"queueId\":\"{queueId}\","
+                + $"\"requestType\":{requestType},\"humanFollowUpRequired\":true}}",
+                Encoding.UTF8, "application/json"));
+
+        // Bound as a name (not a 400 binding error); no request type of that name is configured in this database, so it is refused (422).
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Contains("No request type is named 'Leasing'", await response.Content.ReadAsStringAsync());
+    }
 }

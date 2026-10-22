@@ -68,3 +68,17 @@ Ticketing already accepts, on `PATCH /api/genesys/tickets/{ticketId}`:
 3. Genesys changes in §4 (import the updated `02`, `11`, new `17`; transcript action). Order is flexible: until Genesys sends `serviceRequestId`, behaviour is exactly as before.
 4. No change to TigerGroupWeb code: `serviceRequestId`, `humanFollowUpRequired` and `transcript` are body members forwarded byte-for-byte; the route table gains no route (data action 17 uses the existing PATCH).
 5. Rollback: redeploy the previous build; the migration's Down only succeeds while no conversation has more than one ticket.
+
+## 6. Leasing routing review (configuration as delivered)
+
+Verified from code, seed/import and tests (no database was reachable; run `docs/Genesys/uat/verify-leasing-routing.sql`, read-only, to check the real one):
+
+| Question | Finding |
+|---|---|
+| Leasing department exists and is active? | **Only after the New Request Types import.** Neither the dev seed nor migrations define it; `NewRequestTypesImporter` / `ImportNewRequestTypes_UAT.sql` create **Leasing Customer Services** (code `LCS`, active) if no department has that code or name. |
+| Active Leasing request type? | Five, owned by LCS, active, each with a Published workflow: Tenancy Contract, Ejari, Booking, Move-In / Move-Out, Rent / DEWA / AC Cheque Inquiry. **None is named "Leasing"** (not in the approved 35-row workbook). |
+| Mapped to Leasing through routing config? | Yes — `RequestType.DepartmentId` is the routing; `POST /api/genesys/tickets` applies it (transfer, assignment, SLA). `requestType: "Leasing"` therefore resolves **only if a request type with that exact name exists**; otherwise it is refused (422), or queued Unclassified when `Genesys:ClassificationDepartmentCode` is set. Nothing is guessed from the word. |
+| Automatic assignment configured? | **No.** The import creates no assignment rules; Leasing tickets wait in the LCS department queue until an administrator adds a rule per request type (Administration → Request Types; `RequestTypeAssignmentRules`, one per type, members must belong to LCS). The mechanism itself works (tested). |
+| Follow-up protection | `humanFollowUpRequired: true` → stays Open against AI completion, document delivery and both inactivity jobs (tested with the exact UAT payload). |
+
+**Not changed on purpose:** no "Leasing" request type was seeded. Adding one would alter the business-approved workbook catalogue (and its pinned 35-row tests) and needs a business-chosen workflow, SLA and assignee. Create it in Administration (department `LCS`, name exactly `Leasing`, published workflow) and add its assignment rule — or have Genesys send the id/name of one of the five existing types. One code change: `requestType` may now be sent as a bare string (`"requestType": "Leasing"`), read as the name; the object form still works.
