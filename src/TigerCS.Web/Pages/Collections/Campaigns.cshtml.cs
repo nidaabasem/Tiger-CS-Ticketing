@@ -148,8 +148,61 @@ public sealed class CampaignsModel(CollectionsApiClient api, Microsoft.Extension
     public string? ApproveBlockedReason =>
         Report is not { } report ? "Preview customers first."
         : !report.FinancialSourceValidated ? "The financial source is not reconciled, so nothing can be approved or sent."
-        : report.ReadyCount == 0 ? "No Ready customers in this preview."
+        : report.ReadyCount == 0 ? (report.TotalCount - report.NotEligibleCount > 0
+            ? "No customers are Ready to send. The eligible customers need review or are blocked; see the reasons above."
+            : "No customers are eligible in this preview.")
         : null;
+
+    /// <summary>Why the review export is unavailable for the current preview (null = available). Same two conditions the page always applied; the API enforces them again.</summary>
+    public string? ExportReviewProblem =>
+        Report is not { } report ? "Preview customers first."
+        : !report.CanExportReview ? "Your account does not have permission to export campaign lists."
+        : report.Snapshot is { IsReady: false } snapshot ? ExportDataProblem(snapshot)
+        : null;
+
+    // Stale data needs a reload; a coverage gap's own message already says to load the missing data.
+    private static string ExportDataProblem(TigerCS.Application.Modules.Collections.Dto.SnapshotStatusDto snapshot) =>
+        snapshot.ReadyProblem is not { } problem ? "The receivables data is not ready. Reload the data, then export."
+        : snapshot.IsFresh ? problem : $"{problem} Reload the data, then export.";
+
+    /// <summary>Plain-language reasons the eligible customers are not Ready: the report-wide gates first, then the per-customer reasons found on the page shown.</summary>
+    public IReadOnlyList<string> NotReadyReasons()
+    {
+        var reasons = new List<string>();
+        if (Report is not { } report) return reasons;
+        if (report.Snapshot is { IsReady: false } snapshot && snapshot.ReadyProblem is { } problem) reasons.Add($"Financial data: {problem}");
+        if (!report.FinancialSourceValidated) reasons.Add("The financial source has not been reconciled against PACT.");
+        if (report.Crm is { Blocks: true } crm) reasons.Add(crm.Message ?? "CRM contacts are unavailable, so contacts are unconfirmed.");
+        if (!report.IsScheduledDate || report.BusinessDate != report.LiveBusinessDate) reasons.Add("The preview date is not today's scheduled send date: preview only.");
+        var counts = report.Items.Where(i => i.Status is not ("Ready" or "NotEligible"))
+            .SelectMany(i => i.Reason.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)).Where(r => r != "Qualifies")
+            .GroupBy(r => r).OrderByDescending(g => g.Count()).ThenBy(g => g.Key, StringComparer.Ordinal);
+        foreach (var g in counts) reasons.Add($"{ReasonText(g.Key)} ({g.Count():N0} on this page)");
+        return reasons;
+    }
+
+    public static string ReasonText(string code) => code switch
+    {
+        "StaleSource" => "Financial data is older than the allowed age",
+        "CoverageIncomplete" => "The selected dates are not fully loaded",
+        "SourceReconciliationRequired" => "Financial source not reconciled",
+        "NoValidContact" => "No valid mobile or email in CRM or PACT",
+        "CrmCustomerAmbiguous" => "Several CRM customers match",
+        "CrmCompanyAmbiguous" => "CRM sale cannot be tied to one company",
+        "ContactSourceConflict" => "CRM and PACT contacts differ",
+        "CrmUnavailable" => "CRM unavailable: contacts unconfirmed",
+        "OutsideSchedule" => "Not a scheduled send date: preview only",
+        "InternalLegalReferralOnly" => "Internal legal referral: never sent to customers",
+        "LegalNoticeReleaseRequired" => "Legal notice sending has not been released",
+        "AmbiguousInstalments" => "Ambiguous instalments",
+        "AmountPrecisionNeedsReview" => "Amount precision needs review",
+        "MissingUnitIdentity" => "Unit identity missing",
+        "ConflictingContactDetails" => "Conflicting contact details",
+        "UnitAllocationNeedsReview" => "Unit allocation needs review",
+        "ContradictoryPaymentStatus" => "Contradictory payment status",
+        "CurrencyNeedsReview" => "Currency needs review",
+        _ => code
+    };
 
     /// <summary>The configured receivables start date (CollectionsSource:PactReceivables:StartDate, as in the API; 2026-01-01 when absent). Overdue and legal stages
     /// look back months, so an unedited From is this date and not 1 January of the preview year - the same default the API applies to a blank From.</summary>
