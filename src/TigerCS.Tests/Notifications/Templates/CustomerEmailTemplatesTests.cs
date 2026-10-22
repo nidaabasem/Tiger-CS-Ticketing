@@ -47,7 +47,7 @@ public class CustomerEmailTemplatesTests
         Assert.Equal("Your Ticket #TG-CS-20260822-0042 Has Been Resolved", content.Subject);
         Assert.Contains("Status: Resolved", content.TextBody, StringComparison.Ordinal);
         Assert.Contains("Resolution: Thermostat replaced.", content.TextBody, StringComparison.Ordinal);
-        Assert.Contains("Resolved on: 22 August 2026, 09:30 UTC", content.TextBody, StringComparison.Ordinal);
+        Assert.Contains("Resolved on: 22 August 2026, 13:30 UAE time", content.TextBody, StringComparison.Ordinal);
     }
 
     [Fact]

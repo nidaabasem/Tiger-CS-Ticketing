@@ -126,7 +126,7 @@ public class TigerPropertiesEmailLayoutTests
 
     [Theory]
     [InlineData("en", "Your Support Ticket #TG-CS-20260822-0042 Has Been Created", "Dear Ahmed Al-Farsi,", "Created on", "22 August 2026, 13:30 UAE time", ">Open<")]
-    [InlineData("ar", "تم إنشاء تذكرة الدعم رقم #TG-CS-20260822-0042", "عزيزي/عزيزتي أحمد الفارسي،", "تاريخ الإنشاء", "22/08/2026 13:30 بتوقيت الإمارات", ">مفتوحة<")]
+    [InlineData("ar", "تم إنشاء تذكرة الدعم رقم #TG-CS-20260822-0042", "عزيزي/عزيزتي أحمد الفارسي،", "تاريخ الإنشاء", "22 أغسطس 2026، 13:30 بتوقيت الإمارات", ">مفتوحة<")]
     public void Created_UsesTheApprovedDesign_WithNoReview_InBothLanguages(
         string language, string subject, string greeting, string createdLabel, string createdValue, string status)
     {
@@ -162,6 +162,41 @@ public class TigerPropertiesEmailLayoutTests
         Assert.Contains("href=\"https://www.tigergroup.ae\"", html, StringComparison.Ordinal);
         Assert.Contains("href=\"mailto:contact@tigergroup.com\"", html, StringComparison.Ordinal);
         Assert.Contains("Tiger Customer Service Team", html, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("en", "22 August 2026, 13:30 UAE time")]
+    [InlineData("ar", "22 أغسطس 2026، 13:30 بتوقيت الإمارات")]
+    public void EveryCustomerEmail_ShowsItsDateInUaeTime_NeverUtc(string language, string expected)
+    {
+        var model = Model(language);
+        foreach (var content in new[]
+        {
+            CustomerEmailTemplates.TicketCreated(model), CustomerEmailTemplates.TicketResolved(model),
+            CustomerEmailTemplates.TicketClosed(model), CustomerEmailTemplates.TicketReopened(model)
+        })
+        {
+            // 09:30 UTC is 13:30 in the UAE.
+            Assert.Contains(expected, content.HtmlBody, StringComparison.Ordinal);
+            Assert.Contains(expected, content.TextBody, StringComparison.Ordinal);
+            Assert.DoesNotContain("UTC", content.HtmlBody + content.TextBody, StringComparison.Ordinal);
+            Assert.DoesNotContain("09:30", content.HtmlBody + content.TextBody, StringComparison.Ordinal);
+        }
+    }
+
+    [Theory]
+    [InlineData("2026-12-31T20:30:00Z", "01 January 2027, 00:30 UAE time", "1 يناير 2027، 00:30 بتوقيت الإمارات")]
+    [InlineData("2026-03-01T19:59:00Z", "01 March 2026, 23:59 UAE time", "1 مارس 2026، 23:59 بتوقيت الإمارات")]
+    [InlineData("2026-07-15T12:00:00Z", "15 July 2026, 16:00 UAE time", "15 يوليو 2026، 16:00 بتوقيت الإمارات")]
+    public void UaeTime_CrossesMidnightAndMonthBoundaries_AndIgnoresTheMachineTimeZone(string utc, string english, string arabic)
+    {
+        var instant = DateTime.Parse(utc, null, System.Globalization.DateTimeStyles.AdjustToUniversal | System.Globalization.DateTimeStyles.AssumeUniversal);
+
+        Assert.Contains(english, CustomerEmailTemplates.TicketReopened(Model("en") with { OccurredAtUtc = instant }).TextBody, StringComparison.Ordinal);
+        Assert.Contains(arabic, CustomerEmailTemplates.TicketReopened(Model("ar") with { OccurredAtUtc = instant }).TextBody, StringComparison.Ordinal);
+        // An unspecified-kind value is treated as UTC, as every stored timestamp is.
+        var unspecified = DateTime.SpecifyKind(instant, DateTimeKind.Unspecified);
+        Assert.Contains(english, CustomerEmailTemplates.TicketClosed(Model("en") with { OccurredAtUtc = unspecified }).TextBody, StringComparison.Ordinal);
     }
 
     [Fact]

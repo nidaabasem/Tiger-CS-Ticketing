@@ -89,7 +89,7 @@ public static class CustomerEmailTemplates
         var details = new List<(string Label, string Value)> { (t.TicketNumber, model.TicketNumber) };
         AddSubject(details, t, model);
         details.Add((t.Status, t.TranslateStatus(model.ResolutionStatus ?? "Resolved")));
-        details.Add((t.ResolvedOn, FormatDate(model.OccurredAtUtc)));
+        details.Add((t.ResolvedOn, t.UaeTime(model.OccurredAtUtc)));
 
         if (!string.IsNullOrWhiteSpace(model.ResolutionMessage))
         {
@@ -113,7 +113,7 @@ public static class CustomerEmailTemplates
         var details = new List<(string Label, string Value)> { (t.TicketNumber, model.TicketNumber) };
         AddSubject(details, t, model);
         details.Add((t.Status, t.Closed));
-        details.Add((t.ClosedOn, FormatDate(model.OccurredAtUtc)));
+        details.Add((t.ClosedOn, t.UaeTime(model.OccurredAtUtc)));
 
         if (!string.IsNullOrWhiteSpace(model.ResolutionMessage))
         {
@@ -142,7 +142,7 @@ public static class CustomerEmailTemplates
             details:
             [
                 (t.TicketNumber, model.TicketNumber),
-                (t.ReopenedOn, FormatDate(model.OccurredAtUtc))
+                (t.ReopenedOn, t.UaeTime(model.OccurredAtUtc))
             ],
             review: null);
     }
@@ -167,9 +167,6 @@ public static class CustomerEmailTemplates
             details.Add((t.Subject, model.TicketSubject.Trim()));
         }
     }
-
-    private static string FormatDate(DateTime utc) =>
-        utc.ToString("dd MMMM yyyy, HH:mm 'UTC'", CultureInfo.InvariantCulture);
 
     private static CustomerEmailContent Render(
         CustomerEmailTicketModel model,
@@ -443,11 +440,20 @@ public static class CustomerEmailTemplates
         public string RequestType => P("Request type", "نوع الطلب");
         public string Resolution => P("Resolution", "ملخص الحل");
         public string ResolvedOn => P("Resolved on", "تاريخ الحل");
-        /// <summary>UAE time (UTC+4, no daylight saving), labelled so the customer need not guess the zone.</summary>
+        private static readonly string[] ArabicMonths =
+            ["يناير", "فبراير", "مارس", "أبريل", "مايو", "يونيو", "يوليو", "أغسطس", "سبتمبر", "أكتوبر", "نوفمبر", "ديسمبر"];
+
+        /// <summary>
+        /// Every customer-facing date, in UAE time (UTC+4, no daylight saving) and labelled as such so the customer need not
+        /// guess the zone. English: "22 October 2026, 13:30 UAE time"; Arabic uses Arabic month names and the Arabic label.
+        /// </summary>
         public string UaeTime(DateTime utc)
         {
             var local = utc.ToUniversalTime().AddHours(4);
-            return local.ToString(_ar ? "dd/MM/yyyy HH:mm" : "dd MMMM yyyy, HH:mm", CultureInfo.InvariantCulture) + (_ar ? " بتوقيت الإمارات" : " UAE time");
+            var time = local.ToString("HH:mm", CultureInfo.InvariantCulture);
+            return _ar
+                ? $"{local.Day} {ArabicMonths[local.Month - 1]} {local.Year}، {time} بتوقيت الإمارات"
+                : $"{local.ToString("dd MMMM yyyy", CultureInfo.InvariantCulture)}, {time} UAE time";
         }
 
         public string CreatedOn => P("Created on", "تاريخ الإنشاء");
@@ -539,7 +545,7 @@ public static class CustomerEmailTemplates
 /// </summary>
 /// <param name="TicketNumber">The customer-facing ticket reference.</param>
 /// <param name="CustomerName">Greeting name, when known.</param>
-/// <param name="OccurredAtUtc">When the event happened (creation, resolution, closure, reopening); always UTC — the Created email shows it in UAE time.</param>
+/// <param name="OccurredAtUtc">When the event happened (creation, resolution, closure, reopening); always UTC — every customer email renders it in UAE time (UTC+4).</param>
 /// <param name="RequestTypeName">Request type or category name, when the ticket is classified.</param>
 /// <param name="ResolutionStatus">Customer wording for the resolution outcome (resolved email only).</param>
 /// <param name="ResolutionMessage">The resolution note, only when configuration allows sharing it.</param>
