@@ -79,7 +79,7 @@ public sealed class CampaignsModel(CollectionsApiClient api, Microsoft.Extension
         BusinessDate ??= Report?.BusinessDate;
         // To shows the effective end. From stays EMPTY unless the user chose it: empty = All months = the whole history up to the end of the current month (the read scope); the stage
         // eligibility scope is unchanged. Writing the effective 2000-01-01 back into the input would turn the next page / export request into an explicit From
-        // and widen the stage eligibility, so it is never done. Unedited To follows stage / preview-date changes in the browser (collections-campaign-dates.js).
+        // and widen the stage eligibility, so it is never done. The Period control (collections-campaign-filters.js) only fills the visible From / To inputs.
         DateTo ??= Report?.DateTo;
     }
 
@@ -114,6 +114,42 @@ public sealed class CampaignsModel(CollectionsApiClient api, Microsoft.Extension
     }
 
     public string? LoadNotice { get; private set; }
+
+    /// <summary>The preview date the Period shortcuts are measured from: the chosen Preview Date, else today (Dubai).</summary>
+    public DateOnly PeriodAnchor => BusinessDate ?? Report?.BusinessDate ?? CollectionsDisplay.DubaiToday();
+
+    /// <summary>
+    /// Before any preview the Period control starts on "Up to today" (From empty = the whole history, To = the preview date). The shown dates are exactly what is
+    /// sent: nothing is substituted for another date field. After a preview the dates the user previewed with are shown unchanged.
+    /// </summary>
+    public DateOnly? FormDateTo => DateTo ?? (DateFrom is null && Report is null && !RenderFull ? PeriodAnchor : null);
+
+    /// <summary>Which Period shortcut the From / To dates correspond to; anything else is a custom range.</summary>
+    public string Period
+    {
+        get
+        {
+            var to = FormDateTo; var anchor = PeriodAnchor;
+            if (DateFrom is null && to == anchor) return "UpToToday";
+            if (DateFrom is { } from && to is { } end)
+            {
+                var (monthFrom, monthTo) = CollectionsDateRanges.Month(anchor.Year, anchor.Month);
+                if (from == monthFrom && end == monthTo) return "ThisMonth";
+                if ((from, end) == CollectionsDateRanges.LastSixMonths(anchor)) return "LastSixMonths";
+            }
+            return "Custom";
+        }
+    }
+
+    /// <summary>The less-used controls stay collapsed unless one of them holds a non-default value, so an applied filter is never hidden.</summary>
+    public bool AdvancedOpen => Period == "Custom" || BusinessDate is not null || MinTotal != ReceivablesModel.DefaultMinTotal;
+
+    /// <summary>Why Approve &amp; Send is unavailable for the current preview (empty = it is available). The browser adds "nothing ticked" on top of this.</summary>
+    public string? ApproveBlockedReason =>
+        Report is not { } report ? "Preview customers first."
+        : !report.FinancialSourceValidated ? "The financial source is not reconciled, so nothing can be approved or sent."
+        : report.ReadyCount == 0 ? "No Ready customers in this preview."
+        : null;
 
     /// <summary>The configured receivables start date (CollectionsSource:PactReceivables:StartDate, as in the API; 2026-01-01 when absent). Overdue and legal stages
     /// look back months, so an unedited From is this date and not 1 January of the preview year - the same default the API applies to a blank From.</summary>

@@ -30,3 +30,18 @@ jobs:
 
       - name: Test
         run: dotnet test TigerCS.slnx --no-build --configuration Release
+
+  campaign-ui-scripts:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: tools/ui-tests
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install
+        run: npm install --no-audit --no-fund
+      - name: Collections Campaigns browser-script tests
+        run: npm test
