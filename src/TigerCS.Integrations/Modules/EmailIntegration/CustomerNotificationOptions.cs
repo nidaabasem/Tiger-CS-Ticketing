@@ -37,7 +37,7 @@ public sealed class CustomerNotificationOptions
 
     public sealed class BrandingOptions
     {
-        /// <summary>Absolute logo URL. Blank uses <c>{PublicBaseUrl}/img/tiger-logo.png</c>, which the Ticketing web site serves.</summary>
+        /// <summary>Absolute public https logo URL. Blank or non-public (localhost, relative, http) falls back to the official TIGER logo, https://www.tigergroup.ae/logos/TigerHead.jpg.</summary>
         public string? LogoUrl { get; set; }
 
         public string? WebsiteUrl { get; set; } = "https://www.tigergroup.ae";

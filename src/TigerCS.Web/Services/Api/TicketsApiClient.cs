@@ -111,6 +111,10 @@ public sealed class TicketsApiClient(HttpClient httpClient, ILogger<TicketsApiCl
     public Task<ApiResult<TicketInteractionHistoryDto>> GetInteractionsAsync(long ticketId, CancellationToken cancellationToken) =>
         GetAsync<TicketInteractionHistoryDto>($"api/tickets/{ticketId}/interactions", cancellationToken);
 
+    /// <summary>The ticket's customer satisfaction review cycles — read from the persisted review store; never contains a review token.</summary>
+    public Task<ApiResult<TigerCS.Application.Modules.CustomerReviews.Dto.TicketReviewsDto>> GetReviewsAsync(long ticketId, CancellationToken cancellationToken) =>
+        GetAsync<TigerCS.Application.Modules.CustomerReviews.Dto.TicketReviewsDto>($"api/tickets/{ticketId}/reviews", cancellationToken);
+
     /// <summary>Customer Details/Profile (Overview/Contact Info/Units) for this ticket's customer — live CRM data via the same CRM Buyer Lookup the New Ticket wizard uses.</summary>
     public Task<ApiResult<CustomerProfileDto>> GetCustomerProfileAsync(long ticketId, CancellationToken cancellationToken) =>
         GetAsync<CustomerProfileDto>($"api/tickets/{ticketId}/customer-profile", cancellationToken);

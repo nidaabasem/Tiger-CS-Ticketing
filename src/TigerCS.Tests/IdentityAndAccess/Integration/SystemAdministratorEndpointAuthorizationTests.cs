@@ -899,6 +899,21 @@ public class SystemAdministratorEndpointAuthorizationTests : IClassFixture<Tiger
     }
 
     [Fact]
+    public async Task GetTicketReviews_Returns200_WithNoTokens()
+    {
+        var (client, _) = await CreateAdministratorAsync();
+        var ticket = await CreateVerifiedTicketAsync(client, "Facilities");
+
+        var response = await client.GetAsync($"/api/tickets/{ticket.TicketId}/reviews");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await response.Content.ReadAsStringAsync();
+        Assert.Contains("\"cycles\":[]", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("token", body, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync("/api/tickets/987654/reviews")).StatusCode);
+    }
+
+    [Fact]
     public async Task GetTicketInteractions_Returns200()
     {
         var (client, _) = await CreateAdministratorAsync();

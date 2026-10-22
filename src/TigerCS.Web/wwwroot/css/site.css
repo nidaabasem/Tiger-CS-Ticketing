@@ -2114,3 +2114,6 @@ a.badge:hover { text-decoration: underline; }
 /* Unit payment statement: paid is green, due / outstanding is red. */
 .statement-green-text { color: var(--color-success-text, var(--color-success)); }
 .statement-red-text { color: var(--color-critical); }
+
+/* Customer Satisfaction: the Tiger gold used for rating stars (matches the email). */
+.review-stars { color: #C1A562; letter-spacing: 1px; }

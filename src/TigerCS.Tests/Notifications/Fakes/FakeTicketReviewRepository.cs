@@ -42,6 +42,12 @@ public sealed class FakeTicketReviewRepository : ITicketReviewRepository
         return Task.FromResult(true);
     }
 
+    public Task<IReadOnlyList<TicketReview>> ListReviewsForTicketAsync(long ticketId, CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyList<TicketReview>>(Reviews.Where(r => r.TicketId == ticketId).OrderBy(r => r.ReopenCycle).ToList());
+
+    public Task<IReadOnlyList<TicketReviewInvitation>> ListInvitationsForTicketAsync(long ticketId, CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyList<TicketReviewInvitation>>(Invitations.Where(i => i.TicketId == ticketId).ToList());
+
     public Task<TicketReviewSummary> GetProductionSummaryAsync(CancellationToken cancellationToken = default)
     {
         var production = Reviews.Where(r => !r.IsTest).ToList();
