@@ -22,7 +22,7 @@
     };
     const queryFromForm = () => {
         const q = new URLSearchParams();
-        new FormData(form).forEach((value, key) => { if (String(value) !== '') q.append(key, String(value)); });   // disabled inputs are not part of FormData
+        new FormData(form).forEach((value, key) => { if (String(value) !== '' || key === 'minTotal') q.append(key, String(value)); });   // an EMPTY Minimum Total means "cleared" and must be sent   // disabled inputs are not part of FormData
         return q;
     };
     const resultsUrl = q => `${box.dataset.resultsUrl}?${q.toString()}${q.toString() ? '&' : ''}handler=Results`;
@@ -66,12 +66,15 @@
     };
     if (status) { applyAvailability(null); status.addEventListener('change', applyMinState); applyMinState(); }
 
-    // By unit: instalments are expanded in place. Without JavaScript the detail rows simply stay visible (the toggle buttons are hidden until this runs).
+    // By unit: the unit's unpaid instalments are expanded in place (View Details). Without JavaScript the detail rows simply stay visible (the toggle buttons are hidden until this runs).
     const setUnitOpen = (unit, open) => {
         const detail = unit.querySelector('[data-unit-detail]'), button = unit.querySelector('[data-unit-toggle]');
-        detail.hidden = !open; button.setAttribute('aria-expanded', String(open)); button.textContent = open ? 'Hide instalments' : 'Show instalments';
+        detail.hidden = !open; button.setAttribute('aria-expanded', String(open)); button.textContent = open ? 'Hide Details' : 'View Details';
     };
     const collapseUnits = () => box.querySelectorAll('[data-unit]').forEach(u => { u.querySelector('[data-unit-toggle]').hidden = false; setUnitOpen(u, false); });
+
+    // The "loading data" notice may live in the results or (Campaigns) in the separate snapshot status box.
+    const running = () => document.querySelector('[data-load-running]');
 
     const afterRender = () => {
         collapseUnits();
@@ -85,7 +88,7 @@
             syncMonthFromDates();
         }
         window.clearTimeout(pollTimer);
-        if (box.querySelector('[data-load-running]') && polls < MAX_POLLS) { polls++; pollTimer = window.setTimeout(() => load(currentQuery(), false), POLL_MS); }
+        if (running() && polls < MAX_POLLS) { polls++; pollTimer = window.setTimeout(() => load(currentQuery(), false), POLL_MS); }
     };
 
     async function load(query, push) {
@@ -94,7 +97,7 @@
         controller = new AbortController();
         const mine = controller;
         if (timeoutNote) timeoutNote.hidden = true;
-        const polling = !push && box.querySelector('[data-load-running]') !== null;   // keep the progress text while polling
+        const polling = !push && running() !== null;   // keep the progress text while polling
         if (!polling) showLoading();
         setBusy(true);
         let timedOut = false;
@@ -155,7 +158,11 @@
         [from, to].forEach(i => { i.dataset.auto = 'false'; });   // a chosen month is an explicit range: stage defaults must not override it
         polls = 0; load(queryFromForm(), true);
     }
-    if (month && year) {
+    if (month && year && (!from || !to)) {   // pages without date inputs (Receivables): choosing a month / year reloads the list
+        month.addEventListener('change', () => { if (month.value && !year.value) year.value = String(new Date().getFullYear()); if (!month.value) year.value = ''; polls = 0; load(queryFromForm(), true); });
+        year.addEventListener('change', () => { if (month.value) { polls = 0; load(queryFromForm(), true); } });
+    }
+    if (month && year && from && to) {
         month.addEventListener('change', applyMonth);
         year.addEventListener('change', () => { if (month.value) applyMonth(); });
         [from, to].forEach(i => i && i.addEventListener('input', () => { month.value = ''; year.value = ''; }));

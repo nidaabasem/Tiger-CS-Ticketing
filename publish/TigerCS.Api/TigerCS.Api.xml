@@ -362,10 +362,10 @@
             <param name="activeOnly">When true (the default), excludes deactivated channels — a new-ticket picker never offers those; false is for naming a channel a historical record references.</param>
             <response code="200">The channel directory.</response>
         </member>
-        <member name="M:TigerCS.Api.Controllers.CollectionsCampaignsController.Preview(System.String,System.Nullable{System.DateOnly},System.Nullable{System.Int32},System.String,System.Int32,System.Int32,System.Threading.CancellationToken,System.Nullable{System.DateOnly},System.Nullable{System.DateOnly},System.Nullable{System.Int32},System.Nullable{System.Decimal})">
-            <summary>Preview one communication stage, per unit, using current remaining balances from PACT companies 4 and 32. Only instalments due before the end of the current Dubai month are listed (Overdue: before the first day of the month, Due: inside it); <c>minTotal</c> keeps units whose Due + Overdue is greater than it (omit for no minimum).</summary>
+        <member name="M:TigerCS.Api.Controllers.CollectionsCampaignsController.Preview(System.String,System.Nullable{System.DateOnly},System.Nullable{System.Int32},System.String,System.Int32,System.Int32,System.Threading.CancellationToken,System.Nullable{System.DateOnly},System.Nullable{System.DateOnly},System.Nullable{System.Int32},System.Nullable{System.Decimal},System.String)">
+            <summary>Preview one communication stage, per unit, using current remaining balances from PACT companies 4 and 32. Only instalments due before the end of the current Dubai month are listed (Overdue: before the first day of the month, Due: inside it); <c>minTotal</c> keeps units whose Due + Overdue is greater than it (omit for no minimum). <c>paymentStatus</c> is Due, Overdue or Both (default): a single status keeps only that status' instalments in the figures; preview, counts and both CSV exports share it.</summary>
         </member>
-        <member name="M:TigerCS.Api.Controllers.CollectionsCampaignsController.Export(System.String,System.String,System.Nullable{System.DateOnly},System.Nullable{System.Int32},System.String,System.Threading.CancellationToken,System.Nullable{System.DateOnly},System.Nullable{System.DateOnly},System.Nullable{System.Int32},System.Nullable{System.Decimal})">
+        <member name="M:TigerCS.Api.Controllers.CollectionsCampaignsController.Export(System.String,System.String,System.Nullable{System.DateOnly},System.Nullable{System.Int32},System.String,System.Threading.CancellationToken,System.Nullable{System.DateOnly},System.Nullable{System.DateOnly},System.Nullable{System.Int32},System.Nullable{System.Decimal},System.String)">
             <summary>Export the full filtered list. Review mode is for internal review; Genesys mode refuses any unresolved row,
             an unscheduled or non-current date, and internal legal referrals. CSV is returned in an internal JSON envelope.</summary>
         </member>
@@ -376,7 +376,7 @@
             server-side by the Web application as the signed-in user.
             </summary>
         </member>
-        <member name="M:TigerCS.Api.Controllers.CollectionsReviewController.#ctor(TigerCS.Application.Modules.Collections.Review.ReviewQueryService,TigerCS.Application.Modules.Collections.Review.ReviewRefreshService,TigerCS.Application.Modules.Collections.Review.DispatchService)">
+        <member name="M:TigerCS.Api.Controllers.CollectionsReviewController.#ctor(TigerCS.Application.Modules.Collections.Review.ReviewQueryService,TigerCS.Application.Modules.Collections.Review.ReviewRefreshService,TigerCS.Application.Modules.Collections.Review.DispatchService,TigerCS.Application.Modules.Collections.Review.DispatchAdminReportService)">
             <summary>
             Collections review and approval: filtered stored records, explicit refresh jobs, approval of an exact list and upload to
             Genesys outbound contact lists. Reads never call the financial source; only the refresh job does. Internal routes called
@@ -415,6 +415,9 @@
         </member>
         <member name="M:TigerCS.Api.Controllers.CollectionsReviewController.DispatchContacts(System.Guid,System.Threading.CancellationToken)">
             <summary>The contacts of one send exactly as uploaded (the six Genesys contact-list columns) as a CSV file, for comparison with the Genesys list.</summary>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.CollectionsReviewController.RetryAdminEmail(System.Guid,System.Threading.CancellationToken)">
+            <summary>Retries only the administrator report of a finished send. Never repeats the Genesys upload.</summary>
         </member>
         <member name="M:TigerCS.Api.Controllers.CollectionsReviewController.SweepSuppression(TigerCS.Application.Modules.Collections.Services.CollectionsAuthorizationService,TigerCS.Application.Modules.Collections.Review.IReviewJobScheduler,System.Threading.CancellationToken)">
             <summary>Starts the paid-after-upload suppression sweep now (it also runs on a schedule when enabled).</summary>
@@ -1239,7 +1242,7 @@
             <summary>
             The request type the bot identified. Send <c>requestTypeId</c> (preferred) or
             <c>name</c>; the id wins when both are sent. Omit the whole part, or send blanks, when the bot
-            did not supply one (an explicitly invalid one is refused with 422 and nothing is created): the ticket is then awaiting classification in the human follow-up queue.
+            did not supply one (an explicitly invalid one is refused with 422 and nothing is created): the ticket is then created <b>Unclassified</b> for the existing manual classification workflow. A missing request type is never a request for a human: no handoff is recorded for it.
             </summary>
             <param name="RequestTypeId">The configured request type's id (see <c>GET /api/request-types</c>).</param>
             <param name="Name">The request type's exact name (case-insensitive). Refused as ambiguous if more than one department has it.</param>
@@ -1248,7 +1251,7 @@
             <summary>
             The request type the bot identified. Send <c>requestTypeId</c> (preferred) or
             <c>name</c>; the id wins when both are sent. Omit the whole part, or send blanks, when the bot
-            did not supply one (an explicitly invalid one is refused with 422 and nothing is created): the ticket is then awaiting classification in the human follow-up queue.
+            did not supply one (an explicitly invalid one is refused with 422 and nothing is created): the ticket is then created <b>Unclassified</b> for the existing manual classification workflow. A missing request type is never a request for a human: no handoff is recorded for it.
             </summary>
             <param name="RequestTypeId">The configured request type's id (see <c>GET /api/request-types</c>).</param>
             <param name="Name">The request type's exact name (case-insensitive). Refused as ambiguous if more than one department has it.</param>
@@ -1337,7 +1340,7 @@
             <param name="ConversationId">The conversation this refers to, echoed back.</param>
             <param name="TicketId">The one ticket this conversation produced.</param>
             <param name="TicketNumber">That ticket's human-facing number.</param>
-            <param name="ClassificationStatus">"Classified" when a valid request type was applied; "AwaitingClassification" when no request type was supplied (the ticket is then on Normal priority in the human classification queue). A request type that was supplied but is invalid is not accepted at all: the call answers 422 and nothing is created. Absent on a repeated (<c>AlreadyIngested</c>) delivery, which changes nothing.</param>
+            <param name="ClassificationStatus">"Classified" when a valid request type was applied; "AwaitingClassification" when no request type was supplied (the ticket is then on Normal priority, Unclassified, and no human handoff is recorded). A request type that was supplied but is invalid is not accepted at all: the call answers 422 and nothing is created. Absent on a repeated (<c>AlreadyIngested</c>) delivery, which changes nothing.</param>
             <param name="RequestTypeId">The applied request type, when classified.</param>
             <param name="DepartmentId">The responsible department after routing.</param>
             <param name="AssignedEmployeeId">The employee the automatic assignment chose; null means the department queue.</param>
@@ -1349,7 +1352,7 @@
             <param name="ConversationId">The conversation this refers to, echoed back.</param>
             <param name="TicketId">The one ticket this conversation produced.</param>
             <param name="TicketNumber">That ticket's human-facing number.</param>
-            <param name="ClassificationStatus">"Classified" when a valid request type was applied; "AwaitingClassification" when no request type was supplied (the ticket is then on Normal priority in the human classification queue). A request type that was supplied but is invalid is not accepted at all: the call answers 422 and nothing is created. Absent on a repeated (<c>AlreadyIngested</c>) delivery, which changes nothing.</param>
+            <param name="ClassificationStatus">"Classified" when a valid request type was applied; "AwaitingClassification" when no request type was supplied (the ticket is then on Normal priority, Unclassified, and no human handoff is recorded). A request type that was supplied but is invalid is not accepted at all: the call answers 422 and nothing is created. Absent on a repeated (<c>AlreadyIngested</c>) delivery, which changes nothing.</param>
             <param name="RequestTypeId">The applied request type, when classified.</param>
             <param name="DepartmentId">The responsible department after routing.</param>
             <param name="AssignedEmployeeId">The employee the automatic assignment chose; null means the department queue.</param>
@@ -1368,7 +1371,7 @@
             <summary>That ticket's human-facing number.</summary>
         </member>
         <member name="P:TigerCS.Api.Controllers.GenesysInquiryAcceptedResponse.ClassificationStatus">
-            <summary>"Classified" when a valid request type was applied; "AwaitingClassification" when no request type was supplied (the ticket is then on Normal priority in the human classification queue). A request type that was supplied but is invalid is not accepted at all: the call answers 422 and nothing is created. Absent on a repeated (<c>AlreadyIngested</c>) delivery, which changes nothing.</summary>
+            <summary>"Classified" when a valid request type was applied; "AwaitingClassification" when no request type was supplied (the ticket is then on Normal priority, Unclassified, and no human handoff is recorded). A request type that was supplied but is invalid is not accepted at all: the call answers 422 and nothing is created. Absent on a repeated (<c>AlreadyIngested</c>) delivery, which changes nothing.</summary>
         </member>
         <member name="P:TigerCS.Api.Controllers.GenesysInquiryAcceptedResponse.RequestTypeId">
             <summary>The applied request type, when classified.</summary>
@@ -1442,19 +1445,41 @@
              <param name="Routing">Set when the conversation moved to another queue, or an agent connected / it was transferred. Same ticket, always.</param>
              <param name="CustomerConfirmation">Set when the customer explicitly confirmed the issue is resolved. <b>Record-only — never resolves or closes the ticket.</b></param>
              <param name="RequestType">Set when the bot has identified the request type (initially missing, or later in the conversation). Validated; then the request type's department routing, automatic assignment and SLA policy are applied without restarting the SLA clock. Repeating the same one changes nothing; a different one than the ticket already has is refused with 409.</param>
+             <param name="CustomerActive">
+             <c>true</c> = the customer just did something in the conversation (sent a message, answered the bot). It restarts the Website/Chatbot
+             inactivity clock: such a ticket closes automatically once the customer has done nothing for more than
+             <c>Genesys:CustomerInactivityTimeoutMinutes</c> (default 10), counted from the LAST interaction, not from ticket creation. Send it on
+             every inbound customer message — TigerCS cannot see messages Genesys does not report. <c>awaitingCustomerReply: false</c> also counts.
+             <b>Omit it</b> (or send false) to change nothing.
+             </param>
+             <param name="ClosedByAi">
+             <c>true</c> = the Genesys AI (voicebot / chatbot) <b>finished the conversation</b>: TigerCS closes the ticket (Resolved → Closed) with the
+             exact reason <c>Closed by AI</c>. This is NOT a customer interaction and is separate from <c>awaitingCustomerReply</c>. Closes only a
+             ticket the AI still owns: refused (nothing changed, <c>closedByAiNote</c> says why) when a human is requested, pending or connected, a person
+             owns the ticket, it is a Call Center ticket, or it is already closed (an earlier closure — including a document-delivery one — is never
+             overwritten). Repeating it is harmless. Applied after every other part of the same update. <b>Omit it</b> (or false) to change nothing.
+             </param>
+             <param name="Transcript">
+             Messages of the <b>live</b> conversation, sent as they happen (one or several per call). Each has <c>sender</c> (<c>Customer</c>,
+             <c>VirtualAgent</c> or <c>HumanAgent</c>), <c>sentAtUtc</c> (the real time), <c>body</c> and — strongly recommended — a stable
+             <c>externalMessageId</c> (the Genesys message id). Purely additive: messages are appended in the order delivered and never edited or removed;
+             one already stored (same <c>externalMessageId</c>, or the same sender+time+body when none) is ignored, so retries and the final
+             <c>ended.transcript</c> repeating them create no duplicates. It does not end the conversation. A human agent opening the ticket sees
+             everything delivered so far. Only a <c>HumanAgent</c> line can record First Response — never <c>VirtualAgent</c>. <b>Omit it</b> when there is nothing new.
+             </param>
              <param name="AwaitingCustomerReply">
              Chatbot inactivity timer. <c>true</c> = the chatbot just asked the customer
              something and is waiting for the reply: TigerCS starts a persistent timer
              (server clock). Repeating <c>true</c> while the timer runs changes nothing — a retried
              webhook never restarts it. <c>false</c> = the customer replied: the timer is cancelled.
              Send <c>true</c> again with the chatbot's next question to start a new one. If the customer
-             stays silent for more than <c>Genesys:CustomerInactivityTimeoutMinutes</c> (default 5), a
+             stays silent for more than <c>Genesys:AwaitingReplyTimeoutMinutes</c> (default 5) — on tickets the Website/Chatbot "customer inactive" rule does not track (voice, Call Center) — a
              background job closes the ticket as a customer-inactivity closure — unless a human has been
              requested or assigned, or the conversation ended, in which case no timer runs.
              <b>Omit it</b> to leave the timer as it is.
              </param>
         </member>
-        <member name="M:TigerCS.Api.Controllers.GenesysTicketUpdateRequest.#ctor(System.String,System.String,System.String,TigerCS.Api.Controllers.GenesysConversationEndPart,TigerCS.Api.Controllers.GenesysHandoffPart,System.Nullable{System.DateTime},TigerCS.Api.Controllers.GenesysRoutingPart,TigerCS.Api.Controllers.GenesysCustomerConfirmationPart,System.Nullable{System.Boolean},TigerCS.Api.Controllers.GenesysRequestTypePart)">
+        <member name="M:TigerCS.Api.Controllers.GenesysTicketUpdateRequest.#ctor(System.String,System.String,System.String,TigerCS.Api.Controllers.GenesysConversationEndPart,TigerCS.Api.Controllers.GenesysHandoffPart,System.Nullable{System.DateTime},TigerCS.Api.Controllers.GenesysRoutingPart,TigerCS.Api.Controllers.GenesysCustomerConfirmationPart,System.Nullable{System.Boolean},TigerCS.Api.Controllers.GenesysRequestTypePart,System.Nullable{System.Boolean},System.Nullable{System.Boolean},System.Collections.Generic.IReadOnlyList{TigerCS.Api.Controllers.GenesysTranscriptMessageRequest})">
              <summary>
              The one Genesys update body. Every part is optional and independently
              idempotent — send only what changed, and resend freely.
@@ -1478,13 +1503,35 @@
              <param name="Routing">Set when the conversation moved to another queue, or an agent connected / it was transferred. Same ticket, always.</param>
              <param name="CustomerConfirmation">Set when the customer explicitly confirmed the issue is resolved. <b>Record-only — never resolves or closes the ticket.</b></param>
              <param name="RequestType">Set when the bot has identified the request type (initially missing, or later in the conversation). Validated; then the request type's department routing, automatic assignment and SLA policy are applied without restarting the SLA clock. Repeating the same one changes nothing; a different one than the ticket already has is refused with 409.</param>
+             <param name="CustomerActive">
+             <c>true</c> = the customer just did something in the conversation (sent a message, answered the bot). It restarts the Website/Chatbot
+             inactivity clock: such a ticket closes automatically once the customer has done nothing for more than
+             <c>Genesys:CustomerInactivityTimeoutMinutes</c> (default 10), counted from the LAST interaction, not from ticket creation. Send it on
+             every inbound customer message — TigerCS cannot see messages Genesys does not report. <c>awaitingCustomerReply: false</c> also counts.
+             <b>Omit it</b> (or send false) to change nothing.
+             </param>
+             <param name="ClosedByAi">
+             <c>true</c> = the Genesys AI (voicebot / chatbot) <b>finished the conversation</b>: TigerCS closes the ticket (Resolved → Closed) with the
+             exact reason <c>Closed by AI</c>. This is NOT a customer interaction and is separate from <c>awaitingCustomerReply</c>. Closes only a
+             ticket the AI still owns: refused (nothing changed, <c>closedByAiNote</c> says why) when a human is requested, pending or connected, a person
+             owns the ticket, it is a Call Center ticket, or it is already closed (an earlier closure — including a document-delivery one — is never
+             overwritten). Repeating it is harmless. Applied after every other part of the same update. <b>Omit it</b> (or false) to change nothing.
+             </param>
+             <param name="Transcript">
+             Messages of the <b>live</b> conversation, sent as they happen (one or several per call). Each has <c>sender</c> (<c>Customer</c>,
+             <c>VirtualAgent</c> or <c>HumanAgent</c>), <c>sentAtUtc</c> (the real time), <c>body</c> and — strongly recommended — a stable
+             <c>externalMessageId</c> (the Genesys message id). Purely additive: messages are appended in the order delivered and never edited or removed;
+             one already stored (same <c>externalMessageId</c>, or the same sender+time+body when none) is ignored, so retries and the final
+             <c>ended.transcript</c> repeating them create no duplicates. It does not end the conversation. A human agent opening the ticket sees
+             everything delivered so far. Only a <c>HumanAgent</c> line can record First Response — never <c>VirtualAgent</c>. <b>Omit it</b> when there is nothing new.
+             </param>
              <param name="AwaitingCustomerReply">
              Chatbot inactivity timer. <c>true</c> = the chatbot just asked the customer
              something and is waiting for the reply: TigerCS starts a persistent timer
              (server clock). Repeating <c>true</c> while the timer runs changes nothing — a retried
              webhook never restarts it. <c>false</c> = the customer replied: the timer is cancelled.
              Send <c>true</c> again with the chatbot's next question to start a new one. If the customer
-             stays silent for more than <c>Genesys:CustomerInactivityTimeoutMinutes</c> (default 5), a
+             stays silent for more than <c>Genesys:AwaitingReplyTimeoutMinutes</c> (default 5) — on tickets the Website/Chatbot "customer inactive" rule does not track (voice, Call Center) — a
              background job closes the ticket as a customer-inactivity closure — unless a human has been
              requested or assigned, or the conversation ended, in which case no timer runs.
              <b>Omit it</b> to leave the timer as it is.
@@ -1521,7 +1568,7 @@
             (server clock). Repeating <c>true</c> while the timer runs changes nothing — a retried
             webhook never restarts it. <c>false</c> = the customer replied: the timer is cancelled.
             Send <c>true</c> again with the chatbot's next question to start a new one. If the customer
-            stays silent for more than <c>Genesys:CustomerInactivityTimeoutMinutes</c> (default 5), a
+            stays silent for more than <c>Genesys:AwaitingReplyTimeoutMinutes</c> (default 5) — on tickets the Website/Chatbot "customer inactive" rule does not track (voice, Call Center) — a
             background job closes the ticket as a customer-inactivity closure — unless a human has been
             requested or assigned, or the conversation ended, in which case no timer runs.
             <b>Omit it</b> to leave the timer as it is.
@@ -1529,6 +1576,41 @@
         </member>
         <member name="P:TigerCS.Api.Controllers.GenesysTicketUpdateRequest.RequestType">
             <summary>Set when the bot has identified the request type (initially missing, or later in the conversation). Validated; then the request type's department routing, automatic assignment and SLA policy are applied without restarting the SLA clock. Repeating the same one changes nothing; a different one than the ticket already has is refused with 409.</summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysTicketUpdateRequest.CustomerActive">
+            <summary>
+            <c>true</c> = the customer just did something in the conversation (sent a message, answered the bot). It restarts the Website/Chatbot
+            inactivity clock: such a ticket closes automatically once the customer has done nothing for more than
+            <c>Genesys:CustomerInactivityTimeoutMinutes</c> (default 10), counted from the LAST interaction, not from ticket creation. Send it on
+            every inbound customer message — TigerCS cannot see messages Genesys does not report. <c>awaitingCustomerReply: false</c> also counts.
+            <b>Omit it</b> (or send false) to change nothing.
+            </summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysTicketUpdateRequest.ClosedByAi">
+            <summary>
+            <c>true</c> = the Genesys AI (voicebot / chatbot) <b>finished the conversation</b>: TigerCS closes the ticket (Resolved → Closed) with the
+            exact reason <c>Closed by AI</c>. This is NOT a customer interaction and is separate from <c>awaitingCustomerReply</c>. Closes only a
+            ticket the AI still owns: refused (nothing changed, <c>closedByAiNote</c> says why) when a human is requested, pending or connected, a person
+            owns the ticket, it is a Call Center ticket, or it is already closed (an earlier closure — including a document-delivery one — is never
+            overwritten). Repeating it is harmless. Applied after every other part of the same update. <b>Omit it</b> (or false) to change nothing.
+            </summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysTicketUpdateRequest.Transcript">
+            <summary>
+            Messages of the <b>live</b> conversation, sent as they happen (one or several per call). Each has <c>sender</c> (<c>Customer</c>,
+            <c>VirtualAgent</c> or <c>HumanAgent</c>), <c>sentAtUtc</c> (the real time), <c>body</c> and — strongly recommended — a stable
+            <c>externalMessageId</c> (the Genesys message id). Purely additive: messages are appended in the order delivered and never edited or removed;
+            one already stored (same <c>externalMessageId</c>, or the same sender+time+body when none) is ignored, so retries and the final
+            <c>ended.transcript</c> repeating them create no duplicates. It does not end the conversation. A human agent opening the ticket sees
+            everything delivered so far. Only a <c>HumanAgent</c> line can record First Response — never <c>VirtualAgent</c>. <b>Omit it</b> when there is nothing new.
+            </summary>
+        </member>
+        <member name="T:TigerCS.Api.Controllers.LenientNullableBoolConverter">
+            <summary>
+            Reads a flag as <c>true</c>/<c>false</c>, the strings <c>"true"</c>/<c>"false"</c>, or blank/null → null ("not supplied"). A Genesys data
+            action cannot leave a field out of its request template, so an unset Architect variable arrives as <c>""</c> — which must mean "omitted",
+            exactly like every other optional part of this body. Anything else is a 400.
+            </summary>
         </member>
         <member name="T:TigerCS.Api.Controllers.GenesysCustomerConfirmationPart">
             <summary>
@@ -1711,8 +1793,10 @@
             <param name="RequestTypeId">The applied request type.</param>
             <param name="DepartmentId">The responsible department after routing.</param>
             <param name="AssignedEmployeeId">The employee chosen by the automatic assignment; null means the department queue.</param>
+            <param name="ClosedByAi">True when this call closed the ticket because <c>closedByAi: true</c> was sent.</param>
+            <param name="ClosedByAiNote">Why <c>closedByAi: true</c> did not close the ticket, when it did not.</param>
         </member>
-        <member name="M:TigerCS.Api.Controllers.GenesysTicketUpdateResponse.#ctor(System.String,System.String,System.Int64,System.String,System.String,System.Boolean,System.Int32,System.String,System.Nullable{System.Int64},System.Boolean,System.Nullable{System.DateTime},System.String,System.String,System.Nullable{System.Int32},System.Nullable{System.Int32},System.Nullable{System.Guid})">
+        <member name="M:TigerCS.Api.Controllers.GenesysTicketUpdateResponse.#ctor(System.String,System.String,System.Int64,System.String,System.String,System.Boolean,System.Int32,System.String,System.Nullable{System.Int64},System.Boolean,System.Nullable{System.DateTime},System.String,System.String,System.Nullable{System.Int32},System.Nullable{System.Int32},System.Nullable{System.Guid},System.Boolean,System.String)">
             <summary>What the update endpoint answers. <paramref name="TicketStatus"/> is echoed deliberately: it is the proof that ending a conversation did not close the ticket.</summary>
             <param name="Outcome">"Applied".</param>
             <param name="ConversationId">The conversation, echoed back.</param>
@@ -1730,6 +1814,8 @@
             <param name="RequestTypeId">The applied request type.</param>
             <param name="DepartmentId">The responsible department after routing.</param>
             <param name="AssignedEmployeeId">The employee chosen by the automatic assignment; null means the department queue.</param>
+            <param name="ClosedByAi">True when this call closed the ticket because <c>closedByAi: true</c> was sent.</param>
+            <param name="ClosedByAiNote">Why <c>closedByAi: true</c> did not close the ticket, when it did not.</param>
         </member>
         <member name="P:TigerCS.Api.Controllers.GenesysTicketUpdateResponse.Outcome">
             <summary>"Applied".</summary>
@@ -1778,6 +1864,12 @@
         </member>
         <member name="P:TigerCS.Api.Controllers.GenesysTicketUpdateResponse.AssignedEmployeeId">
             <summary>The employee chosen by the automatic assignment; null means the department queue.</summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysTicketUpdateResponse.ClosedByAi">
+            <summary>True when this call closed the ticket because <c>closedByAi: true</c> was sent.</summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysTicketUpdateResponse.ClosedByAiNote">
+            <summary>Why <c>closedByAi: true</c> did not close the ticket, when it did not.</summary>
         </member>
         <member name="T:TigerCS.Api.Controllers.GenesysAgentContextRequest">
              <summary>
@@ -2115,7 +2207,7 @@
              assignment runs (no eligible employee leaves it in the department
              queue) and its SLA policy replaces the Normal-priority targets
              without restarting the clock. With no request type supplied the ticket
-             stays awaiting classification in the existing human follow-up queue;
+             stays Unclassified for the existing manual classification workflow (no human handoff is recorded);
              the bot can send it later on <c>PATCH</c>. A repeated delivery of the
              same <c>conversationId</c> changes nothing.
              </para>

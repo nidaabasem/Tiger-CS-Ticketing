@@ -331,6 +331,19 @@
         <member name="M:TigerCS.Domain.Modules.Collections.AccountBalance.#ctor(System.String,System.Nullable{System.Decimal},System.Nullable{System.Decimal},System.Nullable{System.Decimal},System.Nullable{System.Decimal},System.Nullable{System.Decimal},System.Nullable{System.Decimal},System.Nullable{System.Decimal},System.Nullable{System.Decimal},System.Nullable{System.Decimal},System.Nullable{System.DateOnly},TigerCS.Domain.Modules.Collections.NextPayment,TigerCS.Domain.Modules.Collections.BalanceConsistency,System.Collections.Generic.IReadOnlyList{System.String})">
             <summary>An account's figures, all in <see cref="P:TigerCS.Domain.Modules.Collections.AccountBalance.Currency"/>, all derived only from what the source reported. Null — never zero — when the source data is invalid.</summary>
         </member>
+        <member name="T:TigerCS.Domain.Modules.Collections.CampaignPaymentFilter">
+            <summary>
+            The Campaigns "Payment status" filter. Due = instalments due inside the current Dubai month, Overdue = due before it (<see cref="T:TigerCS.Domain.Modules.Collections.CollectionsDueMonth"/>).
+            Both (the default) lists a unit when it has either. A single status keeps only that status' instalments in the unit's Due / Overdue / Total, so the Minimum Total,
+            the counts, the qualifying amount, the pages and both CSV exports all agree. It never changes the stage eligibility rule.
+            </summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.Collections.CampaignPaymentFilters.TryParse(System.String,TigerCS.Domain.Modules.Collections.CampaignPaymentFilter@)">
+            <summary>Blank, "Both" and "All" mean Both; anything unknown is refused (false).</summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.Collections.CampaignPaymentFilters.Name(TigerCS.Domain.Modules.Collections.CampaignPaymentFilter)">
+            <summary>The query-string / display value ("Both", "Due", "Overdue").</summary>
+        </member>
         <member name="T:TigerCS.Domain.Modules.Collections.CollectionsCampaignFlags">
             <summary>Unit-level review reasons of a campaign candidate (bit mask). The remaining reasons (stale source, coverage, currency, release gates) do
             not depend on the unit and are added by the application.</summary>
@@ -1074,6 +1087,12 @@
         <member name="T:TigerCS.Domain.Modules.Collections.Review.CampaignReminderType">
             <summary>The five Genesys contact-list reminder types, mapped one-to-one onto the approved campaign stages.</summary>
         </member>
+        <member name="M:TigerCS.Domain.Modules.Collections.Review.CampaignReminderTypes.StageName(TigerCS.Domain.Modules.Collections.Review.CampaignReminderType)">
+            <summary>
+            The stage's display name. It is used verbatim as the Genesys campaign name (and as the Campaigns page option text), so it must not be
+            reworded or decorated anywhere else. The reminder type / stage enum stays the internal identifier.
+            </summary>
+        </member>
         <member name="M:TigerCS.Domain.Modules.Collections.Review.CampaignReminderTypes.DefaultLabel(TigerCS.Domain.Modules.Collections.Review.CampaignReminderType)">
             <summary>Default ReminderType label written to Genesys; overridable by configuration after checking the supplied templates.</summary>
         </member>
@@ -1168,6 +1187,9 @@
         <member name="P:TigerCS.Domain.Modules.Collections.Review.CollectionsReviewRecord.RecordKey">
             <summary>SHA-256 of company, tenant, unit and monthly stage cycle: the stable identity used to detect repeat sends.</summary>
         </member>
+        <member name="P:TigerCS.Domain.Modules.Collections.Review.CollectionsReviewRecord.TowerId">
+            <summary>The unit's tower (local CollectionsTowers.TowerId) as read from the source: the structured Project / Tower filter. Null on data read before towers were stored.</summary>
+        </member>
         <member name="P:TigerCS.Domain.Modules.Collections.Review.CollectionsReviewRecord.Reasons">
             <summary>Semicolon separated reason codes (needs-review, exclusions and warnings).</summary>
         </member>
@@ -1188,6 +1210,33 @@
         </member>
         <member name="P:TigerCS.Domain.Modules.Collections.Review.CollectionsDispatch.LeaseOwner">
             <summary>Held by the worker that is revalidating/sending; an expired lease means that worker died and another may continue.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.Collections.Review.CollectionsDispatch.AdminEmailError">
+            <summary>Safe diagnostic only (never an address or message body).</summary>
+        </member>
+        <member name="T:TigerCS.Domain.Modules.Collections.Review.AdminEmailStatus">
+            <summary>
+            Outcome of the administrator report of a finished send. Tracked apart from <see cref="T:TigerCS.Domain.Modules.Collections.Review.DispatchStatus"/>: a mail failure never changes what Genesys received
+            and is never repaired by sending the Genesys batch again.
+            </summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.Collections.Review.AdminEmailStatus.None">
+            <summary>Not attempted yet (send still running, or the send ended without anything uploaded).</summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.Collections.Review.AdminEmailStatus.Sending">
+            <summary>A worker has claimed the report and is sending it.</summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.Collections.Review.AdminEmailStatus.Sent">
+            <summary>The mail provider accepted the report for every recipient.</summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.Collections.Review.AdminEmailStatus.Failed">
+            <summary>The provider refused or failed for at least one recipient; retry sends the report only.</summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.Collections.Review.AdminEmailStatus.NotConfigured">
+            <summary>Notifications are on but no valid recipient (or a supported attachment format) is configured. Never reported as sent.</summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.Collections.Review.AdminEmailStatus.Disabled">
+            <summary>Notifications are switched off by configuration.</summary>
         </member>
         <member name="F:TigerCS.Domain.Modules.Collections.Review.DispatchItemStatus.Approved">
             <summary>Approved and waiting for revalidation/upload. Counts as "already sent" for duplicate prevention.</summary>
@@ -1230,6 +1279,15 @@
         </member>
         <member name="T:TigerCS.Domain.Modules.Collections.Review.CollectionsGenesysBatch">
             <summary>One POST to /contactlists/{id}/contacts: a single reminder type, at most 1,000 contacts.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.Collections.Review.CollectionsGenesysBatch.StageName">
+            <summary>The stage's display name at planning time (the exact Genesys campaign name). <see cref="P:TigerCS.Domain.Modules.Collections.Review.CollectionsGenesysBatch.ReminderType"/> remains the internal stage id.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.Collections.Review.CollectionsGenesysBatch.GenesysCampaignName">
+            <summary>The campaign name actually matched or created in Genesys; equals <see cref="P:TigerCS.Domain.Modules.Collections.Review.CollectionsGenesysBatch.StageName"/>.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.Collections.Review.CollectionsGenesysBatch.CampaignAction">
+            <summary>"Created" (this send made the campaign) or "ReusedExisting" (a campaign with that exact name already existed).</summary>
         </member>
         <member name="P:TigerCS.Domain.Modules.Collections.Review.CollectionsGenesysBatch.Error">
             <summary>A safe, non-sensitive failure description (never a token, secret or response body).</summary>
@@ -3712,6 +3770,19 @@
             priority anyone set, and re-ingesting a conversation must not reset it.
             </summary>
         </member>
+        <member name="M:TigerCS.Domain.Modules.Ticketing.Ticket.ReclassifyRequestType(System.Int32,System.Int32)">
+            <summary>
+            Replaces the request type (and the workflow version pinned through it)
+            of a ticket that already has one — the narrow, explicit exception to
+            "classify once" that lets the Genesys AI refine its own classification
+            while the conversation progresses. <b>Whether it is allowed is the
+            calling service's decision</b> (no human has worked the ticket, no
+            approval was raised under the old type); this method only guards the
+            invariants it owns: the ticket is not closed and a request type was
+            already set, so it can never be used to classify an unclassified ticket
+            or to skip the write-once pin on the first classification.
+            </summary>
+        </member>
         <member name="M:TigerCS.Domain.Modules.Ticketing.Ticket.PinWorkflowVersion(System.Int32)">
             <summary>
             Pins the workflow version the ticket follows — write-once, at creation,
@@ -3794,6 +3865,31 @@
              (<see cref="M:TigerCS.Domain.Modules.Ticketing.Ticket.ChangeStatus(TigerCS.Domain.Modules.Ticketing.TicketStatus)"/> requires an owner).
              </para>
              </summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.Ticketing.Ticket.StartInProgressAtCreation">
+            <summary>
+            Call Center tickets are worked from the moment they exist: a ticket that originates in the Call Center department starts
+            <see cref="F:TigerCS.Domain.Modules.Ticketing.TicketStatus.InProgress"/> instead of <see cref="F:TigerCS.Domain.Modules.Ticketing.TicketStatus.Open"/>. Creation-time only — a persisted
+            ticket moves through <see cref="M:TigerCS.Domain.Modules.Ticketing.Ticket.ChangeStatus(TigerCS.Domain.Modules.Ticketing.TicketStatus)"/>, which still demands an owner for Open→InProgress. Leaves
+            <see cref="P:TigerCS.Domain.Modules.Ticketing.Ticket.OriginatingDepartmentId"/> (write-once) and every other field untouched.
+            </summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.Ticketing.Ticket.CloseForDocumentDelivery(TigerCS.Domain.Modules.Ticketing.ResolutionOutcome)">
+            <summary>
+            Document-delivery closure (Genesys chatbot / voicebot): the document workflow reached its end, so the ticket goes
+            Resolved → Closed in one step with the given <paramref name="outcome"/> — <see cref="F:TigerCS.Domain.Modules.Ticketing.ResolutionOutcome.Resolved"/>
+            when the document was sent, <see cref="F:TigerCS.Domain.Modules.Ticketing.ResolutionOutcome.Cancelled"/> when it could not be delivered (never "Resolved":
+            nothing was fixed). Returns the status held before so the caller writes the history rows. A human owner does not block it:
+            the request that ends the workflow is the customer's own document request, not an inactivity guess.
+            </summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.Ticketing.Ticket.CloseForAiCompletion">
+            <summary>
+            Genesys AI completion: the virtual agent finished the conversation (<c>closedByAi</c>), so the ticket goes Resolved → Closed in one
+            step with outcome <see cref="F:TigerCS.Domain.Modules.Ticketing.ResolutionOutcome.Resolved"/>. Refused for a ticket a person owns
+            (<see cref="T:TigerCS.Domain.Modules.Ticketing.TicketNotEligibleForResolutionException"/>) — a human has taken it, so the AI cannot close it — and for one already closed.
+            Returns the status held before so the caller writes the history rows.
+            </summary>
         </member>
         <member name="M:TigerCS.Domain.Modules.Ticketing.Ticket.Close">
             <summary>MVP-API-Contracts.md §3.10 — the final, CS-layer-only close, distinct from Resolve. Requires a current TicketResolutions row (enforced by the caller — this method only enforces the TicketStatus precondition).</summary>
@@ -4700,11 +4796,26 @@
         <member name="P:TigerCS.Domain.Modules.Ticketing.TicketInteraction.AwaitingCustomerReplyReportedByEmployeeId">
             <summary>The integration account that reported the prompt. The inactivity closure is attributed to it in the audit trail and on the resolution row (which needs a real user) — the closure itself is flagged as a system action.</summary>
         </member>
+        <member name="P:TigerCS.Domain.Modules.Ticketing.TicketInteraction.LastCustomerInteractionAtUtc">
+            <summary>
+            The last time the customer actually did something in this conversation (opened it, sent a message, answered the bot, asked for a
+            document), as recorded by TigerCS's own clock — never the ticket's creation time. The source of the Website/Chatbot
+            "customer inactive" closure. Null = not tracked (a legacy row, a voice call, a Call Center ticket, or tracking stopped because a
+            human took over); such a row is never closed by that rule. Also an EF concurrency token, so a customer message that lands while
+            the job is closing the ticket makes the job's write lose.
+            </summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.Ticketing.TicketInteraction.LastCustomerInteractionReportedByEmployeeId">
+            <summary>The integration account that reported the last customer interaction; the inactivity closure is attributed to it.</summary>
+        </member>
         <member name="P:TigerCS.Domain.Modules.Ticketing.TicketInteraction.InactivityClosedAtUtc">
             <summary>When the inactivity timeout closed this interaction's ticket, or null. Write-once: it is what makes a repeated timeout run a no-op.</summary>
         </member>
         <member name="P:TigerCS.Domain.Modules.Ticketing.TicketInteraction.CreatedAtUtc">
             <summary>When this row was recorded by Ticketing (creation/audit timestamp), as distinct from <see cref="P:TigerCS.Domain.Modules.Ticketing.TicketInteraction.InteractionStartedAtUtc"/> — Genesys' own clock.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.Ticketing.TicketInteraction.IsWebsiteOrChatbotConversation">
+            <summary>A Genesys conversation on a chat/messaging channel (website chat, WhatsApp, social DM): the Website/Chatbot "customer inactive" rule's scope. Voice calls and locally-created interactions are not.</summary>
         </member>
         <member name="P:TigerCS.Domain.Modules.Ticketing.TicketInteraction.IsEnded">
             <summary>Whether <see cref="M:TigerCS.Domain.Modules.Ticketing.TicketInteraction.End(System.DateTime,System.String)"/> has been recorded. Derived — the interaction's own lifecycle, independent of the ticket's <see cref="T:TigerCS.Domain.Modules.Ticketing.TicketStatus"/>.</summary>
@@ -4746,6 +4857,21 @@
         </member>
         <member name="M:TigerCS.Domain.Modules.Ticketing.TicketInteraction.CancelAwaitingCustomerReply">
             <summary>The customer replied, a human took over, or human follow-up was requested: stop waiting. Returns true when a timer was actually running.</summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.Ticketing.TicketInteraction.RecordCustomerInteraction(System.DateTime,System.Guid)">
+            <summary>
+            The customer did something: start (or restart) the inactivity clock from <paramref name="nowUtc"/>. Never moves backwards, and
+            is refused (false) once the conversation ended or its ticket was closed for inactivity. Starts tracking on a row that had none.
+            </summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.Ticketing.TicketInteraction.StartTrackingCustomerInteraction(System.DateTime,System.Guid)">
+            <summary>Starts tracking at creation without needing a later call: the customer opening the conversation is the first interaction.</summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.Ticketing.TicketInteraction.StopTrackingCustomerInteraction">
+            <summary>Stops the "customer inactive" clock (a human took over, the ticket is owned or closed, it left the rule's scope). A later customer interaction starts it again. True when it was running.</summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.Ticketing.TicketInteraction.IsCustomerInactive(System.DateTime,System.TimeSpan)">
+            <summary>True when the customer has been silent for strictly more than <paramref name="timeout"/> since <see cref="P:TigerCS.Domain.Modules.Ticketing.TicketInteraction.LastCustomerInteractionAtUtc"/> and the conversation is still live.</summary>
         </member>
         <member name="M:TigerCS.Domain.Modules.Ticketing.TicketInteraction.IsInactivityTimeoutDue(System.DateTime,System.TimeSpan)">
             <summary>True when the timer has been running for strictly longer than <paramref name="timeout"/> at <paramref name="nowUtc"/> — "more than 5 minutes", not "5 minutes or more".</summary>
@@ -5166,6 +5292,15 @@
             operations under their existing authorization — it gives them the
             customer's word, with when it was said. Stored here for the same
             reason as the handoff events, so it needs no schema change.
+            </summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.Ticketing.WorkflowEventType.RequestTypeReclassified">
+            <summary>
+            The request type of an already-classified ticket was replaced (the
+            Genesys AI refined its classification while the conversation
+            progressed). Append-only history of the change; the note carries the
+            previous and the new request type and the source. Stored here for the
+            same reason as the handoff events, so it needs no schema change.
             </summary>
         </member>
         <member name="T:TigerCS.Domain.Modules.Ticketing.TicketWorkflowEvent">

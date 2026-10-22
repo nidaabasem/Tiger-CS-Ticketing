@@ -577,6 +577,26 @@
             Department.
             </summary>
         </member>
+        <member name="T:TigerCS.Application.Modules.Collections.Abstractions.CrmOwnerStorageException">
+            <summary>
+            Storing the CRM owner feed in the local database failed. <see cref="P:System.Exception.Message"/> is the SAFE text saved to <c>CollectionsCrmOwnerState.LastError</c> and shown on the pages:
+            stage, procedure, SQL error number / class / state and a fixed description of the number. It never contains the database's own error text (which can echo a customer value, for example
+            "Truncated value: ..."), a connection string, a password or any CRM data. <see cref="P:TigerCS.Application.Modules.Collections.Abstractions.CrmOwnerStorageException.LogDetail"/> adds the connection details for the API log only.
+            </summary>
+        </member>
+        <member name="M:TigerCS.Application.Modules.Collections.Abstractions.CrmOwnerStorageException.#ctor(System.String,System.String,System.String,System.Nullable{System.Int32},System.Nullable{System.Int32},System.Nullable{System.Int32},System.Nullable{System.Int32},System.String,System.String,System.Nullable{System.Guid},System.Int64,System.Int32,System.String,System.Exception)">
+            <summary>
+            Storing the CRM owner feed in the local database failed. <see cref="P:System.Exception.Message"/> is the SAFE text saved to <c>CollectionsCrmOwnerState.LastError</c> and shown on the pages:
+            stage, procedure, SQL error number / class / state and a fixed description of the number. It never contains the database's own error text (which can echo a customer value, for example
+            "Truncated value: ..."), a connection string, a password or any CRM data. <see cref="P:TigerCS.Application.Modules.Collections.Abstractions.CrmOwnerStorageException.LogDetail"/> adds the connection details for the API log only.
+            </summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.Collections.Abstractions.CrmOwnerStorageException.LogDetail">
+            <summary>Everything needed to find the failure in the SQL Server log and on the network path. Log only: it names the server and database, never the password or any data value.</summary>
+        </member>
+        <member name="M:TigerCS.Application.Modules.Collections.Abstractions.CrmOwnerStorageException.Describe(System.Int32)">
+            <summary>A fixed, data-free explanation of a SQL error number. Anything not listed says to read the API log instead of guessing.</summary>
+        </member>
         <member name="T:TigerCS.Application.Modules.Collections.Abstractions.CrmProjectTowerMapping">
             <summary>
             One verified link between a CRM project (<c>tblProjects.ID</c>, what GetBuyerByPhone / GetUnitDetails return as <c>projectId</c>) and the PACT tower it is sold as.
@@ -993,7 +1013,7 @@
             and MinTotal (null = none) keeps units whose DueAmount + OverdueAmount is greater than it. Units whose code contains '*' (cancelled) are never candidates. [From, To] is the READ scope (it reaches the end of the current month); stage eligibility, the stage amount and the unit flags only look at rows due up to the earlier of To and Today, exactly as the in-memory evaluation does.
             </remarks>
         </member>
-        <member name="M:TigerCS.Application.Modules.Collections.Abstractions.PactCampaignRequest.#ctor(System.DateOnly,System.DateOnly,System.Decimal,System.Nullable{System.DateOnly},System.DateOnly,System.Decimal,System.Boolean,System.String,System.String,System.Int32,System.Int32,System.Nullable{System.Int32},System.Nullable{System.Int32},System.Nullable{System.DateOnly},System.Nullable{System.Decimal})">
+        <member name="M:TigerCS.Application.Modules.Collections.Abstractions.PactCampaignRequest.#ctor(System.DateOnly,System.DateOnly,System.Decimal,System.Nullable{System.DateOnly},System.DateOnly,System.Decimal,System.Boolean,System.String,System.String,System.Int32,System.Int32,System.Nullable{System.Int32},System.Nullable{System.Int32},System.Nullable{System.DateOnly},System.Nullable{System.Decimal},TigerCS.Domain.Modules.Collections.CampaignPaymentFilter)">
             <remarks>
             The unit's rows are those inside [From, To] (due DAY) with remaining Amount &gt; 0 and &gt;= MinAmount. Stage rows are the ones whose due day is in
             [StageFrom, StageToExclusive) (StageFrom null = unbounded); a stage amount qualifies when its sum is &gt; Threshold. ContactRequired is false for the
@@ -1091,6 +1111,31 @@
         </member>
         <member name="P:TigerCS.Application.Modules.Collections.CollectionsCampaignOptions.LegalNoticeExportEnabled">
             <summary>Separate release switch for client-facing legal notices. Preview and internal review remain available.</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.Collections.CollectionsCampaignOptions.AdminNotification">
+            <summary>The report emailed to the Collections administrator(s) after an approved send finishes (<c>Collections:Campaigns:AdminNotification</c>).</summary>
+        </member>
+        <member name="T:TigerCS.Application.Modules.Collections.CollectionsAdminNotificationOptions">
+            <summary>
+            Who receives the approved-customer list and the actual Genesys results. Nothing is hardcoded: recipients come only from configuration
+            (<c>appsettings.json</c>, <c>appsettings.{Environment}.json</c> or environment variables such as
+            <c>Collections__Campaigns__AdminNotification__Recipients__0</c>), so they change without a rebuild.
+            </summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.Collections.CollectionsAdminNotificationOptions.Enabled">
+            <summary>When true (default) every finished send is reported; a missing or invalid recipient list is then shown as NotConfigured, never as sent.</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.Collections.CollectionsAdminNotificationOptions.Recipients">
+            <summary>One or more addresses. An entry may itself hold several addresses separated by ';' or ',' (convenient in an environment variable).</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.Collections.CollectionsAdminNotificationOptions.AttachCustomerList">
+            <summary>Attach the approved customer list with the per-customer result.</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.Collections.CollectionsAdminNotificationOptions.AttachmentFormat">
+            <summary>Only <c>Csv</c> is supported; any other value is reported as a configuration problem instead of being ignored.</summary>
+        </member>
+        <member name="M:TigerCS.Application.Modules.Collections.CollectionsAdminNotificationOptions.ResolveRecipients">
+            <summary>The distinct, syntactically valid addresses (case-insensitive) and how many configured entries were not valid.</summary>
         </member>
         <member name="T:TigerCS.Application.Modules.Collections.CollectionsCrmOwnersOptions">
             <summary>
@@ -2152,6 +2197,45 @@
              configured start date and, with the local snapshot, the same rows as the Campaigns preview and export, and requires the snapshot to be fresh and to cover the window.</para>
              </summary>
         </member>
+        <member name="T:TigerCS.Application.Modules.Collections.Review.DispatchAdminReportService">
+            <summary>
+            Emails the Collections administrator(s) the approved customer list and the ACTUAL Genesys results of a finished send.
+            <list type="bullet">
+            <item>Recipients come only from <c>Collections:Campaigns:AdminNotification</c>; none is hardcoded. Enabled with no valid recipient is recorded as
+            <see cref="F:TigerCS.Domain.Modules.Collections.Review.AdminEmailStatus.NotConfigured"/> - never as sent.</item>
+            <item>The outcome is stored in the AdminEmail* columns of the dispatch, apart from the Genesys status. A failed or retried report never touches Genesys:
+            this class has no Genesys client at all.</item>
+            <item>Phones and emails are masked in the attachment, the body carries only totals, and nothing sensitive is logged (recipients are masked).</item>
+            </list>
+            </summary>
+        </member>
+        <member name="M:TigerCS.Application.Modules.Collections.Review.DispatchAdminReportService.#ctor(TigerCS.Application.Modules.Collections.CollectionsCampaignOptions,TigerCS.Application.Modules.Collections.Review.IReviewStore,TigerCS.Application.Modules.Notifications.Abstractions.IEmailSender,TigerCS.Application.Modules.Collections.Services.CollectionsClock,TigerCS.Application.Modules.Collections.Services.CollectionsAuthorizationService,Microsoft.Extensions.Logging.ILogger{TigerCS.Application.Modules.Collections.Review.DispatchAdminReportService},TigerCS.Application.Modules.IdentityAndAccess.Abstractions.IEmployeeRepository)">
+            <summary>
+            Emails the Collections administrator(s) the approved customer list and the ACTUAL Genesys results of a finished send.
+            <list type="bullet">
+            <item>Recipients come only from <c>Collections:Campaigns:AdminNotification</c>; none is hardcoded. Enabled with no valid recipient is recorded as
+            <see cref="F:TigerCS.Domain.Modules.Collections.Review.AdminEmailStatus.NotConfigured"/> - never as sent.</item>
+            <item>The outcome is stored in the AdminEmail* columns of the dispatch, apart from the Genesys status. A failed or retried report never touches Genesys:
+            this class has no Genesys client at all.</item>
+            <item>Phones and emails are masked in the attachment, the body carries only totals, and nothing sensitive is logged (recipients are masked).</item>
+            </list>
+            </summary>
+        </member>
+        <member name="M:TigerCS.Application.Modules.Collections.Review.DispatchAdminReportService.SendAfterDispatchAsync(System.Int64,System.Threading.CancellationToken)">
+            <summary>Called by the dispatch job after the send ended. Never throws; a send that did not finish is left alone.</summary>
+        </member>
+        <member name="M:TigerCS.Application.Modules.Collections.Review.DispatchAdminReportService.RetryAsync(TigerCS.Application.Modules.Collections.Services.CollectionsCaller,System.Guid,System.Threading.CancellationToken)">
+            <summary>Retry of the report only (a person pressed Retry). The Genesys upload is never repeated.</summary>
+        </member>
+        <member name="M:TigerCS.Application.Modules.Collections.Review.DispatchAdminReportService.Cell(System.String)">
+            <summary>A CSV cell: quoted, and a leading = + - @ (or tab / CR) is defused so a spreadsheet never runs it as a formula.</summary>
+        </member>
+        <member name="M:TigerCS.Application.Modules.Collections.Review.DispatchAdminReportService.MaskPhone(System.String)">
+            <summary>"+97150***4567": the country code and the last digits only.</summary>
+        </member>
+        <member name="M:TigerCS.Application.Modules.Collections.Review.DispatchAdminReportService.MaskEmail(System.String)">
+            <summary>"j***@example.com".</summary>
+        </member>
         <member name="T:TigerCS.Application.Modules.Collections.Review.DispatchService">
             <summary>
             Approval and upload of reviewed records to Genesys outbound contact lists.
@@ -2165,7 +2249,7 @@
             "Uploaded to Genesys" means the contact is in the list. It never means the customer was called or contacted.
             </summary>
         </member>
-        <member name="M:TigerCS.Application.Modules.Collections.Review.DispatchService.#ctor(TigerCS.Application.Modules.Collections.CollectionsOptions,TigerCS.Application.Modules.Collections.Review.GenesysOutboundOptions,TigerCS.Application.Modules.Collections.Services.CollectionsAuthorizationService,TigerCS.Application.Modules.Collections.Services.CollectionsClock,TigerCS.Application.Modules.Collections.Review.IReviewStore,TigerCS.Application.Modules.Collections.Review.IReviewJobScheduler,TigerCS.Application.Modules.Collections.Review.IGenesysOutboundClient,TigerCS.Application.Modules.Collections.Review.ReviewQueryService,TigerCS.Application.Modules.Collections.Review.CurrentBalanceReader,Microsoft.Extensions.Logging.ILogger{TigerCS.Application.Modules.Collections.Review.DispatchService})">
+        <member name="M:TigerCS.Application.Modules.Collections.Review.DispatchService.#ctor(TigerCS.Application.Modules.Collections.CollectionsOptions,TigerCS.Application.Modules.Collections.Review.GenesysOutboundOptions,TigerCS.Application.Modules.Collections.Services.CollectionsAuthorizationService,TigerCS.Application.Modules.Collections.Services.CollectionsClock,TigerCS.Application.Modules.Collections.Review.IReviewStore,TigerCS.Application.Modules.Collections.Review.IReviewJobScheduler,TigerCS.Application.Modules.Collections.Review.IGenesysOutboundClient,TigerCS.Application.Modules.Collections.Review.ReviewQueryService,TigerCS.Application.Modules.Collections.Review.CurrentBalanceReader,Microsoft.Extensions.Logging.ILogger{TigerCS.Application.Modules.Collections.Review.DispatchService},TigerCS.Application.Modules.IdentityAndAccess.Abstractions.IEmployeeRepository)">
             <summary>
             Approval and upload of reviewed records to Genesys outbound contact lists.
             <list type="bullet">
@@ -2177,6 +2261,9 @@
             </list>
             "Uploaded to Genesys" means the contact is in the list. It never means the customer was called or contacted.
             </summary>
+        </member>
+        <member name="M:TigerCS.Application.Modules.Collections.Review.DispatchService.WithApproverAsync(TigerCS.Application.Modules.Collections.Review.DispatchDto,System.Threading.CancellationToken)">
+            <summary>Adds the approving employee's display name (looked up once per employee); the id stays when it cannot be resolved.</summary>
         </member>
         <member name="M:TigerCS.Application.Modules.Collections.Review.DispatchService.WithLeaseHeartbeatAsync``1(System.Int64,System.Guid,System.Func{System.Threading.CancellationToken,System.Threading.Tasks.Task{``0}},System.Threading.CancellationToken)">
             <summary>
@@ -2190,6 +2277,15 @@
         </member>
         <member name="M:TigerCS.Application.Modules.Collections.Review.DispatchService.PlanBatchesAsync(TigerCS.Domain.Modules.Collections.Review.CollectionsDispatch,System.Threading.CancellationToken)">
             <summary>Splits the surviving records into one batch list per reminder type, at most BatchSize per request, and stores the plan before any upload.</summary>
+        </member>
+        <member name="M:TigerCS.Application.Modules.Collections.Review.DispatchService.EnsureCampaignAsync(TigerCS.Domain.Modules.Collections.Review.CollectionsDispatch,TigerCS.Domain.Modules.Collections.Review.CollectionsGenesysBatch,System.Threading.CancellationToken)">
+            <summary>
+            Resolves the Genesys campaign named exactly like the batch's stage before any contact is uploaded. An existing campaign with that name is
+            reused (never duplicated) when it dials this batch's contact list; a missing one is created when allowed. Anything uncertain (several
+            matches, a different contact list, an unusable template, a failed or unanswered Genesys call) fails the batch with nothing uploaded; the
+            records are released, and a later send looks the campaign up again first, so an unconfirmed creation can never produce a duplicate.
+            Returns false when the batch was failed.
+            </summary>
         </member>
         <member name="M:TigerCS.Application.Modules.Collections.Review.DispatchService.ToPayload(TigerCS.Domain.Modules.Collections.Review.CollectionsDispatchItem,System.String,TigerCS.Application.Modules.Collections.Review.GenesysOutboundOptions)">
             <summary>The exact contact object posted to Genesys: the list id, the six data fields as strings, and callable (true only for approved voice-eligible contacts).</summary>
@@ -2240,6 +2336,9 @@
         <member name="T:TigerCS.Application.Modules.Collections.Review.IReviewStore">
             <summary>Persistence port of the review and dispatch workflow. Implemented over EF Core; every filter, count and page runs in the database.</summary>
         </member>
+        <member name="M:TigerCS.Application.Modules.Collections.Review.IReviewStore.GetLatestRunAsync(System.Threading.CancellationToken)">
+            <summary>The newest run of any status (so a failure that is newer than the published run can be shown).</summary>
+        </member>
         <member name="M:TigerCS.Application.Modules.Collections.Review.IReviewStore.TryAddRunAsync(TigerCS.Domain.Modules.Collections.Review.CollectionsReviewRun,System.Threading.CancellationToken)">
             <summary>Adds a Queued run; false (and no row) when another run is already queued or running.</summary>
         </member>
@@ -2249,7 +2348,10 @@
         <member name="M:TigerCS.Application.Modules.Collections.Review.IReviewStore.PublishRunAsync(System.Int64,System.Int32,System.Int32,System.DateTime,System.DateTime,System.Int32,System.Threading.CancellationToken)">
             <summary>Marks the run Completed and current, then prunes older runs' records, in one transaction.</summary>
         </member>
-        <member name="M:TigerCS.Application.Modules.Collections.Review.IReviewStore.ResolveAsync(System.Int64,TigerCS.Application.Modules.Collections.Review.ReviewQuerySpec,System.Collections.Generic.IReadOnlyCollection{System.String},System.Boolean,System.Int32,System.Threading.CancellationToken)">
+        <member name="M:TigerCS.Application.Modules.Collections.Review.IReviewStore.RunHasTowerDataAsync(System.Int64,System.Threading.CancellationToken)">
+            <summary>True when at least one record of the run carries a tower (data read before towers were stored has none).</summary>
+        </member>
+        <member name="M:TigerCS.Application.Modules.Collections.Review.IReviewStore.ResolveAsync(System.Int64,TigerCS.Application.Modules.Collections.Review.ReviewQuerySpec,System.Collections.Generic.IReadOnlyCollection{System.String},System.Boolean,System.Int32,System.Threading.CancellationToken,System.Collections.Generic.IReadOnlyCollection{System.String})">
             <summary>All Ready records matching the spec (Ready after the stale adjustment), ordered, capped at <paramref name="max"/> + 1.</summary>
         </member>
         <member name="M:TigerCS.Application.Modules.Collections.Review.IReviewStore.TryAddDispatchAsync(TigerCS.Domain.Modules.Collections.Review.CollectionsDispatch,System.Threading.CancellationToken)">
@@ -2270,11 +2372,20 @@
         <member name="M:TigerCS.Application.Modules.Collections.Review.IReviewStore.GetSuppressionCandidatesAsync(System.DateTime,System.Int32,System.Threading.CancellationToken)">
             <summary>Uploaded contacts (with a Genesys id) uploaded since <paramref name="sinceUtc"/> that are not yet suppressed, oldest check first.</summary>
         </member>
+        <member name="M:TigerCS.Application.Modules.Collections.Review.IReviewStore.TryClaimAdminEmailAsync(System.Int64,System.DateTime,System.DateTime,System.Threading.CancellationToken)">
+            <summary>Atomically takes the right to send the administrator report: only from None, Failed or NotConfigured (or a Sending claim older than <paramref name="staleBeforeUtc"/>) of a finished send. False when another worker has it or it was already Sent.</summary>
+        </member>
+        <member name="M:TigerCS.Application.Modules.Collections.Review.IReviewStore.RecordAdminEmailAsync(System.Int64,TigerCS.Domain.Modules.Collections.Review.AdminEmailStatus,System.String,System.Int32,System.DateTime,System.Threading.CancellationToken)">
+            <summary>Records the report outcome. Touches only the AdminEmail* columns, never the Genesys status.</summary>
+        </member>
         <member name="M:TigerCS.Application.Modules.Collections.Review.IReviewStore.GetOverlapsAsync(System.Int64,System.Int32,System.Int32,System.Threading.CancellationToken)">
             <summary>Groups of records that share a phone across units or overlap reminder types today (blocked from dispatch).</summary>
         </member>
         <member name="T:TigerCS.Application.Modules.Collections.Review.IReviewJobScheduler">
             <summary>Enqueues the explicit background jobs. The Hangfire implementation lives in Infrastructure.</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.Collections.Review.IReviewJobScheduler.IsAvailable">
+            <summary>False when nothing will ever execute an enqueued job (background jobs switched off): a run must then fail visibly instead of waiting in Queued.</summary>
         </member>
         <member name="F:TigerCS.Application.Modules.Collections.Review.GenesysUploadOutcome.Accepted">
             <summary>Genesys accepted the batch; contact ids were returned.</summary>
@@ -2314,6 +2425,24 @@
         <member name="P:TigerCS.Application.Modules.Collections.Review.GenesysSuppressResult.Error">
             <summary>A safe description; never a token or response body.</summary>
         </member>
+        <member name="T:TigerCS.Application.Modules.Collections.Review.GenesysCampaignRef">
+            <summary>A Genesys outbound campaign as far as this integration cares: its id, exact name, the contact list it dials and its status.</summary>
+        </member>
+        <member name="M:TigerCS.Application.Modules.Collections.Review.GenesysCampaignRef.#ctor(System.String,System.String,System.String,System.String)">
+            <summary>A Genesys outbound campaign as far as this integration cares: its id, exact name, the contact list it dials and its status.</summary>
+        </member>
+        <member name="T:TigerCS.Application.Modules.Collections.Review.GenesysCampaignLookupResult">
+            <summary>Every campaign Genesys returned for the name filter in <c>Matches</c>; callers still compare names exactly.</summary>
+        </member>
+        <member name="M:TigerCS.Application.Modules.Collections.Review.GenesysCampaignLookupResult.#ctor(TigerCS.Application.Modules.Collections.Review.GenesysUploadOutcome,System.Nullable{System.Int32},System.Collections.Generic.IReadOnlyList{TigerCS.Application.Modules.Collections.Review.GenesysCampaignRef},System.String)">
+            <summary>Every campaign Genesys returned for the name filter in <c>Matches</c>; callers still compare names exactly.</summary>
+        </member>
+        <member name="M:TigerCS.Application.Modules.Collections.Review.IGenesysOutboundClient.FindCampaignsByNameAsync(System.String,System.Threading.CancellationToken)">
+            <summary>GET /api/v2/outbound/campaigns?name=... (read only: an Unknown outcome changed nothing).</summary>
+        </member>
+        <member name="M:TigerCS.Application.Modules.Collections.Review.IGenesysOutboundClient.CreateCampaignAsync(System.String,System.String,TigerCS.Application.Modules.Collections.Review.GenesysCampaignOptions,System.Threading.CancellationToken)">
+            <summary>POST /api/v2/outbound/campaigns with the exact <paramref name="name"/>, status off, and the template settings.</summary>
+        </member>
         <member name="M:TigerCS.Application.Modules.Collections.Review.IGenesysOutboundClient.SetNotCallableAsync(System.String,System.String,TigerCS.Application.Modules.Collections.Review.GenesysContactPayload,System.Threading.CancellationToken)">
             <summary>
             PUT /api/v2/outbound/contactlists/{contactListId}/contacts/{contactId} with callable=false and the contact's original data
@@ -2326,7 +2455,7 @@
         <member name="T:TigerCS.Application.Modules.Collections.Review.ReviewFilter">
             <summary>The review filters as sent by the API. Everything optional; blank means "no restriction".</summary>
         </member>
-        <member name="M:TigerCS.Application.Modules.Collections.Review.ReviewFilter.#ctor(System.Nullable{System.Int32},System.String,System.String,System.String,System.Nullable{System.Int32},System.Nullable{System.Int32},System.Nullable{System.DateOnly},System.Nullable{System.DateOnly},System.String,System.Nullable{System.Decimal},System.Nullable{System.Decimal},System.String,System.String,System.String)">
+        <member name="M:TigerCS.Application.Modules.Collections.Review.ReviewFilter.#ctor(System.Nullable{System.Int32},System.String,System.String,System.String,System.Nullable{System.Int32},System.Nullable{System.Int32},System.Nullable{System.DateOnly},System.Nullable{System.DateOnly},System.String,System.Nullable{System.Decimal},System.Nullable{System.Decimal},System.String,System.String,System.String,System.String,System.Nullable{System.Int32})">
             <summary>The review filters as sent by the API. Everything optional; blank means "no restriction".</summary>
         </member>
         <member name="T:TigerCS.Application.Modules.Collections.Review.ReviewQuerySpec">
@@ -2334,7 +2463,7 @@
             The normalized, validated filter the store understands. <see cref="P:TigerCS.Application.Modules.Collections.Review.ReviewQuerySpec.PaymentStatuses"/> is null for "All".
             </summary>
         </member>
-        <member name="M:TigerCS.Application.Modules.Collections.Review.ReviewQuerySpec.#ctor(System.Nullable{System.Int32},System.String,System.String,System.String,System.String,System.Nullable{System.DateOnly},System.Nullable{System.DateOnly},System.Collections.Generic.IReadOnlyList{TigerCS.Domain.Modules.Collections.Review.ReviewPaymentStatus},System.Nullable{System.Decimal},System.Nullable{System.Decimal},System.Nullable{TigerCS.Domain.Modules.Collections.Review.CampaignReminderType},System.Nullable{TigerCS.Domain.Modules.Collections.Review.ReviewValidationStatus},System.String)">
+        <member name="M:TigerCS.Application.Modules.Collections.Review.ReviewQuerySpec.#ctor(System.Nullable{System.Int32},System.String,System.String,System.String,System.String,System.Nullable{System.DateOnly},System.Nullable{System.DateOnly},System.Collections.Generic.IReadOnlyList{TigerCS.Domain.Modules.Collections.Review.ReviewPaymentStatus},System.Nullable{System.Decimal},System.Nullable{System.Decimal},System.Nullable{TigerCS.Domain.Modules.Collections.Review.CampaignReminderType},System.Nullable{TigerCS.Domain.Modules.Collections.Review.ReviewValidationStatus},System.String,System.Nullable{System.Int32})">
             <summary>
             The normalized, validated filter the store understands. <see cref="P:TigerCS.Application.Modules.Collections.Review.ReviewQuerySpec.PaymentStatuses"/> is null for "All".
             </summary>
@@ -2359,6 +2488,18 @@
         </member>
         <member name="P:TigerCS.Application.Modules.Collections.Review.CollectionsReviewOptions.StuckRunMinutes">
             <summary>A run still "Running" after this long is treated as dead and may be replaced.</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.Collections.Review.CollectionsReviewOptions.QueuedTimeoutMinutes">
+            <summary>A run still "Queued" after this long was never picked up by a worker (jobs off, server down): it is marked Failed so the page offers a retry.</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.Collections.Review.CollectionsReviewOptions.PersistBatchSize">
+            <summary>
+            Review records written per database round trip group (one transaction each). Small enough that a slow or flaky link never has to carry thousands of wide rows in one
+            statement batch, large enough to keep the number of transactions low. 1-2000.
+            </summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.Collections.Review.CollectionsReviewOptions.PersistMaxAttempts">
+            <summary>Attempts for a database write that failed with a transient connection error (1 = no retry). Only idempotent writes are retried. 1-5.</summary>
         </member>
         <member name="P:TigerCS.Application.Modules.Collections.Review.CollectionsReviewOptions.FloatNoiseTolerance">
             <summary>Floating-point noise tolerance in AED when normalizing a floating source value to fils.</summary>
@@ -2403,17 +2544,51 @@
         <member name="P:TigerCS.Application.Modules.Collections.Review.GenesysOutboundOptions.ReminderTypeLabels">
             <summary>Optional override of the ReminderType text written to Genesys; unset types use <see cref="M:TigerCS.Domain.Modules.Collections.Review.CampaignReminderTypes.DefaultLabel(TigerCS.Domain.Modules.Collections.Review.CampaignReminderType)"/>.</summary>
         </member>
+        <member name="P:TigerCS.Application.Modules.Collections.Review.GenesysOutboundOptions.Campaign">
+            <summary>Campaign lookup/creation (<c>Collections:GenesysOutbound:Campaign</c>). Off by default: contacts are then uploaded to the lists exactly as before.</summary>
+        </member>
+        <member name="T:TigerCS.Application.Modules.Collections.Review.GenesysCampaignOptions">
+            <summary>
+            Genesys campaign handling. When <see cref="P:TigerCS.Application.Modules.Collections.Review.GenesysCampaignOptions.Enabled"/>, every upload batch first resolves a campaign named exactly like its stage
+            (<see cref="M:TigerCS.Domain.Modules.Collections.Review.CampaignReminderTypes.StageName(TigerCS.Domain.Modules.Collections.Review.CampaignReminderType)"/>): an existing campaign with that name is reused, never duplicated;
+            otherwise one is created (status off) from this template when <see cref="P:TigerCS.Application.Modules.Collections.Review.GenesysCampaignOptions.AllowCreate"/> is set.
+            </summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.Collections.Review.GenesysCampaignOptions.AllowCreate">
+            <summary>False: only an existing campaign may be used; a missing one fails the batch before any upload.</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.Collections.Review.GenesysCampaignOptions.QueueId">
+            <summary>Required to create: the queue agents/calls are routed to (Genesys queue id).</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.Collections.Review.GenesysCampaignOptions.DialingMode">
+            <summary>Required to create: e.g. preview, power, predictive, progressive or agentless.</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.Collections.Review.GenesysCampaignOptions.CallerName">
+            <summary>Required to create: the caller name shown to the customer.</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.Collections.Review.GenesysCampaignOptions.CallerAddress">
+            <summary>Required to create: the caller number (E.164).</summary>
+        </member>
+        <member name="M:TigerCS.Application.Modules.Collections.Review.GenesysCampaignOptions.MissingForCreate">
+            <summary>The settings still missing for creation, by name; empty when a campaign can be created.</summary>
+        </member>
         <member name="T:TigerCS.Application.Modules.Collections.Review.ReviewQueryService">
             <summary>
             Reads the stored review data. Authorization runs first; filters, counts and pages are executed by the store in the
             database; no financial source is called. Also defines what "selected" means for approval.
             </summary>
         </member>
-        <member name="M:TigerCS.Application.Modules.Collections.Review.ReviewQueryService.#ctor(TigerCS.Application.Modules.Collections.CollectionsOptions,TigerCS.Application.Modules.Collections.Review.CollectionsReviewOptions,TigerCS.Application.Modules.Collections.Services.CollectionsAuthorizationService,TigerCS.Application.Modules.Collections.Services.CollectionsClock,TigerCS.Application.Modules.Collections.Review.IReviewStore,TigerCS.Application.Modules.Collections.ReceivablesSnapshotOptions)">
+        <member name="M:TigerCS.Application.Modules.Collections.Review.ReviewQueryService.#ctor(TigerCS.Application.Modules.Collections.CollectionsOptions,TigerCS.Application.Modules.Collections.Review.CollectionsReviewOptions,TigerCS.Application.Modules.Collections.Services.CollectionsAuthorizationService,TigerCS.Application.Modules.Collections.Services.CollectionsClock,TigerCS.Application.Modules.Collections.Review.IReviewStore,TigerCS.Application.Modules.Collections.ReceivablesSnapshotOptions,TigerCS.Application.Modules.Collections.Review.GenesysOutboundOptions)">
             <summary>
             Reads the stored review data. Authorization runs first; filters, counts and pages are executed by the store in the
             database; no financial source is called. Also defines what "selected" means for approval.
             </summary>
+        </member>
+        <member name="F:TigerCS.Application.Modules.Collections.Review.ReviewQueryService.ModeSelectedUnits">
+            <summary>The customers ticked on the Campaigns page, as <see cref="M:TigerCS.Application.Modules.Collections.Review.ReviewQueryService.UnitKey(System.Int32,System.String,System.String)"/> values: every Ready record of those units that also matches the filter.</summary>
+        </member>
+        <member name="M:TigerCS.Application.Modules.Collections.Review.ReviewQueryService.UnitKey(System.Int32,System.String,System.String)">
+            <summary>The identity of a Campaigns row: company, tenant and unit code.</summary>
         </member>
         <member name="M:TigerCS.Application.Modules.Collections.Review.ReviewQueryService.OverlapsAsync(TigerCS.Application.Modules.Collections.Services.CollectionsCaller,System.Int32,System.Int32,System.Threading.CancellationToken)">
             <summary>Phone numbers that would be called repeatedly (several units, or several reminder types for one unit): who, how many units, and why they are held back.</summary>
@@ -2426,6 +2601,9 @@
             "SelectedKeys": exactly the listed records, kept only if currently Ready. "AllMatching": every Ready record that
             matches the filters right now, on every page, except the listed exclusions. Both end as an explicit, frozen list.
             </summary>
+        </member>
+        <member name="M:TigerCS.Application.Modules.Collections.Review.ReviewQueryService.ContactLists(System.Collections.Generic.IReadOnlyList{TigerCS.Domain.Modules.Collections.Review.CollectionsReviewRecord})">
+            <summary>The Genesys contact list each reminder type of the selection will be uploaded to (an unconfigured list is shown as such; confirming is then refused).</summary>
         </member>
         <member name="M:TigerCS.Application.Modules.Collections.Review.ReviewQueryService.IsStale(TigerCS.Domain.Modules.Collections.Review.CollectionsReviewRun)">
             <summary>A review run is built from the local receivables snapshot, so it is stale when that snapshot is: the snapshot's own limit (<see cref="P:TigerCS.Application.Modules.Collections.ReceivablesSnapshotOptions.MaxAgeMinutes"/>) applies.</summary>
@@ -2467,8 +2645,32 @@
         <member name="M:TigerCS.Application.Modules.Collections.Review.ReviewRefreshService.ReadCrmAsync(System.Collections.Generic.IEnumerable{TigerCS.Application.Modules.Collections.Abstractions.PactReceivableInstalment},System.Threading.CancellationToken)">
             <summary>The CRM links of every unit of a source read (ONE bulk read), with the state of the CRM data; empty when no link service is configured.</summary>
         </member>
+        <member name="M:TigerCS.Application.Modules.Collections.Review.ReviewRefreshService.IsDatabaseFailure(System.Exception)">
+            <summary>
+            A database failure as the application sees it: the store's own <see cref="T:TigerCS.Application.Modules.Collections.Review.ReviewStorageException"/>, a provider <see cref="T:System.Data.Common.DbException"/>, or the <see cref="T:System.InvalidOperationException"/> that EF Core raises
+            ("An exception has been raised that is likely due to a transient failure") around a transient SQL error for writes such as ExecuteUpdate / SaveChanges / transactions.
+            </summary>
+        </member>
+        <member name="M:TigerCS.Application.Modules.Collections.Review.ReviewRefreshService.ProgressAsync(System.Int64,System.String,System.Int32,System.Nullable{System.Int32},System.Threading.CancellationToken)">
+            <summary>Progress is informational: a failed progress write (for example a dropped connection) must not fail a refresh whose real work can still succeed.</summary>
+        </member>
+        <member name="M:TigerCS.Application.Modules.Collections.Review.ReviewRefreshService.FailSafelyAsync(System.Int64,System.String)">
+            <summary>Records the failure; if even that write fails, the run is closed by the stuck-run timeout rather than the job crashing.</summary>
+        </member>
         <member name="M:TigerCS.Application.Modules.Collections.Review.ReviewRefreshService.RunAsync(System.Int64,System.Threading.CancellationToken)">
             <summary>The background job body. Idempotent: a second execution of an already-claimed run does nothing.</summary>
+        </member>
+        <member name="T:TigerCS.Application.Modules.Collections.Review.ReviewStorageException">
+            <summary>
+            Writing review data to the database failed. <see cref="P:TigerCS.Application.Modules.Collections.Review.ReviewStorageException.Transient"/> says the failure was a connection loss / timeout that still persisted after the bounded retries;
+            the message is safe to show (no connection string, no data).
+            </summary>
+        </member>
+        <member name="M:TigerCS.Application.Modules.Collections.Review.ReviewStorageException.#ctor(System.String,System.Boolean,System.Nullable{System.Int32},System.Exception)">
+            <summary>
+            Writing review data to the database failed. <see cref="P:TigerCS.Application.Modules.Collections.Review.ReviewStorageException.Transient"/> says the failure was a connection loss / timeout that still persisted after the bounded retries;
+            the message is safe to show (no connection string, no data).
+            </summary>
         </member>
         <member name="T:TigerCS.Application.Modules.Collections.Review.SuppressionService">
              <summary>
@@ -2538,10 +2740,16 @@
         <member name="F:TigerCS.Application.Modules.Collections.Services.CollectionsCampaignAppService.HistoryStart">
             <summary>First day the receivables history is read from when the user gives no From date (the snapshot window starts here).</summary>
         </member>
+        <member name="M:TigerCS.Application.Modules.Collections.Services.CollectionsCampaignAppService.PaymentStatusNote(TigerCS.Domain.Modules.Collections.CampaignPaymentFilter,System.Nullable{System.DateOnly},System.DateOnly,System.DateOnly)">
+            <summary>
+            How the Due / Overdue status meets the chosen dates. Due = instalments due inside the current Dubai month, Overdue = due before its first day; both are measured against TODAY
+            (not the preview date), and the dates only choose which instalments are read ([From, To], To never past the end of the current month). A combination that cannot match anything says so.
+            </summary>
+        </member>
         <member name="M:TigerCS.Application.Modules.Collections.Services.CollectionsCampaignAppService.Compose(System.Int32,System.Boolean,System.Boolean,TigerCS.Domain.Modules.Collections.CollectionsCampaignStage,System.DateOnly,System.Collections.Generic.IReadOnlyList{System.DateOnly})">
             <summary>Review reasons and status of a candidate from its unit-level flags and the global (source / schedule / release) gates. Order is part of the contract.</summary>
         </member>
-        <member name="M:TigerCS.Application.Modules.Collections.Services.CollectionsCampaignAppService.BuildFactsInMemory(System.Collections.Generic.IReadOnlyList{TigerCS.Application.Modules.Collections.Abstractions.PactReceivableInstalment},System.DateOnly,System.DateOnly,System.Decimal,TigerCS.Domain.Modules.Collections.CollectionsCampaignStage,System.DateOnly,System.String,System.String,System.Nullable{System.Int32},System.Nullable{System.DateOnly},System.Nullable{System.Decimal},System.Collections.Generic.IReadOnlyDictionary{System.ValueTuple{System.Int32,System.String},TigerCS.Application.Modules.Collections.Abstractions.CrmUnitLink},System.Nullable{System.DateOnly},System.Boolean)">
+        <member name="M:TigerCS.Application.Modules.Collections.Services.CollectionsCampaignAppService.BuildFactsInMemory(System.Collections.Generic.IReadOnlyList{TigerCS.Application.Modules.Collections.Abstractions.PactReceivableInstalment},System.DateOnly,System.DateOnly,System.Decimal,TigerCS.Domain.Modules.Collections.CollectionsCampaignStage,System.DateOnly,System.String,System.String,System.Nullable{System.Int32},System.Nullable{System.DateOnly},System.Nullable{System.Decimal},System.Collections.Generic.IReadOnlyDictionary{System.ValueTuple{System.Int32,System.String},TigerCS.Application.Modules.Collections.Abstractions.CrmUnitLink},System.Nullable{System.DateOnly},System.Boolean,TigerCS.Domain.Modules.Collections.CampaignPaymentFilter)">
             <summary>
             The in-memory evaluation: every instalment of the window is grouped per unit here. It is the reference implementation of the rules (the SQL engine
             must return the same units, flags, totals and order - see the equivalence tests) and the fallback for sources/snapshots without the SQL engine.
@@ -3667,6 +3875,13 @@
         <member name="M:TigerCS.Application.Modules.CrmDocuments.Abstractions.ICrmDocumentDeliveryRepository.FindRecentSentForAgentAsync(System.Int32,System.Int32,TigerCS.Domain.Modules.CustomerVerification.CrmDocumentType,System.String,TigerCS.Domain.Modules.CustomerVerification.DocumentDeliveryChannel,System.DateTime,System.Threading.CancellationToken)">
             <summary>The agent-desk counterpart of <see cref="M:TigerCS.Application.Modules.CrmDocuments.Abstractions.ICrmDocumentDeliveryRepository.FindRecentSentAsync(System.Guid,TigerCS.Domain.Modules.CustomerVerification.CrmDocumentType,System.String,TigerCS.Domain.Modules.CustomerVerification.DocumentDeliveryChannel,System.DateTime,System.Threading.CancellationToken)"/>: scoped by CRM customer + lead, never by a verification session.</summary>
         </member>
+        <member name="M:TigerCS.Application.Modules.CrmDocuments.Abstractions.ICrmDocumentDeliveryRepository.CountInFlightForSessionAsync(System.Guid,System.Int64,System.DateTime,System.Threading.CancellationToken)">
+            <summary>
+            How many OTHER requests of this verification session are still being processed — claimed or handed to the channel
+            with their last update at or after <paramref name="activeSinceUtc"/> (older ones are abandoned, not in flight). Decides whether
+            the conversation's document workflow is complete.
+            </summary>
+        </member>
         <member name="T:TigerCS.Application.Modules.CrmDocuments.CrmDocumentOptions">
             <summary>
             Settings for the chatbot's "send me a copy of my document" API, bound from
@@ -3828,6 +4043,13 @@
             <c>SelectionRequired</c> answer with <c>choiceKind: "Unit"</c>). It must be
             one of the verified customer's own leads. Omitted or blank, the verified
             unit is used. A number or a numeric string.
+            </summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.CrmDocuments.Dto.CrmDocumentCopyRequestDto.ConversationId">
+            <summary>
+            Optional. The Genesys conversation this request belongs to. When sent it names the ticket whose document workflow the
+            outcome closes (<c>Sent</c> → closed as resolved; a delivery failure → closed with the failure reason). Omitted, the ticket
+            that consumed the verification session is used, if any; with neither, no ticket is touched.
             </summary>
         </member>
         <member name="T:TigerCS.Application.Modules.CrmDocuments.Dto.LenientNullableIntConverter">
@@ -4274,7 +4496,7 @@
              </para>
              </summary>
         </member>
-        <member name="M:TigerCS.Application.Modules.CrmDocuments.Services.CrmDocumentCopyAppService.#ctor(TigerCS.Application.Modules.CrmDocuments.CrmDocumentOptions,TigerCS.Application.Modules.CustomerVerification.Abstractions.IVerificationSessionRepository,TigerCS.Application.Modules.CustomerVerification.Abstractions.IUnitReferenceRepository,TigerCS.Application.Modules.CustomerVerification.Abstractions.IContactReferenceRepository,TigerCS.Application.Modules.CrmDocuments.Abstractions.ICrmDocumentGateway,TigerCS.Application.Modules.CustomerVerification.Services.CrmBuyerLookupAppService,TigerCS.Application.Modules.CrmDocuments.Abstractions.ICrmDocumentDeliveryRepository,System.Collections.Generic.IEnumerable{TigerCS.Application.Modules.CrmDocuments.Abstractions.IDocumentDeliveryChannelSender},TigerCS.Application.Modules.CustomerVerification.Abstractions.ICustomerVerificationUnitOfWork,TigerCS.Application.Abstractions.IAuditEntryWriter,System.TimeProvider,Microsoft.Extensions.Logging.ILogger{TigerCS.Application.Modules.CrmDocuments.Services.CrmDocumentCopyAppService})">
+        <member name="M:TigerCS.Application.Modules.CrmDocuments.Services.CrmDocumentCopyAppService.#ctor(TigerCS.Application.Modules.CrmDocuments.CrmDocumentOptions,TigerCS.Application.Modules.CustomerVerification.Abstractions.IVerificationSessionRepository,TigerCS.Application.Modules.CustomerVerification.Abstractions.IUnitReferenceRepository,TigerCS.Application.Modules.CustomerVerification.Abstractions.IContactReferenceRepository,TigerCS.Application.Modules.CrmDocuments.Abstractions.ICrmDocumentGateway,TigerCS.Application.Modules.CustomerVerification.Services.CrmBuyerLookupAppService,TigerCS.Application.Modules.CrmDocuments.Abstractions.ICrmDocumentDeliveryRepository,System.Collections.Generic.IEnumerable{TigerCS.Application.Modules.CrmDocuments.Abstractions.IDocumentDeliveryChannelSender},TigerCS.Application.Modules.CustomerVerification.Abstractions.ICustomerVerificationUnitOfWork,TigerCS.Application.Abstractions.IAuditEntryWriter,System.TimeProvider,Microsoft.Extensions.Logging.ILogger{TigerCS.Application.Modules.CrmDocuments.Services.CrmDocumentCopyAppService},TigerCS.Application.Modules.CrmDocuments.Services.IDocumentDeliveryTicketHandler)">
              <summary>
              "Send me a copy of my contract / reservation form / unit layout /
              registration receipt" — the chatbot's request, answered end to end.
@@ -4412,8 +4634,9 @@
             <param name="DisplayName">The greeting name.</param>
             <param name="Email">CRM's email for this customer — never anything the caller supplied.</param>
             <param name="AuditContext">Written into the audit entry: which proof the send rode on.</param>
+            <param name="Ticket">Genesys only: how to find the ticket this request's outcome closes. Null for the agent desk, which never touches tickets.</param>
         </member>
-        <member name="M:TigerCS.Application.Modules.CrmDocuments.Services.CrmDocumentCopyAppService.DeliveryTarget.#ctor(TigerCS.Application.Modules.CrmDocuments.Services.CrmDocumentCopyAppService.DeliveryScope,System.Int32,System.Int32,System.String,System.String,System.String,System.String)">
+        <member name="M:TigerCS.Application.Modules.CrmDocuments.Services.CrmDocumentCopyAppService.DeliveryTarget.#ctor(TigerCS.Application.Modules.CrmDocuments.Services.CrmDocumentCopyAppService.DeliveryScope,System.Int32,System.Int32,System.String,System.String,System.String,System.String,TigerCS.Application.Modules.CrmDocuments.Services.DocumentDeliveryTicketContext)">
             <summary>
             Where a document copy goes and what it is about, once ownership has been established by whichever door the
             request came through (a verified chatbot session, or a signed-in agent on a customer the agent may see).
@@ -4425,6 +4648,7 @@
             <param name="DisplayName">The greeting name.</param>
             <param name="Email">CRM's email for this customer — never anything the caller supplied.</param>
             <param name="AuditContext">Written into the audit entry: which proof the send rode on.</param>
+            <param name="Ticket">Genesys only: how to find the ticket this request's outcome closes. Null for the agent desk, which never touches tickets.</param>
         </member>
         <member name="P:TigerCS.Application.Modules.CrmDocuments.Services.CrmDocumentCopyAppService.DeliveryTarget.Scope">
             <summary>The idempotency / duplicate scope.</summary>
@@ -4447,11 +4671,21 @@
         <member name="P:TigerCS.Application.Modules.CrmDocuments.Services.CrmDocumentCopyAppService.DeliveryTarget.AuditContext">
             <summary>Written into the audit entry: which proof the send rode on.</summary>
         </member>
+        <member name="P:TigerCS.Application.Modules.CrmDocuments.Services.CrmDocumentCopyAppService.DeliveryTarget.Ticket">
+            <summary>Genesys only: how to find the ticket this request's outcome closes. Null for the agent desk, which never touches tickets.</summary>
+        </member>
         <member name="M:TigerCS.Application.Modules.CrmDocuments.Services.CrmDocumentCopyAppService.DeliverAsync(System.Guid,System.String,TigerCS.Domain.Modules.CustomerVerification.CrmDocumentType,System.String,TigerCS.Domain.Modules.CustomerVerification.DocumentDeliveryChannel,TigerCS.Domain.Modules.CustomerVerification.CrmDocumentDeliveryRequest,System.DateTime,TigerCS.Application.Modules.CrmDocuments.Services.CrmDocumentCopyAppService.DeliveryTarget,System.Threading.CancellationToken)">
             <summary>
             Steps shared by every door: only a record CRM lists for this customer and lead is selected; the send is claimed
             under the caller's idempotency key before anything is fetched; the file is fetched with the server-side CRM
             credential; exactly one email goes out; the outcome is recorded and audited.
+            </summary>
+        </member>
+        <member name="M:TigerCS.Application.Modules.CrmDocuments.Services.CrmDocumentCopyAppService.ApplyToTicketAsync(TigerCS.Application.Modules.CrmDocuments.Services.CrmDocumentCopyAppService.DeliveryTarget,TigerCS.Application.Modules.CrmDocuments.Dto.CrmDocumentCopyResult,System.Threading.CancellationToken)">
+            <summary>
+            Tells the request's ticket how the document workflow ended. Sent and a real failure may close it; selection, queueing,
+            conflicts, ownership refusals and a "nothing was started, retry" answer never do. (An unconfirmed outcome is reported where it
+            is first decided, so a later replay of it cannot add a second entry.)
             </summary>
         </member>
         <member name="M:TigerCS.Application.Modules.CrmDocuments.Services.CrmDocumentCopyAppService.ReplayOrNull(TigerCS.Domain.Modules.CustomerVerification.CrmDocumentDeliveryRequest,TigerCS.Application.Modules.CrmDocuments.Services.CrmDocumentCopyAppService.DeliveryScope,TigerCS.Domain.Modules.CustomerVerification.CrmDocumentType,System.String,TigerCS.Domain.Modules.CustomerVerification.DocumentDeliveryChannel,System.DateTime,System.TimeSpan)">
@@ -4636,6 +4870,84 @@
         </member>
         <member name="M:TigerCS.Application.Modules.CrmDocuments.Services.CustomerOtpAppService.EligibleUnits(TigerCS.Application.Modules.CustomerVerification.Dto.CrmBuyerMatchDto)">
             <summary>Units that can be cached and verified for: they must have a unit number.</summary>
+        </member>
+        <member name="T:TigerCS.Application.Modules.CrmDocuments.Services.DocumentDeliveryTicketEvent">
+            <summary>How one document request ended, as far as its ticket is concerned.</summary>
+        </member>
+        <member name="F:TigerCS.Application.Modules.CrmDocuments.Services.DocumentDeliveryTicketEvent.Sent">
+            <summary>The channel accepted the document.</summary>
+        </member>
+        <member name="F:TigerCS.Application.Modules.CrmDocuments.Services.DocumentDeliveryTicketEvent.Failed">
+            <summary>The document was found but could not be delivered (or could not be found / fetched).</summary>
+        </member>
+        <member name="F:TigerCS.Application.Modules.CrmDocuments.Services.DocumentDeliveryTicketEvent.Unconfirmed">
+            <summary>Handed to the provider but the outcome was never recorded — it may be in the mailbox.</summary>
+        </member>
+        <member name="T:TigerCS.Application.Modules.CrmDocuments.Services.DocumentDeliveryTicketContext">
+            <summary>Who asked: the integration account, the verified session, the conversation the chatbot named, the ticket that already consumed the session, and what the session proves about the customer (CRM id, phone).</summary>
+        </member>
+        <member name="M:TigerCS.Application.Modules.CrmDocuments.Services.DocumentDeliveryTicketContext.#ctor(System.Guid,System.Guid,System.String,System.Nullable{System.Int64},System.Int32,System.String)">
+            <summary>Who asked: the integration account, the verified session, the conversation the chatbot named, the ticket that already consumed the session, and what the session proves about the customer (CRM id, phone).</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.CrmDocuments.Services.DocumentDeliveryTicketContext.ProviderFailureCode">
+            <summary>The delivery channel's own failure code, when it gave one — recorded as the actual reason.</summary>
+        </member>
+        <member name="T:TigerCS.Application.Modules.CrmDocuments.Services.DocumentDeliveryTicketUpdate">
+            <summary>One request's outcome: the event, document type, record, machine-readable code, the actual reason text, and the delivery request id (excluded when counting what is still in flight).</summary>
+        </member>
+        <member name="M:TigerCS.Application.Modules.CrmDocuments.Services.DocumentDeliveryTicketUpdate.#ctor(TigerCS.Application.Modules.CrmDocuments.Services.DocumentDeliveryTicketEvent,System.String,System.String,System.String,System.String,System.Nullable{System.Int64})">
+            <summary>One request's outcome: the event, document type, record, machine-readable code, the actual reason text, and the delivery request id (excluded when counting what is still in flight).</summary>
+        </member>
+        <member name="T:TigerCS.Application.Modules.CrmDocuments.Services.IDocumentDeliveryTicketHandler">
+            <summary>Port so the document service stays testable and the ticket side is optional.</summary>
+        </member>
+        <member name="M:TigerCS.Application.Modules.CrmDocuments.Services.IDocumentDeliveryTicketHandler.RecordCustomerActivityAsync(TigerCS.Application.Modules.CrmDocuments.Services.DocumentDeliveryTicketContext,System.Threading.CancellationToken)">
+            <summary>A document request is a customer interaction: restarts the Website/Chatbot inactivity clock, so a ticket whose document is being prepared is never closed for silence.</summary>
+        </member>
+        <member name="T:TigerCS.Application.Modules.CrmDocuments.Services.DocumentDeliveryTicketService">
+             <summary>
+             Closes — through the existing lifecycle (Resolved → Closed, audit, history, Outbox) — the ticket behind a Genesys
+             document request, once the request's workflow has ended.
+            
+             <para>
+             <b>Which ticket.</b> Only one the existing associations name: the ticket of the Genesys conversation the chatbot sent
+             (<c>conversationId</c> → its interaction), else the ticket that consumed the verification session. It must still be open, belong to
+             the same CRM customer when it has one, and — for a conversation — have been started from the verified contact's phone number.
+             Anything else is left alone: this never searches for "a ticket of this customer".
+             </para>
+            
+             <para>
+             <b>When.</b> Sent closes as Resolved with the fixed reason; a failure closes as Cancelled with
+             "Document delivery failed — [actual reason]" and the code, document type and time in the history/audit. Both wait while another
+             request of the same verification session is still being processed. An unconfirmed outcome never closes anything and is
+             never described as success or failure — it is recorded on the ticket for a person. A failed ticket is never transferred.
+             Re-running on a closed ticket changes nothing. Failures here never reach the caller: the document has already been dealt with.
+             </para>
+             </summary>
+        </member>
+        <member name="M:TigerCS.Application.Modules.CrmDocuments.Services.DocumentDeliveryTicketService.#ctor(TigerCS.Application.Modules.CrmDocuments.CrmDocumentOptions,TigerCS.Application.Modules.GenesysIntegration.Abstractions.IGenesysConversationRepository,TigerCS.Application.Modules.Ticketing.Abstractions.ITicketRepository,TigerCS.Application.Modules.CrmDocuments.Abstractions.ICrmDocumentDeliveryRepository,TigerCS.Application.Modules.Ticketing.Services.TicketLifecycleAppService,TigerCS.Application.Abstractions.IAuditEntryWriter,TigerCS.Application.Modules.CustomerVerification.Abstractions.ICustomerVerificationUnitOfWork,System.TimeProvider,Microsoft.Extensions.Logging.ILogger{TigerCS.Application.Modules.CrmDocuments.Services.DocumentDeliveryTicketService})">
+             <summary>
+             Closes — through the existing lifecycle (Resolved → Closed, audit, history, Outbox) — the ticket behind a Genesys
+             document request, once the request's workflow has ended.
+            
+             <para>
+             <b>Which ticket.</b> Only one the existing associations name: the ticket of the Genesys conversation the chatbot sent
+             (<c>conversationId</c> → its interaction), else the ticket that consumed the verification session. It must still be open, belong to
+             the same CRM customer when it has one, and — for a conversation — have been started from the verified contact's phone number.
+             Anything else is left alone: this never searches for "a ticket of this customer".
+             </para>
+            
+             <para>
+             <b>When.</b> Sent closes as Resolved with the fixed reason; a failure closes as Cancelled with
+             "Document delivery failed — [actual reason]" and the code, document type and time in the history/audit. Both wait while another
+             request of the same verification session is still being processed. An unconfirmed outcome never closes anything and is
+             never described as success or failure — it is recorded on the ticket for a person. A failed ticket is never transferred.
+             Re-running on a closed ticket changes nothing. Failures here never reach the caller: the document has already been dealt with.
+             </para>
+             </summary>
+        </member>
+        <member name="M:TigerCS.Application.Modules.CrmDocuments.Services.DocumentDeliveryTicketService.SamePerson(System.String,System.String)">
+            <summary>Equal when both are phone numbers that normalise the same; if either is not a number there is nothing to contradict.</summary>
         </member>
         <member name="T:TigerCS.Application.Modules.CrmDocuments.Services.EmailDocumentDeliveryChannelSender">
             <summary>
@@ -6280,6 +6592,12 @@
             service re-reads and re-checks each one before acting.
             </summary>
         </member>
+        <member name="M:TigerCS.Application.Modules.GenesysIntegration.Abstractions.IGenesysConversationRepository.ListCustomerInactiveOlderThanAsync(System.DateTime,System.Int32,System.Threading.CancellationToken)">
+            <summary>
+            Ids of live, not-yet-inactivity-closed interactions whose last tracked customer interaction is older than <paramref name="cutoffUtc"/>,
+            oldest first, at most <paramref name="batchSize"/>. Candidates only — the closing service re-checks each one.
+            </summary>
+        </member>
         <member name="M:TigerCS.Application.Modules.GenesysIntegration.Abstractions.IGenesysConversationRepository.ListMessagesAsync(System.Int64,System.Threading.CancellationToken)">
             <summary>Every transcript message of one interaction, in <c>Sequence</c> order.</summary>
         </member>
@@ -7495,6 +7813,27 @@
             to repeat.
             </summary>
         </member>
+        <member name="T:TigerCS.Application.Modules.GenesysIntegration.Dto.GenesysTranscriptAppendOutcome">
+            <summary>How an incremental transcript delivery landed.</summary>
+        </member>
+        <member name="F:TigerCS.Application.Modules.GenesysIntegration.Dto.GenesysTranscriptAppendOutcome.Appended">
+            <summary>New messages were stored.</summary>
+        </member>
+        <member name="F:TigerCS.Application.Modules.GenesysIntegration.Dto.GenesysTranscriptAppendOutcome.Unchanged">
+            <summary>Every message was already stored (a retry, or the final transcript repeating live deliveries) — nothing written.</summary>
+        </member>
+        <member name="F:TigerCS.Application.Modules.GenesysIntegration.Dto.GenesysTranscriptAppendOutcome.InvalidTranscript">
+            <summary>A message has an unrecognized sender or an empty body; nothing was stored.</summary>
+        </member>
+        <member name="F:TigerCS.Application.Modules.GenesysIntegration.Dto.GenesysTranscriptAppendOutcome.Conflict">
+            <summary>A concurrent delivery stored at the same position; nothing from this request was kept and resending is safe.</summary>
+        </member>
+        <member name="T:TigerCS.Application.Modules.GenesysIntegration.Dto.GenesysTranscriptAppendResult">
+            <summary>What an incremental transcript delivery did. <paramref name="Total"/> is the whole stored transcript's length afterwards.</summary>
+        </member>
+        <member name="M:TigerCS.Application.Modules.GenesysIntegration.Dto.GenesysTranscriptAppendResult.#ctor(TigerCS.Application.Modules.GenesysIntegration.Dto.GenesysTranscriptAppendOutcome,System.Int32,System.Int32,System.String)">
+            <summary>What an incremental transcript delivery did. <paramref name="Total"/> is the whole stored transcript's length afterwards.</summary>
+        </member>
         <member name="T:TigerCS.Application.Modules.GenesysIntegration.Dto.GenesysConversationEndOutcome">
             <summary>How a conversation-end report landed.</summary>
         </member>
@@ -7813,9 +8152,12 @@
              <param name="Routing">Set when Genesys moved the conversation to another queue, or connected / transferred it to an agent. Omit when the routing did not change.</param>
              <param name="CustomerConfirmation">Set when the customer explicitly confirmed during the interaction that their issue is resolved. Record-only — never resolves or closes the ticket.</param>
              <param name="AwaitingCustomerReply">true starts the chatbot inactivity timer (a repeat never restarts it); false cancels it (the customer replied); null leaves it as it is.</param>
-             <param name="RequestType">Set when the bot has identified the request type: validated, then applied with its department routing, automatic assignment and SLA policy. Repeating the same one changes nothing; a different one is refused.</param>
+             <param name="CustomerActive">true = the customer just did something in the conversation (sent a message, answered the bot): restarts the Website/Chatbot inactivity clock at TigerCS's own time. Send it on EVERY inbound customer message. null/false changes nothing.</param>
+             <param name="ClosedByAi">true = the Genesys AI (voicebot / chatbot) finished the conversation: the ticket is closed (Resolved → Closed, reason "Closed by AI") — only if the AI still owns it. Refused, with a note and nothing changed, when a human is requested/pending/connected, a person owns the ticket, it is a Call Center ticket or it is already closed. null/false changes nothing.</param>
+             <param name="RequestType">Set when the bot has identified the request type: validated, then applied with its department routing, automatic assignment and SLA policy. Repeating the same one changes nothing; a different one replaces it only while no person has worked the ticket, otherwise it is refused.</param>
+             <param name="Transcript">Messages of the live conversation, sent as they happen or in batches. Additive and idempotent (de-duplicated on <c>externalMessageId</c>, else sender+time+body); does not end the conversation. The final <c>ended.transcript</c> may repeat them safely.</param>
         </member>
-        <member name="M:TigerCS.Application.Modules.GenesysIntegration.Dto.GenesysTicketUpdateDto.#ctor(System.String,System.String,System.String,TigerCS.Application.Modules.GenesysIntegration.Dto.GenesysConversationEndUpdateDto,TigerCS.Application.Modules.GenesysIntegration.Dto.GenesysHandoffUpdateDto,System.Nullable{System.DateTime},TigerCS.Application.Modules.GenesysIntegration.Dto.GenesysRoutingUpdateDto,TigerCS.Application.Modules.GenesysIntegration.Dto.GenesysCustomerConfirmationUpdateDto,System.Nullable{System.Boolean},TigerCS.Application.Modules.GenesysIntegration.Dto.GenesysRequestTypeDto)">
+        <member name="M:TigerCS.Application.Modules.GenesysIntegration.Dto.GenesysTicketUpdateDto.#ctor(System.String,System.String,System.String,TigerCS.Application.Modules.GenesysIntegration.Dto.GenesysConversationEndUpdateDto,TigerCS.Application.Modules.GenesysIntegration.Dto.GenesysHandoffUpdateDto,System.Nullable{System.DateTime},TigerCS.Application.Modules.GenesysIntegration.Dto.GenesysRoutingUpdateDto,TigerCS.Application.Modules.GenesysIntegration.Dto.GenesysCustomerConfirmationUpdateDto,System.Nullable{System.Boolean},TigerCS.Application.Modules.GenesysIntegration.Dto.GenesysRequestTypeDto,System.Nullable{System.Boolean},System.Nullable{System.Boolean},System.Collections.Generic.IReadOnlyList{TigerCS.Application.Modules.GenesysIntegration.Dto.GenesysTranscriptMessageDto})">
              <summary>
              Everything Genesys may update on a ticket it created — and, by omission,
              everything it may not.
@@ -7851,7 +8193,10 @@
              <param name="Routing">Set when Genesys moved the conversation to another queue, or connected / transferred it to an agent. Omit when the routing did not change.</param>
              <param name="CustomerConfirmation">Set when the customer explicitly confirmed during the interaction that their issue is resolved. Record-only — never resolves or closes the ticket.</param>
              <param name="AwaitingCustomerReply">true starts the chatbot inactivity timer (a repeat never restarts it); false cancels it (the customer replied); null leaves it as it is.</param>
-             <param name="RequestType">Set when the bot has identified the request type: validated, then applied with its department routing, automatic assignment and SLA policy. Repeating the same one changes nothing; a different one is refused.</param>
+             <param name="CustomerActive">true = the customer just did something in the conversation (sent a message, answered the bot): restarts the Website/Chatbot inactivity clock at TigerCS's own time. Send it on EVERY inbound customer message. null/false changes nothing.</param>
+             <param name="ClosedByAi">true = the Genesys AI (voicebot / chatbot) finished the conversation: the ticket is closed (Resolved → Closed, reason "Closed by AI") — only if the AI still owns it. Refused, with a note and nothing changed, when a human is requested/pending/connected, a person owns the ticket, it is a Call Center ticket or it is already closed. null/false changes nothing.</param>
+             <param name="RequestType">Set when the bot has identified the request type: validated, then applied with its department routing, automatic assignment and SLA policy. Repeating the same one changes nothing; a different one replaces it only while no person has worked the ticket, otherwise it is refused.</param>
+             <param name="Transcript">Messages of the live conversation, sent as they happen or in batches. Additive and idempotent (de-duplicated on <c>externalMessageId</c>, else sender+time+body); does not end the conversation. The final <c>ended.transcript</c> may repeat them safely.</param>
         </member>
         <member name="P:TigerCS.Application.Modules.GenesysIntegration.Dto.GenesysTicketUpdateDto.ConversationId">
             <summary>
@@ -7885,7 +8230,16 @@
             <summary>true starts the chatbot inactivity timer (a repeat never restarts it); false cancels it (the customer replied); null leaves it as it is.</summary>
         </member>
         <member name="P:TigerCS.Application.Modules.GenesysIntegration.Dto.GenesysTicketUpdateDto.RequestType">
-            <summary>Set when the bot has identified the request type: validated, then applied with its department routing, automatic assignment and SLA policy. Repeating the same one changes nothing; a different one is refused.</summary>
+            <summary>Set when the bot has identified the request type: validated, then applied with its department routing, automatic assignment and SLA policy. Repeating the same one changes nothing; a different one replaces it only while no person has worked the ticket, otherwise it is refused.</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.GenesysIntegration.Dto.GenesysTicketUpdateDto.CustomerActive">
+            <summary>true = the customer just did something in the conversation (sent a message, answered the bot): restarts the Website/Chatbot inactivity clock at TigerCS's own time. Send it on EVERY inbound customer message. null/false changes nothing.</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.GenesysIntegration.Dto.GenesysTicketUpdateDto.ClosedByAi">
+            <summary>true = the Genesys AI (voicebot / chatbot) finished the conversation: the ticket is closed (Resolved → Closed, reason "Closed by AI") — only if the AI still owns it. Refused, with a note and nothing changed, when a human is requested/pending/connected, a person owns the ticket, it is a Call Center ticket or it is already closed. null/false changes nothing.</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.GenesysIntegration.Dto.GenesysTicketUpdateDto.Transcript">
+            <summary>Messages of the live conversation, sent as they happen or in batches. Additive and idempotent (de-duplicated on <c>externalMessageId</c>, else sender+time+body); does not end the conversation. The final <c>ended.transcript</c> may repeat them safely.</summary>
         </member>
         <member name="T:TigerCS.Application.Modules.GenesysIntegration.Dto.GenesysCustomerConfirmationUpdateDto">
             <summary>
@@ -8142,9 +8496,11 @@
             <param name="AwaitingCustomerReply">Whether the inactivity timer is running after this update.</param>
             <param name="InactivityDeadlineUtc">When the ticket becomes eligible for inactivity closure, while the timer runs.</param>
             <param name="AwaitingCustomerReplyNote">Why a requested timer was not started, when it was not.</param>
+            <param name="ClosedByAi">True when THIS call closed the ticket because <c>closedByAi: true</c> was sent.</param>
+            <param name="ClosedByAiNote">Why <c>closedByAi: true</c> did not close the ticket (human involved, Call Center, already closed, …), when it did not.</param>
             <param name="Classification">What applying the update's request type did (routing, assignment, SLA), when it carried one.</param>
         </member>
-        <member name="M:TigerCS.Application.Modules.GenesysIntegration.Dto.GenesysTicketUpdateResult.#ctor(TigerCS.Application.Modules.GenesysIntegration.Dto.GenesysTicketUpdateOutcome,System.Nullable{System.Int64},System.String,System.String,System.Boolean,System.Int32,System.String,System.Nullable{System.Int64},System.String,System.Boolean,System.Nullable{System.DateTime},System.String,TigerCS.Application.Modules.GenesysIntegration.Dto.GenesysClassificationResult)">
+        <member name="M:TigerCS.Application.Modules.GenesysIntegration.Dto.GenesysTicketUpdateResult.#ctor(TigerCS.Application.Modules.GenesysIntegration.Dto.GenesysTicketUpdateOutcome,System.Nullable{System.Int64},System.String,System.String,System.Boolean,System.Int32,System.String,System.Nullable{System.Int64},System.String,System.Boolean,System.Nullable{System.DateTime},System.String,TigerCS.Application.Modules.GenesysIntegration.Dto.GenesysClassificationResult,System.Boolean,System.String)">
             <summary>
             The result of one update. <see cref="P:TigerCS.Application.Modules.GenesysIntegration.Dto.GenesysTicketUpdateResult.TicketStatus"/> is echoed
             deliberately: it is the proof that ending a conversation did not close the
@@ -8162,6 +8518,8 @@
             <param name="AwaitingCustomerReply">Whether the inactivity timer is running after this update.</param>
             <param name="InactivityDeadlineUtc">When the ticket becomes eligible for inactivity closure, while the timer runs.</param>
             <param name="AwaitingCustomerReplyNote">Why a requested timer was not started, when it was not.</param>
+            <param name="ClosedByAi">True when THIS call closed the ticket because <c>closedByAi: true</c> was sent.</param>
+            <param name="ClosedByAiNote">Why <c>closedByAi: true</c> did not close the ticket (human involved, Call Center, already closed, …), when it did not.</param>
             <param name="Classification">What applying the update's request type did (routing, assignment, SLA), when it carried one.</param>
         </member>
         <member name="P:TigerCS.Application.Modules.GenesysIntegration.Dto.GenesysTicketUpdateResult.Outcome">
@@ -8203,6 +8561,12 @@
         <member name="P:TigerCS.Application.Modules.GenesysIntegration.Dto.GenesysTicketUpdateResult.Classification">
             <summary>What applying the update's request type did (routing, assignment, SLA), when it carried one.</summary>
         </member>
+        <member name="P:TigerCS.Application.Modules.GenesysIntegration.Dto.GenesysTicketUpdateResult.ClosedByAi">
+            <summary>True when THIS call closed the ticket because <c>closedByAi: true</c> was sent.</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.GenesysIntegration.Dto.GenesysTicketUpdateResult.ClosedByAiNote">
+            <summary>Why <c>closedByAi: true</c> did not close the ticket (human involved, Call Center, already closed, …), when it did not.</summary>
+        </member>
         <member name="T:TigerCS.Application.Modules.GenesysIntegration.GenesysOptions">
              <summary>
              The Genesys integration's own settings — a plain value in the Application
@@ -8242,17 +8606,28 @@
             </summary>
         </member>
         <member name="F:TigerCS.Application.Modules.GenesysIntegration.GenesysOptions.DefaultCustomerInactivityTimeoutMinutes">
-            <summary>The default for <see cref="P:TigerCS.Application.Modules.GenesysIntegration.GenesysOptions.CustomerInactivityTimeoutMinutes"/>: the business rule's "more than 5 minutes".</summary>
+            <summary>The default for <see cref="P:TigerCS.Application.Modules.GenesysIntegration.GenesysOptions.CustomerInactivityTimeoutMinutes"/>: Website/Chatbot tickets close after "more than 10 minutes" without customer interaction.</summary>
+        </member>
+        <member name="F:TigerCS.Application.Modules.GenesysIntegration.GenesysOptions.DefaultAwaitingReplyTimeoutMinutes">
+            <summary>The default for <see cref="P:TigerCS.Application.Modules.GenesysIntegration.GenesysOptions.AwaitingReplyTimeoutMinutes"/>: the original bot-prompt rule, unchanged.</summary>
         </member>
         <member name="P:TigerCS.Application.Modules.GenesysIntegration.GenesysOptions.CustomerInactivityTimeoutMinutes">
             <summary>
-            How long a chatbot may wait for the customer's reply before the
-            background job closes the ticket as an inactivity closure. Default 5;
-            the customer must be silent for <b>more than</b> this long. Zero or a
-            negative value switches the automatic closure off (the timer is still
-            recorded, nothing is closed). Set it under
-            <c>Genesys:CustomerInactivityTimeoutMinutes</c>.
+            How long a Website/Chatbot conversation may go without ANY customer interaction (measured from the last one, not from ticket
+            creation) before the background job closes its ticket. Default 10; the customer must be silent for <b>more than</b> this long.
+            Call Center tickets, human-managed tickets and voice calls are outside this rule. Zero or a negative value switches it off.
+            Set it under <c>Genesys:CustomerInactivityTimeoutMinutes</c>.
             </summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.GenesysIntegration.GenesysOptions.AwaitingReplyTimeoutMinutes">
+            <summary>
+            The original rule — the chatbot asked something (<c>awaitingCustomerReply: true</c>) and the customer did not answer — which
+            still governs every ticket the Website/Chatbot rule does not track (voice, Call Center). Default 5, so those tickets are not
+            affected by the 10-minute rule. Zero or a negative value switches it off. <c>Genesys:AwaitingReplyTimeoutMinutes</c>.
+            </summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.GenesysIntegration.GenesysOptions.AwaitingReplyTimeout">
+            <summary>The bot-prompt timeout, or null when that rule is switched off.</summary>
         </member>
         <member name="F:TigerCS.Application.Modules.GenesysIntegration.GenesysOptions.DefaultDefaultTicketPriority">
             <summary>The default for <see cref="P:TigerCS.Application.Modules.GenesysIntegration.GenesysOptions.DefaultTicketPriority"/>: the business tier name used by the SLA document.</summary>
@@ -8268,16 +8643,12 @@
             restores "no priority until classified".
             </summary>
         </member>
-        <member name="P:TigerCS.Application.Modules.GenesysIntegration.GenesysOptions.HumanQueueForUnclassified">
+        <member name="P:TigerCS.Application.Modules.GenesysIntegration.GenesysOptions.AutoRaiseHandoffOnConversationEnd">
             <summary>
-            Whether a Genesys ticket with no request type supplied is put
-            in the human follow-up queue ("awaiting classification") instead of
-            being left for the bot alone. On by default — the business rule is that
-            an unclassified Genesys ticket is never left without a human owner of
-            the classification; switch it off
-            (<c>Genesys:HumanQueueForUnclassified</c> = false) only as a rollout kill
-            switch. The queue entry is stood down automatically when the request type
-            is later classified.
+            Whether ending an AI conversation that no human ever took raises pending human work on TigerCS' own initiative
+            (<c>HandoffTrigger.AiConnectionLost</c>). <b>Off by default</b>: a conversation ending — the AI finished, the customer left, the
+            browser closed — is not a request for a human, and only an explicit Genesys signal (<c>handoff.required = true</c>) may record one.
+            Switch it on (<c>Genesys:AutoRaiseHandoffOnConversationEnd</c> = true) only to restore the previous safety-net behaviour.
             </summary>
         </member>
         <member name="P:TigerCS.Application.Modules.GenesysIntegration.GenesysOptions.CustomerInactivityTimeout">
@@ -8300,6 +8671,19 @@
         </member>
         <member name="T:TigerCS.Application.Modules.GenesysIntegration.Services.ChatbotInactivityCloseAppService">
              <summary>
+             <b>Two rules, never both on one ticket.</b>
+             <list type="bullet">
+             <item><b>Website/Chatbot (current):</b> a ticket whose Genesys chat conversation is tracked
+             (<see cref="P:TigerCS.Domain.Modules.Ticketing.TicketInteraction.LastCustomerInteractionAtUtc"/>) closes when the customer has done nothing for more than
+             <see cref="P:TigerCS.Application.Modules.GenesysIntegration.GenesysOptions.CustomerInactivityTimeout"/> (default 10 minutes) <i>since their last interaction</i> — never since
+             ticket creation. Each customer message restarts it. Reason: <see cref="M:TigerCS.Application.Modules.GenesysIntegration.Services.ChatbotInactivityCloseAppService.CustomerInactiveReasonFor(System.Int32)"/>.</item>
+             <item><b>Bot-prompt (original):</b> for everything that rule does not track (voice, Call Center, rows from before it), the
+             chatbot waited more than <see cref="P:TigerCS.Application.Modules.GenesysIntegration.GenesysOptions.AwaitingReplyTimeout"/> (5) for an answer. Unchanged.</item>
+             </list>
+             Call Center tickets (originating or current department) and human-managed tickets (owner, handler, open handoff) are never closed by the
+             first rule; a candidate found to be out of scope simply stops being tracked. A ticket already closed — e.g. by document delivery — is
+             never touched again.
+            
              Closes a ticket whose chatbot has been waiting on the customer for longer
              than the configured time (<see cref="P:TigerCS.Application.Modules.GenesysIntegration.GenesysOptions.CustomerInactivityTimeout"/>,
              default 5 minutes). Driven by a recurring server-side job — never by a
@@ -8340,8 +8724,21 @@
              </para>
              </summary>
         </member>
-        <member name="M:TigerCS.Application.Modules.GenesysIntegration.Services.ChatbotInactivityCloseAppService.#ctor(TigerCS.Application.Modules.GenesysIntegration.GenesysOptions,TigerCS.Application.Modules.GenesysIntegration.Abstractions.IGenesysConversationRepository,TigerCS.Application.Modules.Ticketing.Abstractions.ITicketRepository,TigerCS.Application.Modules.Ticketing.Abstractions.ITicketAgentHandoffRepository,TigerCS.Application.Modules.Ticketing.Services.TicketLifecycleAppService,TigerCS.Application.Modules.Ticketing.Abstractions.ITicketingUnitOfWork,System.TimeProvider)">
+        <member name="M:TigerCS.Application.Modules.GenesysIntegration.Services.ChatbotInactivityCloseAppService.#ctor(TigerCS.Application.Modules.GenesysIntegration.GenesysOptions,TigerCS.Application.Modules.GenesysIntegration.Abstractions.IGenesysConversationRepository,TigerCS.Application.Modules.Ticketing.Abstractions.ITicketRepository,TigerCS.Application.Modules.Ticketing.Abstractions.ITicketAgentHandoffRepository,TigerCS.Application.Modules.IdentityAndAccess.Abstractions.IDepartmentRepository,TigerCS.Application.Modules.Ticketing.Services.TicketLifecycleAppService,TigerCS.Application.Modules.Ticketing.Abstractions.ITicketingUnitOfWork,System.TimeProvider)">
              <summary>
+             <b>Two rules, never both on one ticket.</b>
+             <list type="bullet">
+             <item><b>Website/Chatbot (current):</b> a ticket whose Genesys chat conversation is tracked
+             (<see cref="P:TigerCS.Domain.Modules.Ticketing.TicketInteraction.LastCustomerInteractionAtUtc"/>) closes when the customer has done nothing for more than
+             <see cref="P:TigerCS.Application.Modules.GenesysIntegration.GenesysOptions.CustomerInactivityTimeout"/> (default 10 minutes) <i>since their last interaction</i> — never since
+             ticket creation. Each customer message restarts it. Reason: <see cref="M:TigerCS.Application.Modules.GenesysIntegration.Services.ChatbotInactivityCloseAppService.CustomerInactiveReasonFor(System.Int32)"/>.</item>
+             <item><b>Bot-prompt (original):</b> for everything that rule does not track (voice, Call Center, rows from before it), the
+             chatbot waited more than <see cref="P:TigerCS.Application.Modules.GenesysIntegration.GenesysOptions.AwaitingReplyTimeout"/> (5) for an answer. Unchanged.</item>
+             </list>
+             Call Center tickets (originating or current department) and human-managed tickets (owner, handler, open handoff) are never closed by the
+             first rule; a candidate found to be out of scope simply stops being tracked. A ticket already closed — e.g. by document delivery — is
+             never touched again.
+            
              Closes a ticket whose chatbot has been waiting on the customer for longer
              than the configured time (<see cref="P:TigerCS.Application.Modules.GenesysIntegration.GenesysOptions.CustomerInactivityTimeout"/>,
              default 5 minutes). Driven by a recurring server-side job — never by a
@@ -8388,8 +8785,14 @@
         <member name="M:TigerCS.Application.Modules.GenesysIntegration.Services.ChatbotInactivityCloseAppService.ReasonFor(System.Int32)">
             <summary>The audit/resolution reason, with the configured minutes (5 by default).</summary>
         </member>
+        <member name="M:TigerCS.Application.Modules.GenesysIntegration.Services.ChatbotInactivityCloseAppService.CustomerInactiveReasonFor(System.Int32)">
+            <summary>The closure reason of the Website/Chatbot rule, with the configured minutes (10 by default).</summary>
+        </member>
         <member name="M:TigerCS.Application.Modules.GenesysIntegration.Services.ChatbotInactivityCloseAppService.ListDueAsync(System.Threading.CancellationToken)">
-            <summary>Ids of interactions whose timer is already past the timeout — candidates only; each is re-checked by <see cref="M:TigerCS.Application.Modules.GenesysIntegration.Services.ChatbotInactivityCloseAppService.TryCloseAsync(System.Int64,System.Threading.CancellationToken)"/>.</summary>
+            <summary>Ids of interactions past either timeout — candidates only; each is re-checked by <see cref="M:TigerCS.Application.Modules.GenesysIntegration.Services.ChatbotInactivityCloseAppService.TryCloseAsync(System.Int64,System.Threading.CancellationToken)"/>.</summary>
+        </member>
+        <member name="T:TigerCS.Application.Modules.GenesysIntegration.Services.CustomerInactivityScope">
+            <summary>Who the Website/Chatbot "customer inactive" rule applies to: never a Call Center ticket (by the department it originated in or sits in now).</summary>
         </member>
         <member name="T:TigerCS.Application.Modules.GenesysIntegration.Services.GenesysAgentContextAppService">
              <summary>
@@ -8693,19 +9096,15 @@
              </para>
             
              <para>
-             <b>An AI conversation that ends with nobody waiting on it is an orphaned
-             ticket, so this service will not allow one.</b> When the conversation had
-             virtual-agent activity, no human ever handled it, and no pending human
-             work is outstanding, ending it raises a
-             <see cref="F:TigerCS.Domain.Modules.Ticketing.AgentHandoffStatus.WaitingForAgent"/> handoff with
-             <see cref="F:TigerCS.Domain.Modules.Ticketing.HandoffTrigger.AiConnectionLost"/> — in the same transaction as
-             the ending, so the work and the transcript commit together or not at all.
-             Genesys <i>should</i> say <c>Handoff.Required = true</c> itself, and when
-             it does this adds nothing (the outstanding-work check sees it); this is the
-             safety net for the terse end event that says only "the conversation
-             finished". Raising work is all it does: the ticket is not resolved, not
-             closed, not re-statused, not re-owned, and keeps the same TicketId and
-             conversation id it always had.
+             <b>Ending a conversation is not a request for a human.</b> The AI finishing,
+             the customer leaving, a closed browser tab and a dropped connection all end
+             a conversation, and none of them says a person is needed — so by default no
+             handoff is raised here. Human work exists only when Genesys signals it
+             explicitly (<c>handoff.required = true</c>). The previous "safety net"
+             that raised an <see cref="F:TigerCS.Domain.Modules.Ticketing.HandoffTrigger.AiConnectionLost"/> handoff for any
+             AI conversation ended without a human is kept behind
+             <c>Genesys:AutoRaiseHandoffOnConversationEnd</c> (default off) as a rollback
+             lever; see <see cref="M:TigerCS.Application.Modules.GenesysIntegration.Services.GenesysConversationEndAppService.TryAutoRaiseHandoffAsync(System.Guid,TigerCS.Domain.Modules.Ticketing.TicketInteraction,TigerCS.Domain.Modules.Ticketing.Ticket,System.Collections.Generic.IReadOnlyList{TigerCS.Domain.Modules.Ticketing.TicketInteractionMessage},System.DateTime,System.Threading.CancellationToken)"/> for its conditions.
              </para>
              </summary>
         </member>
@@ -8749,21 +9148,38 @@
              </para>
             
              <para>
-             <b>An AI conversation that ends with nobody waiting on it is an orphaned
-             ticket, so this service will not allow one.</b> When the conversation had
-             virtual-agent activity, no human ever handled it, and no pending human
-             work is outstanding, ending it raises a
-             <see cref="F:TigerCS.Domain.Modules.Ticketing.AgentHandoffStatus.WaitingForAgent"/> handoff with
-             <see cref="F:TigerCS.Domain.Modules.Ticketing.HandoffTrigger.AiConnectionLost"/> — in the same transaction as
-             the ending, so the work and the transcript commit together or not at all.
-             Genesys <i>should</i> say <c>Handoff.Required = true</c> itself, and when
-             it does this adds nothing (the outstanding-work check sees it); this is the
-             safety net for the terse end event that says only "the conversation
-             finished". Raising work is all it does: the ticket is not resolved, not
-             closed, not re-statused, not re-owned, and keeps the same TicketId and
-             conversation id it always had.
+             <b>Ending a conversation is not a request for a human.</b> The AI finishing,
+             the customer leaving, a closed browser tab and a dropped connection all end
+             a conversation, and none of them says a person is needed — so by default no
+             handoff is raised here. Human work exists only when Genesys signals it
+             explicitly (<c>handoff.required = true</c>). The previous "safety net"
+             that raised an <see cref="F:TigerCS.Domain.Modules.Ticketing.HandoffTrigger.AiConnectionLost"/> handoff for any
+             AI conversation ended without a human is kept behind
+             <c>Genesys:AutoRaiseHandoffOnConversationEnd</c> (default off) as a rollback
+             lever; see <see cref="M:TigerCS.Application.Modules.GenesysIntegration.Services.GenesysConversationEndAppService.TryAutoRaiseHandoffAsync(System.Guid,TigerCS.Domain.Modules.Ticketing.TicketInteraction,TigerCS.Domain.Modules.Ticketing.Ticket,System.Collections.Generic.IReadOnlyList{TigerCS.Domain.Modules.Ticketing.TicketInteractionMessage},System.DateTime,System.Threading.CancellationToken)"/> for its conditions.
              </para>
              </summary>
+        </member>
+        <member name="M:TigerCS.Application.Modules.GenesysIntegration.Services.GenesysConversationEndAppService.AppendTranscriptAsync(System.Guid,System.String,System.Collections.Generic.IReadOnlyList{TigerCS.Application.Modules.GenesysIntegration.Dto.GenesysTranscriptMessageDto},System.Threading.CancellationToken)">
+             <summary>
+             Stores messages of a conversation that is still going on (or has just ended) — the incremental half of the transcript, so a human
+             who takes the interaction can read what the customer and the AI already said <i>before</i> replying.
+            
+             <para>
+             <b>Additive and idempotent.</b> Messages are only ever appended, in delivered order, and never edited or removed. A message is
+             recognised as already stored by Genesys' <c>messageId</c> when it has one, and otherwise by sender + timestamp + body; an id-bearing
+             message also matches a stored row that had no id (the same line first sent without one), so the final transcript on conversation end
+             reconciles with the incremental deliveries instead of duplicating them. A whole transcript is validated before anything is written.
+             </para>
+            
+             <para>
+             Nothing about the ticket moves: the interaction is not ended, no handoff is raised, status is untouched. Only a genuinely human line
+             can record First Response (same rule as the end event); bot lines never can.
+             </para>
+             </summary>
+        </member>
+        <member name="M:TigerCS.Application.Modules.GenesysIntegration.Services.GenesysConversationEndAppService.AppendNewMessagesAsync(TigerCS.Domain.Modules.Ticketing.TicketInteraction,System.Collections.Generic.IReadOnlyList{TigerCS.Domain.Modules.Ticketing.TicketInteractionMessage},System.Collections.Generic.IReadOnlyList{TigerCS.Application.Modules.GenesysIntegration.Services.GenesysConversationEndAppService.NormalizedMessage},System.Threading.CancellationToken)">
+            <summary>Adds every message not already stored, in delivered order, continuing the stored sequence.</summary>
         </member>
         <member name="M:TigerCS.Application.Modules.GenesysIntegration.Services.GenesysConversationEndAppService.TryRecordFirstHumanResponseAsync(System.Guid,TigerCS.Domain.Modules.Ticketing.Ticket,System.Collections.Generic.IReadOnlyList{TigerCS.Domain.Modules.Ticketing.TicketInteractionMessage},System.Threading.CancellationToken)">
              <summary>
@@ -8863,7 +9279,7 @@
              </para>
              </summary>
         </member>
-        <member name="M:TigerCS.Application.Modules.GenesysIntegration.Services.GenesysConversationEndAppService.TryNormalizeTranscript(System.Collections.Generic.IReadOnlyList{TigerCS.Application.Modules.GenesysIntegration.Dto.GenesysTranscriptMessageDto},System.Collections.Generic.IReadOnlyList{TigerCS.Application.Modules.GenesysIntegration.Services.GenesysConversationEndAppService.NormalizedMessage}@,System.String@)">
+        <member name="M:TigerCS.Application.Modules.GenesysIntegration.Services.GenesysConversationEndAppService.NormalizeExternalId(System.String)">
             <summary>
             Validates and normalizes every supplied message before a single row is
             written: an unknown sender or an empty body fails the whole request
@@ -8871,6 +9287,10 @@
             Order is the delivered order — never re-sorted by timestamp, because a
             provider clock is not guaranteed monotonic and two messages may share
             a timestamp.
+            </summary>
+            <summary>
+            The id as it is STORED (blank → none, trimmed, at most the column length), so a retry compares against what was kept: comparing the raw
+            value would never match a stored id that had to be shortened, and the retry would be stored again.
             </summary>
         </member>
         <member name="T:TigerCS.Application.Modules.GenesysIntegration.Services.GenesysCustomerLookupAppService">
@@ -9186,7 +9606,8 @@
              configured automatic assignment runs, and its SLA policy is applied to
              the running period without restarting the clock. A missing or unusable
              request type is not an error: the ticket is created with the default
-             priority and joins the human classification queue. An explicitly
+             priority, stays Unclassified and is left to the existing manual classification
+             workflow (it is not a human handoff). An explicitly
              <i>invalid</i> request type (unknown, inactive, ambiguous, cannot route) is
              refused with 422 before anything is written.
              </para>
@@ -9268,7 +9689,8 @@
              configured automatic assignment runs, and its SLA policy is applied to
              the running period without restarting the clock. A missing or unusable
              request type is not an error: the ticket is created with the default
-             priority and joins the human classification queue. An explicitly
+             priority, stays Unclassified and is left to the existing manual classification
+             workflow (it is not a human handoff). An explicitly
              <i>invalid</i> request type (unknown, inactive, ambiguous, cannot route) is
              refused with 422 before anything is written.
              </para>
@@ -9277,11 +9699,14 @@
         <member name="M:TigerCS.Application.Modules.GenesysIntegration.Services.GenesysInquiryIngestionAppService.ClassifyOrQueueAsync(System.Guid,System.Int64,System.String,TigerCS.Application.Modules.GenesysIntegration.Dto.GenesysInquiryDto,System.Threading.CancellationToken)">
             <summary>
             A request type the bot supplied (already validated before the ticket was
-            written) is applied now; a missing one leaves the ticket awaiting
-            classification in the human queue. If a validated type still cannot be
-            applied (it changed in the instant between validation and write, or a
-            concurrent update won) the ticket, which now exists, is queued for a
-            human rather than lost.
+            written) is applied now; a missing one leaves the ticket
+            <b>Unclassified</b> for the existing manual classification workflow —
+            <b>no human handoff is raised for it</b>: whether the customer needs a
+            person is Genesys' explicit signal to give (the handoff contract), never
+            something inferred from a missing field. If a validated type still cannot
+            be applied (it changed in the instant between validation and write, or a
+            concurrent update won) the ticket, which now exists, stays Unclassified
+            rather than being lost.
             </summary>
         </member>
         <member name="M:TigerCS.Application.Modules.GenesysIntegration.Services.GenesysInquiryIngestionAppService.AlreadyIngestedAsync(TigerCS.Domain.Modules.Ticketing.TicketInteraction,System.Threading.CancellationToken)">
@@ -9342,6 +9767,9 @@
         <member name="T:TigerCS.Application.Modules.GenesysIntegration.Services.GenesysAuditActions">
             <summary>The audit vocabulary of the Genesys integration, named once so no call site spells one differently.</summary>
         </member>
+        <member name="F:TigerCS.Application.Modules.GenesysIntegration.Services.GenesysAuditActions.TranscriptAppended">
+            <summary>Messages of a live conversation were stored before it ended (the incremental transcript).</summary>
+        </member>
         <member name="F:TigerCS.Application.Modules.GenesysIntegration.Services.GenesysAuditActions.RoutingChanged">
             <summary>The conversation moved to another queue or agent (a transfer, an agent connecting) — before/after carry the full routing, so the audit trail holds every queue and agent it passed through.</summary>
         </member>
@@ -9398,13 +9826,31 @@
             
              <para>
              <b>Idempotent and conservative.</b> Re-sending the request type a ticket
-             already has changes nothing; a <i>different</i> one is refused rather than
-             silently reclassifying the ticket; an invalid one is refused before any
-             write. Classification never touches the first-human-response measurement.
+             already has changes nothing; an invalid one is refused before any write.
+             Classification never touches the first-human-response measurement.
+             </para>
+            
+             <para>
+             <b>The AI may refine its own classification — until a person has worked
+             the ticket.</b> A <i>different</i> request type replaces the current one
+             (history kept: <c>RequestTypeReclassified</c> workflow event + audit entry)
+             only while <see cref="M:TigerCS.Application.Modules.GenesysIntegration.Services.GenesysRequestTypeClassificationAppService.GetReclassificationBlockAsync(TigerCS.Domain.Modules.Ticketing.Ticket,System.Threading.CancellationToken)"/> finds nothing in the way: the ticket is Open, nobody
+             classified it by hand (no Category), no human has responded or accepted the
+             interaction, and no approval was raised under the old type. Otherwise the
+             change is refused with <see cref="F:TigerCS.Application.Modules.GenesysIntegration.Dto.GenesysClassificationOutcome.RequestTypeConflict"/>
+             and the ticket is left exactly as it was.
+             </para>
+            
+             <para>
+             <b>A missing classification is not a human request.</b> A ticket without a
+             request type stays Unclassified and is picked up by the existing manual
+             classification workflow (Classify Ticket / the Unclassified filters); no
+             handoff row is written for it. Human work exists only when Genesys signals
+             it explicitly through the handoff contract.
              </para>
              </summary>
         </member>
-        <member name="M:TigerCS.Application.Modules.GenesysIntegration.Services.GenesysRequestTypeClassificationAppService.#ctor(TigerCS.Application.Modules.GenesysIntegration.GenesysOptions,TigerCS.Application.Modules.Ticketing.Abstractions.ITicketRepository,TigerCS.Application.Modules.GenesysIntegration.Abstractions.IGenesysConversationRepository,TigerCS.Application.Modules.Ticketing.Abstractions.ITicketAgentHandoffRepository,TigerCS.Application.Modules.Ticketing.Services.TicketRequestTypeRoutingService,TigerCS.Application.Modules.GenesysIntegration.Services.GenesysDefaultPriorityResolver,TigerCS.Application.Modules.GenesysIntegration.Services.GenesysAgentHandoffAppService,TigerCS.Application.Modules.Ticketing.Abstractions.ITicketingUnitOfWork,System.TimeProvider)">
+        <member name="M:TigerCS.Application.Modules.GenesysIntegration.Services.GenesysRequestTypeClassificationAppService.#ctor(TigerCS.Application.Modules.Ticketing.Abstractions.ITicketRepository,TigerCS.Application.Modules.Ticketing.Abstractions.ITicketApprovalRepository,TigerCS.Application.Modules.GenesysIntegration.Abstractions.IGenesysConversationRepository,TigerCS.Application.Modules.Ticketing.Abstractions.ITicketAgentHandoffRepository,TigerCS.Application.Modules.Ticketing.Services.TicketRequestTypeRoutingService,TigerCS.Application.Modules.GenesysIntegration.Services.GenesysDefaultPriorityResolver,TigerCS.Application.Modules.GenesysIntegration.Services.GenesysAgentHandoffAppService,TigerCS.Application.Modules.Ticketing.Abstractions.ITicketingUnitOfWork,System.TimeProvider)">
              <summary>
              The one place a Genesys-supplied request type is validated and applied to a
              ticket — at initial ingestion and when the bot identifies it later — plus
@@ -9416,14 +9862,35 @@
             
              <para>
              <b>Idempotent and conservative.</b> Re-sending the request type a ticket
-             already has changes nothing; a <i>different</i> one is refused rather than
-             silently reclassifying the ticket; an invalid one is refused before any
-             write. Classification never touches the first-human-response measurement.
+             already has changes nothing; an invalid one is refused before any write.
+             Classification never touches the first-human-response measurement.
+             </para>
+            
+             <para>
+             <b>The AI may refine its own classification — until a person has worked
+             the ticket.</b> A <i>different</i> request type replaces the current one
+             (history kept: <c>RequestTypeReclassified</c> workflow event + audit entry)
+             only while <see cref="M:TigerCS.Application.Modules.GenesysIntegration.Services.GenesysRequestTypeClassificationAppService.GetReclassificationBlockAsync(TigerCS.Domain.Modules.Ticketing.Ticket,System.Threading.CancellationToken)"/> finds nothing in the way: the ticket is Open, nobody
+             classified it by hand (no Category), no human has responded or accepted the
+             interaction, and no approval was raised under the old type. Otherwise the
+             change is refused with <see cref="F:TigerCS.Application.Modules.GenesysIntegration.Dto.GenesysClassificationOutcome.RequestTypeConflict"/>
+             and the ticket is left exactly as it was.
+             </para>
+            
+             <para>
+             <b>A missing classification is not a human request.</b> A ticket without a
+             request type stays Unclassified and is picked up by the existing manual
+             classification workflow (Classify Ticket / the Unclassified filters); no
+             handoff row is written for it. Human work exists only when Genesys signals
+             it explicitly through the handoff contract.
              </para>
              </summary>
         </member>
         <member name="F:TigerCS.Application.Modules.GenesysIntegration.Services.GenesysRequestTypeClassificationAppService.AwaitingClassificationReason">
-            <summary>The handoff reason prefix that marks human work as "this ticket is waiting to be classified" — what lets a later classification stand exactly that work down and nothing else.</summary>
+            <summary>
+            The handoff reason prefix older versions of this service wrote on human work raised only because a ticket was unclassified. New tickets
+            never get such work; the prefix is kept so a later classification still stands down any that already exists.
+            </summary>
         </member>
         <member name="M:TigerCS.Application.Modules.GenesysIntegration.Services.GenesysRequestTypeClassificationAppService.ValidateAsync(TigerCS.Application.Modules.GenesysIntegration.Dto.GenesysRequestTypeDto,System.Threading.CancellationToken)">
             <summary>
@@ -9431,12 +9898,17 @@
             ambiguous name, inactive, or one that cannot route) is a client error, never a ticket in the human queue.
             </summary>
         </member>
-        <member name="M:TigerCS.Application.Modules.GenesysIntegration.Services.GenesysRequestTypeClassificationAppService.AwaitClassificationAsync(System.Guid,System.String,System.String,System.Threading.CancellationToken)">
+        <member name="M:TigerCS.Application.Modules.GenesysIntegration.Services.GenesysRequestTypeClassificationAppService.AwaitClassification(System.String)">
             <summary>
-            The request type is missing or could not be resolved: the ticket stays
-            awaiting classification and joins the existing human follow-up queue
-            (the same pending work an agent accepts from Pending Interactions),
-            with the reason recorded on the work item.
+            The request type is missing: the ticket stays <b>Unclassified</b> and is left to the existing manual classification workflow.
+            <b>No handoff is raised</b> — a missing classification says nothing about whether the customer needs a person, and recording a
+            human request for it is what put "Waiting for agent" on conversations the bot was still handling.
+            </summary>
+        </member>
+        <member name="M:TigerCS.Application.Modules.GenesysIntegration.Services.GenesysRequestTypeClassificationAppService.GetReclassificationBlockAsync(TigerCS.Domain.Modules.Ticketing.Ticket,System.Threading.CancellationToken)">
+            <summary>
+            Why the AI may not replace this ticket's request type, or null when it may. The AI refines its own work only: once a person has
+            classified, answered, accepted or started an approval on the ticket, the classification is theirs.
             </summary>
         </member>
         <member name="T:TigerCS.Application.Modules.GenesysIntegration.Services.GenesysScreenPopAppService">
@@ -9556,7 +10028,7 @@
              </para>
              </summary>
         </member>
-        <member name="M:TigerCS.Application.Modules.GenesysIntegration.Services.GenesysTicketUpdateAppService.#ctor(TigerCS.Application.Modules.GenesysIntegration.GenesysOptions,TigerCS.Application.Modules.GenesysIntegration.Abstractions.IGenesysConversationRepository,TigerCS.Application.Modules.Ticketing.Abstractions.ITicketRepository,TigerCS.Application.Modules.Ticketing.Abstractions.ITicketAgentHandoffRepository,TigerCS.Application.Modules.Ticketing.Abstractions.ITicketingUnitOfWork,TigerCS.Application.Modules.GenesysIntegration.Services.GenesysConversationEndAppService,TigerCS.Application.Modules.GenesysIntegration.Services.GenesysAgentHandoffAppService,TigerCS.Application.Modules.GenesysIntegration.Services.GenesysAgentResolutionAppService,TigerCS.Application.Abstractions.IAuditEntryWriter,TigerCS.Application.Modules.Ticketing.Abstractions.ITicketWorkflowEventRepository,System.TimeProvider,TigerCS.Application.Modules.GenesysIntegration.Services.GenesysRequestTypeClassificationAppService)">
+        <member name="M:TigerCS.Application.Modules.GenesysIntegration.Services.GenesysTicketUpdateAppService.#ctor(TigerCS.Application.Modules.GenesysIntegration.GenesysOptions,TigerCS.Application.Modules.GenesysIntegration.Abstractions.IGenesysConversationRepository,TigerCS.Application.Modules.Ticketing.Abstractions.ITicketRepository,TigerCS.Application.Modules.IdentityAndAccess.Abstractions.IDepartmentRepository,TigerCS.Application.Modules.Ticketing.Abstractions.ITicketAgentHandoffRepository,TigerCS.Application.Modules.Ticketing.Abstractions.ITicketingUnitOfWork,TigerCS.Application.Modules.GenesysIntegration.Services.GenesysConversationEndAppService,TigerCS.Application.Modules.GenesysIntegration.Services.GenesysAgentHandoffAppService,TigerCS.Application.Modules.GenesysIntegration.Services.GenesysAgentResolutionAppService,TigerCS.Application.Abstractions.IAuditEntryWriter,TigerCS.Application.Modules.Ticketing.Abstractions.ITicketWorkflowEventRepository,System.TimeProvider,TigerCS.Application.Modules.GenesysIntegration.Services.GenesysRequestTypeClassificationAppService,TigerCS.Application.Modules.Ticketing.Services.TicketLifecycleAppService)">
              <summary>
              The one update contract Genesys consumes — a <b>facade</b> over the
              conversation-end and human-handoff services, not a reimplementation of
@@ -9600,6 +10072,25 @@
              update never leaves a half-applied conversation.
              </para>
              </summary>
+        </member>
+        <member name="F:TigerCS.Application.Modules.GenesysIntegration.Services.GenesysTicketUpdateAppService.ClosedByAiReason">
+            <summary>The exact closure reason recorded when the AI finishes the conversation.</summary>
+        </member>
+        <member name="M:TigerCS.Application.Modules.GenesysIntegration.Services.GenesysTicketUpdateAppService.ApplyClosedByAiAsync(System.Guid,TigerCS.Domain.Modules.Ticketing.Ticket,TigerCS.Domain.Modules.Ticketing.TicketInteraction,TigerCS.Application.Modules.GenesysIntegration.Dto.GenesysTicketUpdateDto,System.Threading.CancellationToken)">
+            <summary>
+            <c>closedByAi: true</c> — the Genesys AI finished the conversation. Closes through the lifecycle (Resolved → Closed, audit
+            <c>AutoCloseByAi</c>, history, notification) with the exact reason <see cref="F:TigerCS.Application.Modules.GenesysIntegration.Services.GenesysTicketUpdateAppService.ClosedByAiReason"/>, but ONLY while the AI still owns the
+            conversation: no requested/pending/connected human, no person owning the ticket, not a Call Center ticket, still open. Anything else is
+            answered with a note and changes nothing — never an error, so a retried webhook stays safe. An already-closed ticket (by a person, document
+            delivery, inactivity or an earlier AI call) is left exactly as it is: no second write and no overwritten reason.
+            </summary>
+        </member>
+        <member name="M:TigerCS.Application.Modules.GenesysIntegration.Services.GenesysTicketUpdateAppService.ApplyCustomerActivityAsync(System.Guid,TigerCS.Domain.Modules.Ticketing.Ticket,TigerCS.Domain.Modules.Ticketing.TicketInteraction,TigerCS.Application.Modules.GenesysIntegration.Dto.GenesysTicketUpdateDto,System.Threading.CancellationToken)">
+            <summary>
+            The customer did something (<c>customerActive: true</c>, or <c>awaitingCustomerReply: false</c> — "the customer replied"): restart
+            the Website/Chatbot inactivity clock from now. Recorded only for a live Website/Chatbot conversation whose ticket is still open
+            and not human-managed; otherwise it is a no-op. A repeat inside the same instant changes nothing.
+            </summary>
         </member>
         <member name="M:TigerCS.Application.Modules.GenesysIntegration.Services.GenesysTicketUpdateAppService.ApplyAwaitingCustomerReplyAsync(System.Guid,TigerCS.Domain.Modules.Ticketing.Ticket,TigerCS.Domain.Modules.Ticketing.TicketInteraction,TigerCS.Application.Modules.GenesysIntegration.Dto.GenesysTicketUpdateDto,System.Threading.CancellationToken)">
              <summary>
@@ -14102,11 +14593,12 @@
             <item><see cref="P:TigerCS.Application.Modules.Ticketing.Abstractions.TicketQuery.BacklogAge"/> — active, aged (from CreatedAtUtc to <see cref="P:TigerCS.Application.Modules.Ticketing.Abstractions.TicketQuery.NowUtc"/>) into that bucket.</item>
             <item><see cref="P:TigerCS.Application.Modules.Ticketing.Abstractions.TicketQuery.PendingApprovalFor"/> — carries a current Pending approval this caller is authorized to action.</item>
             <item><see cref="P:TigerCS.Application.Modules.Ticketing.Abstractions.TicketQuery.CreatedFromUtc"/>/<see cref="P:TigerCS.Application.Modules.Ticketing.Abstractions.TicketQuery.CreatedToUtc"/> — created within [from, to).</item>
+            <item><see cref="P:TigerCS.Application.Modules.Ticketing.Abstractions.TicketQuery.Unclassified"/> — no request type has been set on the ticket.</item>
             </list>
             <see cref="P:TigerCS.Application.Modules.Ticketing.Abstractions.TicketQuery.NowUtc"/> is the evaluation instant for the time-relative filters — supplied by the application service, never read from the clock inside the repository.
             </remarks>
         </member>
-        <member name="M:TigerCS.Application.Modules.Ticketing.Abstractions.TicketQuery.#ctor(System.Collections.Generic.IReadOnlyCollection{System.Int32},System.Nullable{System.Int32},System.Nullable{System.Int32},System.Nullable{System.Byte},System.Nullable{TigerCS.Domain.Modules.Ticketing.TicketStatus},System.Nullable{TigerCS.Domain.Modules.Ticketing.CrmVerificationStatus},System.Nullable{System.Guid},System.String,TigerCS.Application.Modules.Ticketing.Abstractions.TicketSortBy,System.Boolean,System.Int32,System.Int32,System.Nullable{System.Byte},System.Nullable{System.Int32},System.Boolean,System.Boolean,System.Boolean,System.Boolean,System.Nullable{TigerCS.Application.Modules.Ticketing.Abstractions.BacklogAgeBucket},TigerCS.Application.Modules.Ticketing.Abstractions.ApprovalApproverScope,System.Nullable{System.DateTime},System.Nullable{System.DateTime},System.Nullable{System.DateTime})">
+        <member name="M:TigerCS.Application.Modules.Ticketing.Abstractions.TicketQuery.#ctor(System.Collections.Generic.IReadOnlyCollection{System.Int32},System.Nullable{System.Int32},System.Nullable{System.Int32},System.Nullable{System.Byte},System.Nullable{TigerCS.Domain.Modules.Ticketing.TicketStatus},System.Nullable{TigerCS.Domain.Modules.Ticketing.CrmVerificationStatus},System.Nullable{System.Guid},System.String,TigerCS.Application.Modules.Ticketing.Abstractions.TicketSortBy,System.Boolean,System.Int32,System.Int32,System.Nullable{System.Byte},System.Nullable{System.Int32},System.Boolean,System.Boolean,System.Boolean,System.Boolean,System.Nullable{TigerCS.Application.Modules.Ticketing.Abstractions.BacklogAgeBucket},TigerCS.Application.Modules.Ticketing.Abstractions.ApprovalApproverScope,System.Nullable{System.DateTime},System.Nullable{System.DateTime},System.Nullable{System.DateTime},System.Boolean)">
             <summary>
             Server-computed query for the ticket queue (MVP-API-Contracts.md §3.2).
             <see cref="P:TigerCS.Application.Modules.Ticketing.Abstractions.TicketQuery.VisibleDepartmentIds"/> is never client-supplied — the
@@ -14128,6 +14620,7 @@
             <item><see cref="P:TigerCS.Application.Modules.Ticketing.Abstractions.TicketQuery.BacklogAge"/> — active, aged (from CreatedAtUtc to <see cref="P:TigerCS.Application.Modules.Ticketing.Abstractions.TicketQuery.NowUtc"/>) into that bucket.</item>
             <item><see cref="P:TigerCS.Application.Modules.Ticketing.Abstractions.TicketQuery.PendingApprovalFor"/> — carries a current Pending approval this caller is authorized to action.</item>
             <item><see cref="P:TigerCS.Application.Modules.Ticketing.Abstractions.TicketQuery.CreatedFromUtc"/>/<see cref="P:TigerCS.Application.Modules.Ticketing.Abstractions.TicketQuery.CreatedToUtc"/> — created within [from, to).</item>
+            <item><see cref="P:TigerCS.Application.Modules.Ticketing.Abstractions.TicketQuery.Unclassified"/> — no request type has been set on the ticket.</item>
             </list>
             <see cref="P:TigerCS.Application.Modules.Ticketing.Abstractions.TicketQuery.NowUtc"/> is the evaluation instant for the time-relative filters — supplied by the application service, never read from the clock inside the repository.
             </remarks>
@@ -16783,8 +17276,9 @@
             <param name="Status">"Ended" once an end was recorded, otherwise "Active" — the INTERACTION's own lifecycle, which is independent of the ticket's status.</param>
             <param name="Messages">The transcript, in order. Empty for a voice call, and for a chat with nothing recorded.</param>
             <param name="Handoff">The pending human work raised from this interaction, when there is any — so an agent opening the ticket sees <b>why</b> a human was asked for and where that work stands, beside the transcript that led to it. Null when this interaction never needed a human.</param>
+            <param name="HandlingState">Who is handling a Genesys interaction right now: "Ai" (the virtual agent is the only participant), "WaitingForHuman" (a human was explicitly requested and nobody has taken it) or "Human" (a person took it, spoke, or — on the phone — answered). Null for an interaction Ticketing created itself. Independent of the ticket's status and of whether the interaction has ended.</param>
         </member>
-        <member name="M:TigerCS.Application.Modules.Ticketing.Dto.TicketInteractionDto.#ctor(System.Int64,System.Boolean,System.String,System.Byte,System.String,System.String,System.String,System.String,System.String,System.String,System.String,System.String,System.String,System.String,System.DateTime,System.Nullable{System.DateTime},System.String,System.String,System.Collections.Generic.IReadOnlyList{TigerCS.Application.Modules.Ticketing.Dto.TicketInteractionMessageDto},TigerCS.Application.Modules.Ticketing.Dto.AgentHandoffSummaryDto)">
+        <member name="M:TigerCS.Application.Modules.Ticketing.Dto.TicketInteractionDto.#ctor(System.Int64,System.Boolean,System.String,System.Byte,System.String,System.String,System.String,System.String,System.String,System.String,System.String,System.String,System.String,System.String,System.DateTime,System.Nullable{System.DateTime},System.String,System.String,System.Collections.Generic.IReadOnlyList{TigerCS.Application.Modules.Ticketing.Dto.TicketInteractionMessageDto},TigerCS.Application.Modules.Ticketing.Dto.AgentHandoffSummaryDto,System.String)">
             <summary>
             One interaction of a ticket's conversation history — the call or chat
             itself plus, for text channels, its full transcript. Ordered
@@ -16810,6 +17304,7 @@
             <param name="Status">"Ended" once an end was recorded, otherwise "Active" — the INTERACTION's own lifecycle, which is independent of the ticket's status.</param>
             <param name="Messages">The transcript, in order. Empty for a voice call, and for a chat with nothing recorded.</param>
             <param name="Handoff">The pending human work raised from this interaction, when there is any — so an agent opening the ticket sees <b>why</b> a human was asked for and where that work stands, beside the transcript that led to it. Null when this interaction never needed a human.</param>
+            <param name="HandlingState">Who is handling a Genesys interaction right now: "Ai" (the virtual agent is the only participant), "WaitingForHuman" (a human was explicitly requested and nobody has taken it) or "Human" (a person took it, spoke, or — on the phone — answered). Null for an interaction Ticketing created itself. Independent of the ticket's status and of whether the interaction has ended.</param>
         </member>
         <member name="P:TigerCS.Application.Modules.Ticketing.Dto.TicketInteractionDto.TicketInteractionId">
             <summary>The interaction.</summary>
@@ -16871,6 +17366,9 @@
         <member name="P:TigerCS.Application.Modules.Ticketing.Dto.TicketInteractionDto.Handoff">
             <summary>The pending human work raised from this interaction, when there is any — so an agent opening the ticket sees <b>why</b> a human was asked for and where that work stands, beside the transcript that led to it. Null when this interaction never needed a human.</summary>
         </member>
+        <member name="P:TigerCS.Application.Modules.Ticketing.Dto.TicketInteractionDto.HandlingState">
+            <summary>Who is handling a Genesys interaction right now: "Ai" (the virtual agent is the only participant), "WaitingForHuman" (a human was explicitly requested and nobody has taken it) or "Human" (a person took it, spoke, or — on the phone — answered). Null for an interaction Ticketing created itself. Independent of the ticket's status and of whether the interaction has ended.</summary>
+        </member>
         <member name="T:TigerCS.Application.Modules.Ticketing.Dto.AgentHandoffSummaryDto">
             <summary>
             The pending-human-work summary shown inside Ticket Details' Conversation
@@ -16886,8 +17384,9 @@
             <param name="GenesysAgentId">Genesys' own agent identifier, when supplied.</param>
             <param name="ResolvedAtUtc">When the work stopped being outstanding. Null while still pending.</param>
             <param name="ResolutionNote">What was recorded on finishing, or the required reason for cancelling.</param>
+            <param name="Trigger">Who/what initiated the request, as Genesys stated it: CustomerRequestedHuman, AiEscalated, RoutingDecision (business rule), AiConnectionLost or AgentTransfer. Null when Genesys did not state it — shown as "not stated", never guessed.</param>
         </member>
-        <member name="M:TigerCS.Application.Modules.Ticketing.Dto.AgentHandoffSummaryDto.#ctor(System.Int64,System.String,System.String,System.String,System.DateTime,System.Nullable{System.Guid},System.String,System.Nullable{System.DateTime},System.String)">
+        <member name="M:TigerCS.Application.Modules.Ticketing.Dto.AgentHandoffSummaryDto.#ctor(System.Int64,System.String,System.String,System.String,System.DateTime,System.Nullable{System.Guid},System.String,System.Nullable{System.DateTime},System.String,System.String)">
             <summary>
             The pending-human-work summary shown inside Ticket Details' Conversation
             History. A compact view of <c>TicketAgentHandoff</c>: the work item's own
@@ -16902,6 +17401,7 @@
             <param name="GenesysAgentId">Genesys' own agent identifier, when supplied.</param>
             <param name="ResolvedAtUtc">When the work stopped being outstanding. Null while still pending.</param>
             <param name="ResolutionNote">What was recorded on finishing, or the required reason for cancelling.</param>
+            <param name="Trigger">Who/what initiated the request, as Genesys stated it: CustomerRequestedHuman, AiEscalated, RoutingDecision (business rule), AiConnectionLost or AgentTransfer. Null when Genesys did not state it — shown as "not stated", never guessed.</param>
         </member>
         <member name="P:TigerCS.Application.Modules.Ticketing.Dto.AgentHandoffSummaryDto.TicketAgentHandoffId">
             <summary>The work item.</summary>
@@ -16929,6 +17429,9 @@
         </member>
         <member name="P:TigerCS.Application.Modules.Ticketing.Dto.AgentHandoffSummaryDto.ResolutionNote">
             <summary>What was recorded on finishing, or the required reason for cancelling.</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.Ticketing.Dto.AgentHandoffSummaryDto.Trigger">
+            <summary>Who/what initiated the request, as Genesys stated it: CustomerRequestedHuman, AiEscalated, RoutingDecision (business rule), AiConnectionLost or AgentTransfer. Null when Genesys did not state it — shown as "not stated", never guessed.</summary>
         </member>
         <member name="T:TigerCS.Application.Modules.Ticketing.Dto.TicketInteractionHistoryDto">
             <summary>
@@ -17060,8 +17563,9 @@
             <param name="PendingApproval">True: only tickets carrying a Pending approval the caller is authorized to action.</param>
             <param name="CreatedFrom">Only tickets created on or after this UTC calendar day.</param>
             <param name="CreatedTo">Only tickets created on or before this UTC calendar day.</param>
+            <param name="Unclassified">True: only tickets with no request type (nobody — human or Genesys AI — has classified them yet). A filter on the ticket queue only: it never implies, requests or creates a human handoff, and department visibility applies exactly as for every other filter.</param>
         </member>
-        <member name="M:TigerCS.Application.Modules.Ticketing.Dto.TicketListRequestDto.#ctor(System.Nullable{System.Int32},System.Nullable{System.Int32},System.Nullable{System.Byte},System.String,System.String,System.Nullable{System.Guid},System.String,System.String,System.String,System.Int32,System.Int32,System.Nullable{System.Byte},System.Nullable{System.Int32},System.Nullable{System.Boolean},System.Nullable{System.Boolean},System.Nullable{System.Boolean},System.Nullable{System.Boolean},System.String,System.Nullable{System.Boolean},System.Nullable{System.DateOnly},System.Nullable{System.DateOnly})">
+        <member name="M:TigerCS.Application.Modules.Ticketing.Dto.TicketListRequestDto.#ctor(System.Nullable{System.Int32},System.Nullable{System.Int32},System.Nullable{System.Byte},System.String,System.String,System.Nullable{System.Guid},System.String,System.String,System.String,System.Int32,System.Int32,System.Nullable{System.Byte},System.Nullable{System.Int32},System.Nullable{System.Boolean},System.Nullable{System.Boolean},System.Nullable{System.Boolean},System.Nullable{System.Boolean},System.String,System.Nullable{System.Boolean},System.Nullable{System.DateOnly},System.Nullable{System.DateOnly},System.Nullable{System.Boolean})">
             <summary>Filtering, sorting, and paging for the ticket queue (MVP-API-Contracts.md §3.2). Bound from the query string; every filter is optional and combines with AND.</summary>
             <param name="DepartmentId">Narrow to one department. Cannot widen what the caller may already see.</param>
             <param name="CategoryId">Narrow to one category.</param>
@@ -17084,6 +17588,7 @@
             <param name="PendingApproval">True: only tickets carrying a Pending approval the caller is authorized to action.</param>
             <param name="CreatedFrom">Only tickets created on or after this UTC calendar day.</param>
             <param name="CreatedTo">Only tickets created on or before this UTC calendar day.</param>
+            <param name="Unclassified">True: only tickets with no request type (nobody — human or Genesys AI — has classified them yet). A filter on the ticket queue only: it never implies, requests or creates a human handoff, and department visibility applies exactly as for every other filter.</param>
         </member>
         <member name="P:TigerCS.Application.Modules.Ticketing.Dto.TicketListRequestDto.DepartmentId">
             <summary>Narrow to one department. Cannot widen what the caller may already see.</summary>
@@ -17147,6 +17652,9 @@
         </member>
         <member name="P:TigerCS.Application.Modules.Ticketing.Dto.TicketListRequestDto.CreatedTo">
             <summary>Only tickets created on or before this UTC calendar day.</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.Ticketing.Dto.TicketListRequestDto.Unclassified">
+            <summary>True: only tickets with no request type (nobody — human or Genesys AI — has classified them yet). A filter on the ticket queue only: it never implies, requests or creates a human handoff, and department visibility applies exactly as for every other filter.</summary>
         </member>
         <member name="T:TigerCS.Application.Modules.Ticketing.Dto.TicketSummaryDto">
             <summary>One row of the ticket queue (MVP-API-Contracts.md §3.2).</summary>
@@ -19427,6 +19935,16 @@
              </para>
              </summary>
         </member>
+        <member name="M:TigerCS.Application.Modules.Ticketing.Services.TicketInteractionQueryAppService.DescribeHandlingState(TigerCS.Domain.Modules.Ticketing.TicketInteraction,System.Collections.Generic.IReadOnlyList{TigerCS.Domain.Modules.Ticketing.TicketInteractionMessage},TigerCS.Domain.Modules.Ticketing.TicketAgentHandoff)">
+            <summary>
+            Who is handling the interaction, from facts only: a person took the
+            requested work, a person's line is in the transcript, a Ticketing user is
+            recorded as handler, or — on the phone, where a person always answers —
+            Genesys named an agent. A conversation with no human signal is the AI's,
+            and an outstanding explicit handoff request reads as "waiting", never as
+            a human being present.
+            </summary>
+        </member>
         <member name="T:TigerCS.Application.Modules.Ticketing.Services.TicketLifecycleAppService">
             <summary>
             Core ticket lifecycle: status change (§3.7), resolve (§3.9), close
@@ -19544,6 +20062,24 @@
              a reply that raced the close into a rolled-back, no-op result.
              </para>
              </summary>
+        </member>
+        <member name="M:TigerCS.Application.Modules.Ticketing.Services.TicketLifecycleAppService.CloseForDocumentDeliveryAsync(System.Guid,System.Int64,TigerCS.Domain.Modules.Ticketing.ResolutionOutcome,System.String,System.String,System.Threading.CancellationToken)">
+            <summary>
+            Closes the ticket behind a Genesys document request once its delivery workflow has ended: Resolved → Closed in one
+            transaction, as a system action by the integration account. A delivered document closes as <see cref="F:TigerCS.Domain.Modules.Ticketing.ResolutionOutcome.Resolved"/>
+            (customer is told it was resolved and closed); a failed one as <see cref="F:TigerCS.Domain.Modules.Ticketing.ResolutionOutcome.Cancelled"/> with the distinct
+            failure <paramref name="reason"/> (only <c>TicketClosed</c> is sent — "resolved" would be false). The reason and the
+            delivery <paramref name="detail"/> (document type, code, timestamp) are written to the status history and the audit entry.
+            A ticket that is already Closed (or not closable) is a no-op: nothing is written twice.
+            </summary>
+        </member>
+        <member name="M:TigerCS.Application.Modules.Ticketing.Services.TicketLifecycleAppService.CloseForAiCompletionAsync(System.Guid,System.Int64,System.String,System.String,System.Action{System.DateTime},System.Threading.CancellationToken)">
+            <summary>
+            Closes the ticket when the Genesys AI reports it finished the conversation: the same Resolved → Closed system closure as document
+            delivery, outcome Resolved, with the exact <paramref name="reason"/> the caller supplies ("Closed by AI"). A ticket a person owns, or
+            one already closed (by anyone, for any reason), is left exactly as it is — nothing is overwritten or written twice.
+            <paramref name="beforeCommit"/> runs before the single SaveChanges so the caller's own change commits or rolls back with the closure.
+            </summary>
         </member>
         <member name="M:TigerCS.Application.Modules.Ticketing.Services.TicketLifecycleAppService.EnqueueLifecycleEventAsync(System.String,System.Int32,TigerCS.Domain.Modules.Ticketing.Ticket,System.Guid,System.Guid,System.DateTime,System.Threading.CancellationToken)">
             <summary>
@@ -19731,7 +20267,7 @@
              </para>
              </summary>
         </member>
-        <member name="M:TigerCS.Application.Modules.Ticketing.Services.TicketRequestTypeRoutingService.#ctor(TigerCS.Application.Modules.WorkflowConfiguration.Abstractions.IRequestTypeRepository,TigerCS.Application.Modules.WorkflowConfiguration.Abstractions.IWorkflowTemplateRepository,TigerCS.Application.Modules.IdentityAndAccess.Abstractions.IDepartmentRepository,TigerCS.Application.Modules.Ticketing.Services.TicketAutoAssignmentService,TigerCS.Application.Modules.SlaAndEscalation.Services.SlaDueDateService,TigerCS.Application.Modules.Ticketing.Abstractions.ITicketStatusHistoryRepository,TigerCS.Application.Abstractions.IAuditEntryWriter)">
+        <member name="M:TigerCS.Application.Modules.Ticketing.Services.TicketRequestTypeRoutingService.#ctor(TigerCS.Application.Modules.WorkflowConfiguration.Abstractions.IRequestTypeRepository,TigerCS.Application.Modules.WorkflowConfiguration.Abstractions.IWorkflowTemplateRepository,TigerCS.Application.Modules.IdentityAndAccess.Abstractions.IDepartmentRepository,TigerCS.Application.Modules.Ticketing.Services.TicketAutoAssignmentService,TigerCS.Application.Modules.SlaAndEscalation.Services.SlaDueDateService,TigerCS.Application.Modules.Ticketing.Abstractions.ITicketStatusHistoryRepository,TigerCS.Application.Abstractions.IAuditEntryWriter,TigerCS.Application.Modules.Ticketing.Abstractions.ITicketWorkflowEventRepository)">
              <summary>
              Classifies a request type onto an existing ticket and applies everything
              the request type configures, in the caller's transaction: its workflow
@@ -19769,18 +20305,28 @@
         <member name="M:TigerCS.Application.Modules.Ticketing.Services.TicketRequestTypeRoutingService.ResolveAsync(System.Nullable{System.Int32},System.String,System.Threading.CancellationToken)">
             <summary>Resolves a request type by id (preferred) or by exact name, and validates that it can govern a ticket.</summary>
         </member>
-        <member name="M:TigerCS.Application.Modules.Ticketing.Services.TicketRequestTypeRoutingService.ApplyAsync(TigerCS.Domain.Modules.Ticketing.Ticket,TigerCS.Application.Modules.Ticketing.Services.RequestTypeResolution,System.Guid,System.String,TigerCS.Domain.Modules.SlaAndEscalation.Priority,System.DateTime,System.Guid,System.Threading.CancellationToken)">
-            <summary>
-            Applies a <b>valid</b> resolution to a ticket that has no request type
-            yet. Throws <see cref="T:TigerCS.Domain.Modules.Ticketing.TicketRequestTypeAlreadySetException"/> (domain
-            guard) when one is set — the caller decides idempotency before calling.
-            </summary>
-            <remarks>
-            <c>defaultPriority</c> is for a ticket that predates default priorities
-            (no priority, no SLA period): it gets the default so it can be measured
-            at all, and its clock starts now — nothing is backdated. It is ignored
-            for a ticket that already has a priority.
-            </remarks>
+        <member name="M:TigerCS.Application.Modules.Ticketing.Services.TicketRequestTypeRoutingService.ApplyAsync(TigerCS.Domain.Modules.Ticketing.Ticket,TigerCS.Application.Modules.Ticketing.Services.RequestTypeResolution,System.Guid,System.String,TigerCS.Domain.Modules.SlaAndEscalation.Priority,System.DateTime,System.Guid,System.Threading.CancellationToken,System.Boolean)">
+             <summary>
+             Applies a <b>valid</b> resolution to a ticket that has no request type
+             yet. Throws <see cref="T:TigerCS.Domain.Modules.Ticketing.TicketRequestTypeAlreadySetException"/> (domain
+             guard) when one is set — the caller decides idempotency before calling.
+            
+             <para>
+             <c>reclassify: true</c> is the one exception: it replaces the request
+             type (and pinned workflow version) of an already-classified ticket. The
+             caller owns the decision that this is allowed; everything else —
+             transfer semantics, automatic assignment, SLA re-policy without a
+             clock restart — is the same code path, and the previous classification
+             is kept as an append-only <see cref="F:TigerCS.Domain.Modules.Ticketing.WorkflowEventType.RequestTypeReclassified"/>
+             event plus a <c>ReclassifyRequestType</c> audit entry.
+             </para>
+             </summary>
+             <remarks>
+             <c>defaultPriority</c> is for a ticket that predates default priorities
+             (no priority, no SLA period): it gets the default so it can be measured
+             at all, and its clock starts now — nothing is backdated. It is ignored
+             for a ticket that already has a priority.
+             </remarks>
         </member>
         <member name="T:TigerCS.Application.Modules.Ticketing.Services.TicketRoleSets">
              <summary>
