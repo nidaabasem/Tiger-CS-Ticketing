@@ -40,12 +40,12 @@ public sealed class CustomerNotificationOptions
         /// <summary>Absolute logo URL. Blank uses <c>{PublicBaseUrl}/img/tiger-logo.png</c>, which the Ticketing web site serves.</summary>
         public string? LogoUrl { get; set; }
 
-        public string? WebsiteUrl { get; set; } = "https://tigergroup.ae";
+        public string? WebsiteUrl { get; set; } = "https://www.tigergroup.ae";
 
-        /// <summary>Customer-service mailbox shown in the footer; blank omits the line.</summary>
+        /// <summary>Customer-service mailbox shown in the footer; blank uses the default (contact@tigergroup.com).</summary>
         public string? ContactEmail { get; set; }
 
-        /// <summary>Customer-service phone number shown in the footer; blank omits the line.</summary>
+        /// <summary>Customer-service phone number shown in the footer; blank uses the default (800 300 300).</summary>
         public string? ContactPhone { get; set; }
     }
 

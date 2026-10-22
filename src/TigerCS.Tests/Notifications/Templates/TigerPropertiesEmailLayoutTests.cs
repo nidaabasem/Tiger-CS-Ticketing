@@ -61,12 +61,67 @@ public class TigerPropertiesEmailLayoutTests
     {
         var html = CustomerEmailTemplates.TicketResolved(Model()).HtmlBody;
 
-        Assert.Contains("border:2px solid #C1A562", html, StringComparison.Ordinal);
+        Assert.Contains("border:1px solid #C1A562", html, StringComparison.Ordinal);
         Assert.Contains("background-color:#ffffff", html, StringComparison.Ordinal);
         Assert.Contains("href=\"https://tigergroup.ae\"", html, StringComparison.Ordinal);
         Assert.Contains("mailto:care@example.com", html, StringComparison.Ordinal);
         Assert.Contains("+971 4 000 0000", html, StringComparison.Ordinal);
         Assert.Contains("Please do not reply", html, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ApprovedDesign_WhiteThroughout_ThinGoldBorder_GreyHeaderDivider_NoDecoration(bool closed)
+    {
+        var html = (closed ? CustomerEmailTemplates.TicketClosed(Model()) : CustomerEmailTemplates.TicketResolved(Model())).HtmlBody;
+
+        // Every background colour is white; nothing tinted, gradient, image or shadow.
+        var backgrounds = Regex.Matches(html, @"background-color:\s*(#[0-9a-fA-F]{3,6})").Select(m => m.Groups[1].Value.ToLowerInvariant()).Distinct().ToList();
+        Assert.Equal(["#ffffff"], backgrounds);
+        Assert.DoesNotContain("gradient", html, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("box-shadow", html, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("text-shadow", html, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("background-image", html, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("border-radius", html, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("border:2px", html, StringComparison.Ordinal);
+        Assert.DoesNotContain("border:3px", html, StringComparison.Ordinal);
+        Assert.DoesNotContain("border-bottom:3px", html, StringComparison.Ordinal);
+
+        // Thin gold outer border; thin light-grey divider directly under the header (the logo cell).
+        Assert.Matches(@"max-width:650px;background-color:#ffffff;border:1px solid #C1A562", html);
+        Assert.Matches(@"<td align=""center"" style=""padding:[^""]*border-bottom:1px solid #e5e5e5;[^""]*""[^>]*><img ", html);
+    }
+
+    [Fact]
+    public void Footer_DefaultBranding_HasTeamPhoneWebsiteAndContactEmail()
+    {
+        // No branding in the model: the shared defaults carry the approved footer.
+        var model = Model() with { Branding = null };
+        foreach (var content in new[] { CustomerEmailTemplates.TicketResolved(model), CustomerEmailTemplates.TicketClosed(model) })
+        {
+            var html = content.HtmlBody;
+            var footer = html[html.LastIndexOf("border-top:1px solid #e5e5e5;padding:20px", StringComparison.Ordinal)..];
+            Assert.Contains("Tiger Customer Service Team", footer, StringComparison.Ordinal);
+            Assert.Contains("800 300 300", footer, StringComparison.Ordinal);
+            Assert.Contains("href=\"https://www.tigergroup.ae\"", footer, StringComparison.Ordinal);
+            Assert.Contains(">www.tigergroup.ae<", footer, StringComparison.Ordinal);
+            Assert.Contains("href=\"mailto:contact@tigergroup.com\"", footer, StringComparison.Ordinal);
+            Assert.Contains("Tiger Customer Service Team", content.TextBody, StringComparison.Ordinal);
+            Assert.Contains("800 300 300", content.TextBody, StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
+    public void ConfiguredPolicy_BlankBranding_FallsBackToTheApprovedFooterDetails()
+    {
+        var policy = new CustomerNotificationModePolicy(
+            "true", "t@example.com", "971500000000", "https://tickets.example.com", null, new CustomerEmailBranding(null, "", "", ""));
+
+        Assert.Equal("https://www.tigergroup.ae", policy.Branding.WebsiteUrl);
+        Assert.Equal("contact@tigergroup.com", policy.Branding.ContactEmail);
+        Assert.Equal("800 300 300", policy.Branding.ContactPhone);
+        Assert.Equal("https://tickets.example.com/img/tiger-logo.png", policy.Branding.LogoUrl);
     }
 
     [Fact]

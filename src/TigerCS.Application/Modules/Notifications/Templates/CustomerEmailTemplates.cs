@@ -15,9 +15,10 @@ namespace TigerCS.Application.Modules.Notifications.Templates;
 /// <para>
 /// <b>Layout.</b> A table-based, inline-CSS design that renders in Outlook
 /// (a 650px ghost table for Word-engine clients, <c>max-width</c> for the rest),
-/// with the Tiger Properties branding: a gold (<c>#C1A562</c>) border on a white
-/// content area, the logo, and a footer with the company website and contact
-/// details. English and Arabic are both supported; Arabic renders right-to-left.
+/// with the Tiger Properties branding: a white page with a thin gold
+/// (<c>#C1A562</c>) outer border, the original logo over a thin light-grey divider,
+/// gold rating stars, and a white footer with the team, phone, website and
+/// customer-service mailbox. No gradients, shadows or coloured backgrounds. English and Arabic are both supported; Arabic renders right-to-left.
 /// There is no script, form or other interactive element — the only interaction
 /// is a link.
 /// </para>
@@ -42,7 +43,7 @@ public static class CustomerEmailTemplates
 {
     public const string BrandName = "Tiger Properties";
 
-    public const string SignatureTeam = "Tiger Properties Customer Service";
+    public const string SignatureTeam = "Tiger Customer Service Team";
 
     /// <summary>The Tiger Properties gold used for the border, the stars and the accents.</summary>
     public const string Gold = "#C1A562";
@@ -272,58 +273,58 @@ public static class CustomerEmailTemplates
           .Append("<meta name=\"color-scheme\" content=\"light only\"><meta name=\"supported-color-schemes\" content=\"light only\">")
           .Append("<!--[if mso]><xml><o:OfficeDocumentSettings><o:PixelsPerInch>96</o:PixelsPerInch></o:OfficeDocumentSettings></xml><![endif]-->")
           .Append("<title>").Append(E(title)).Append("</title></head>")
-          .Append("<body style=\"margin:0;padding:0;background-color:#f2f2f2;\" bgcolor=\"#f2f2f2\">")
-          .Append("<table role=\"presentation\" width=\"100%\" cellspacing=\"0\" cellpadding=\"0\" border=\"0\" bgcolor=\"#f2f2f2\" style=\"background-color:#f2f2f2;\">")
-          .Append("<tr><td align=\"center\" style=\"padding:24px 10px;\">")
+          .Append("<body style=\"margin:0;padding:0;background-color:#ffffff;\" bgcolor=\"#ffffff\">")
+          .Append("<table role=\"presentation\" width=\"100%\" cellspacing=\"0\" cellpadding=\"0\" border=\"0\" bgcolor=\"#ffffff\" style=\"background-color:#ffffff;\">")
+          .Append("<tr><td align=\"center\" style=\"padding:20px 10px;\">")
           .Append("<!--[if mso]><table role=\"presentation\" width=\"650\" align=\"center\" cellspacing=\"0\" cellpadding=\"0\" border=\"0\"><tr><td><![endif]-->")
           .Append("<table role=\"presentation\" width=\"100%\" cellspacing=\"0\" cellpadding=\"0\" border=\"0\" dir=\"").Append(dir)
-          .Append("\" bgcolor=\"#ffffff\" style=\"width:100%;max-width:650px;background-color:#ffffff;border:2px solid ").Append(Gold)
+          .Append("\" bgcolor=\"#ffffff\" style=\"width:100%;max-width:650px;background-color:#ffffff;border:1px solid ").Append(Gold)
           .Append(";font-family:").Append(font).Append(";\">");
 
         if (model.IsTest)
         {
-            sb.Append("<tr><td align=\"center\" bgcolor=\"#fff4d6\" style=\"background-color:#fff4d6;padding:10px 20px;font-family:Arial,Helvetica,sans-serif;font-size:12px;line-height:18px;color:#7a5b00;\">")
+            sb.Append("<tr><td align=\"center\" bgcolor=\"#ffffff\" style=\"background-color:#ffffff;padding:10px 24px;border-bottom:1px solid #e5e5e5;font-family:Arial,Helvetica,sans-serif;font-size:11px;line-height:16px;color:#8a6d1f;\">")
               .Append(E(Text.TestBanner)).Append("</td></tr>");
         }
 
         // Header: logo (or the brand name when no logo URL is configured) over a gold rule.
-        sb.Append("<tr><td align=\"center\" style=\"padding:28px 24px 18px 24px;border-bottom:3px solid ").Append(Gold).Append(";\">");
+        sb.Append("<tr><td align=\"center\" style=\"padding:26px 24px 20px 24px;border-bottom:1px solid #e5e5e5;background-color:#ffffff;\" bgcolor=\"#ffffff\">");
         if (IsHttpUrl(branding.LogoUrl))
         {
             sb.Append("<img src=\"").Append(E(branding.LogoUrl!)).Append("\" alt=\"").Append(E(BrandName))
-              .Append("\" width=\"140\" style=\"display:block;margin:0 auto;border:0;outline:none;text-decoration:none;width:140px;height:auto;\">");
+              .Append("\" width=\"110\" style=\"display:block;margin:0 auto;border:0;outline:none;text-decoration:none;width:110px;height:auto;\">");
         }
         else
         {
-            sb.Append("<span style=\"font-family:Georgia,'Times New Roman',serif;font-size:26px;font-weight:bold;letter-spacing:1px;color:").Append(Gold).Append(";\">")
+            sb.Append("<span style=\"font-family:Georgia,'Times New Roman',serif;font-size:22px;font-weight:bold;letter-spacing:1px;color:").Append(Gold).Append(";\">")
               .Append(E(BrandName)).Append("</span>");
         }
 
         sb.Append("</td></tr>");
 
         // Body.
-        sb.Append("<tr><td align=\"").Append(align).Append("\" style=\"padding:28px 32px 8px 32px;font-family:").Append(font)
-          .Append(";font-size:15px;line-height:24px;color:#1f2933;text-align:").Append(align).Append(";\">")
-          .Append("<h1 style=\"margin:0 0 18px 0;font-family:").Append(font).Append(";font-size:22px;line-height:30px;font-weight:bold;color:#1f2933;\">")
+        sb.Append("<tr><td align=\"").Append(align).Append("\" style=\"padding:26px 36px 6px 36px;font-family:").Append(font)
+          .Append(";font-size:14px;line-height:22px;color:#1f2933;text-align:").Append(align).Append(";\">")
+          .Append("<h1 style=\"margin:0 0 16px 0;font-family:").Append(font).Append(";font-size:18px;line-height:26px;font-weight:bold;color:#1f2933;\">")
           .Append(E(headline)).Append("</h1>")
-          .Append("<p style=\"margin:0 0 16px 0;\">").Append(E(greeting)).Append("</p>");
+          .Append("<p style=\"margin:0 0 14px 0;\">").Append(E(greeting)).Append("</p>");
 
         foreach (var paragraph in paragraphs)
         {
-            sb.Append("<p style=\"margin:0 0 16px 0;\">").Append(E(paragraph)).Append("</p>");
+            sb.Append("<p style=\"margin:0 0 14px 0;\">").Append(E(paragraph)).Append("</p>");
         }
 
         sb.Append("</td></tr>");
 
         // Ticket details.
-        sb.Append("<tr><td style=\"padding:4px 32px 20px 32px;\">")
-          .Append("<table role=\"presentation\" width=\"100%\" cellspacing=\"0\" cellpadding=\"0\" border=\"0\" style=\"border-top:1px solid #e4e0d3;font-size:14px;line-height:20px;\">");
+        sb.Append("<tr><td style=\"padding:4px 36px 22px 36px;\">")
+          .Append("<table role=\"presentation\" width=\"100%\" cellspacing=\"0\" cellpadding=\"0\" border=\"0\" style=\"border-top:1px solid #e5e5e5;font-size:13px;line-height:19px;\">");
         foreach (var (label, value) in details)
         {
             sb.Append("<tr><td width=\"36%\" valign=\"top\" align=\"").Append(align)
-              .Append("\" style=\"padding:10px 12px;border-bottom:1px solid #e4e0d3;color:#6b6552;text-align:").Append(align).Append(";\">")
+              .Append("\" style=\"padding:9px 10px;border-bottom:1px solid #e5e5e5;color:#6b6b6b;text-align:").Append(align).Append(";\">")
               .Append(E(label)).Append("</td><td valign=\"top\" align=\"").Append(align)
-              .Append("\" style=\"padding:10px 12px;border-bottom:1px solid #e4e0d3;color:#1f2933;font-weight:bold;text-align:").Append(align).Append(";\">")
+              .Append("\" style=\"padding:9px 10px;border-bottom:1px solid #e5e5e5;color:#1f2933;font-weight:bold;text-align:").Append(align).Append(";\">")
               .Append(E(value)).Append("</td></tr>");
         }
 
@@ -334,37 +335,34 @@ public static class CustomerEmailTemplates
             AppendReview(sb, t, review);
         }
 
-        // Signature.
-        sb.Append("<tr><td align=\"").Append(align).Append("\" style=\"padding:4px 32px 24px 32px;font-size:15px;line-height:24px;color:#1f2933;text-align:").Append(align).Append(";\">")
-          .Append(E(t.KindRegards)).Append("<br><strong>").Append(E(t.Signature)).Append("</strong></td></tr>");
-
-        // Footer.
-        sb.Append("<tr><td align=\"center\" bgcolor=\"#faf7ee\" style=\"background-color:#faf7ee;border-top:1px solid ").Append(Gold)
-          .Append(";padding:18px 24px;font-family:").Append(font).Append(";font-size:12px;line-height:19px;color:#6b6552;\">")
-          .Append("<div style=\"margin:0 0 6px 0;\">").Append(E(t.AutomatedNotice)).Append("</div>");
+        // Footer: white, set off by a thin light-grey divider; the team, phone, website and customer-service mailbox.
+        sb.Append("<tr><td align=\"center\" bgcolor=\"#ffffff\" style=\"background-color:#ffffff;border-top:1px solid #e5e5e5;")
+          .Append("padding:20px 24px 22px 24px;font-family:").Append(font).Append(";font-size:12px;line-height:19px;color:#6b6b6b;\">")
+          .Append("<div style=\"margin:0;\">").Append(E(t.KindRegards)).Append("</div>")
+          .Append("<div style=\"margin:0 0 4px 0;font-size:13px;font-weight:bold;color:#1f2933;\">").Append(E(t.Signature)).Append("</div>");
 
         var contact = new List<string>();
-        if (IsHttpUrl(branding.WebsiteUrl))
-        {
-            contact.Add($"<a href=\"{E(branding.WebsiteUrl)}\" style=\"color:#8a6d1f;text-decoration:underline;\">{E(DisplayHost(branding.WebsiteUrl))}</a>");
-        }
-
-        if (branding.ContactEmail is not null)
-        {
-            contact.Add($"<a href=\"mailto:{E(branding.ContactEmail)}\" style=\"color:#8a6d1f;text-decoration:underline;\">{E(branding.ContactEmail)}</a>");
-        }
-
         if (branding.ContactPhone is not null)
         {
             contact.Add($"<span dir=\"ltr\">{E(branding.ContactPhone)}</span>");
         }
 
-        if (contact.Count > 0)
+        if (IsHttpUrl(branding.WebsiteUrl))
         {
-            sb.Append("<div>").Append(string.Join(" &nbsp;|&nbsp; ", contact)).Append("</div>");
+            contact.Add($"<a href=\"{E(branding.WebsiteUrl)}\" style=\"color:#8a6d1f;text-decoration:none;\">{E(DisplayHost(branding.WebsiteUrl))}</a>");
         }
 
-        sb.Append("<div style=\"margin-top:6px;\">&copy; ").Append(E(BrandName)).Append("</div>")
+        if (branding.ContactEmail is not null)
+        {
+            contact.Add($"<a href=\"mailto:{E(branding.ContactEmail)}\" style=\"color:#8a6d1f;text-decoration:none;\">{E(branding.ContactEmail)}</a>");
+        }
+
+        if (contact.Count > 0)
+        {
+            sb.Append("<div style=\"margin:0 0 10px 0;\">").Append(string.Join(" &nbsp;|&nbsp; ", contact)).Append("</div>");
+        }
+
+        sb.Append("<div style=\"font-size:11px;line-height:17px;color:#8c8c8c;\">").Append(E(t.AutomatedNotice)).Append("</div>")
           .Append("</td></tr></table>")
           .Append("<!--[if mso]></td></tr></table><![endif]-->")
           .Append("</td></tr></table></body></html>");
@@ -374,22 +372,22 @@ public static class CustomerEmailTemplates
 
     private static void AppendReview(StringBuilder sb, Text t, ReviewInvitationLinks review)
     {
-        sb.Append("<tr><td align=\"center\" style=\"padding:8px 32px 28px 32px;\">")
-          .Append("<table role=\"presentation\" width=\"100%\" cellspacing=\"0\" cellpadding=\"0\" border=\"0\" bgcolor=\"#faf7ee\" style=\"background-color:#faf7ee;border:1px solid ").Append(Gold).Append(";\">")
-          .Append("<tr><td align=\"center\" style=\"padding:22px 20px 6px 20px;\">")
-          .Append("<div style=\"font-size:18px;line-height:26px;font-weight:bold;color:#1f2933;\">").Append(E(t.ReviewHeading)).Append("</div>")
-          .Append("<div style=\"padding-top:4px;font-size:13px;line-height:20px;color:#6b6552;\">").Append(E(t.ReviewIntro)).Append("</div>")
-          .Append("</td></tr><tr><td align=\"center\" dir=\"ltr\" style=\"padding:6px 20px 8px 20px;font-size:0;line-height:0;\">");
+        sb.Append("<tr><td align=\"center\" bgcolor=\"#ffffff\" style=\"background-color:#ffffff;padding:0 36px 24px 36px;\">")
+          .Append("<table role=\"presentation\" width=\"100%\" cellspacing=\"0\" cellpadding=\"0\" border=\"0\" bgcolor=\"#ffffff\" style=\"background-color:#ffffff;border-top:1px solid #e5e5e5;\">")
+          .Append("<tr><td align=\"center\" style=\"padding:22px 0 4px 0;\">")
+          .Append("<div style=\"font-size:15px;line-height:22px;font-weight:bold;color:#1f2933;\">").Append(E(t.ReviewHeading)).Append("</div>")
+          .Append("<div style=\"padding-top:3px;font-size:12px;line-height:18px;color:#6b6b6b;\">").Append(E(t.ReviewIntro)).Append("</div>")
+          .Append("</td></tr><tr><td align=\"center\" dir=\"ltr\" style=\"padding:8px 0 6px 0;font-size:0;line-height:0;\">");
 
         for (var rating = 1; rating <= 5; rating++)
         {
             var label = t.StarLabel(rating);
             sb.Append("<a href=\"").Append(E(review.StarUrls[rating - 1])).Append("\" title=\"").Append(E(label)).Append("\" aria-label=\"").Append(E(label))
-              .Append("\" style=\"display:inline-block;padding:0 5px;font-family:'Segoe UI Symbol',Arial,sans-serif;font-size:40px;line-height:48px;color:").Append(Gold)
+              .Append("\" style=\"display:inline-block;padding:0 4px;font-family:'Segoe UI Symbol',Arial,sans-serif;font-size:32px;line-height:40px;color:").Append(Gold)
               .Append(";text-decoration:none;\">&#9733;</a>");
         }
 
-        sb.Append("</td></tr><tr><td align=\"center\" style=\"padding:0 20px 20px 20px;font-size:13px;line-height:20px;\">")
+        sb.Append("</td></tr><tr><td align=\"center\" style=\"padding:0 0 4px 0;font-size:12px;line-height:18px;\">")
           .Append("<a href=\"").Append(E(review.PageUrl)).Append("\" style=\"color:#8a6d1f;text-decoration:underline;\">").Append(E(t.ReviewLink)).Append("</a>")
           .Append("</td></tr></table></td></tr>");
     }
@@ -431,7 +429,7 @@ public static class CustomerEmailTemplates
         public string Greeting(string name) => P($"Dear {name},", $"عزيزي/عزيزتي {name}،");
 
         public string KindRegards => P("Kind regards,", "مع أطيب التحيات،");
-        public string Signature => P(SignatureTeam, "خدمة عملاء Tiger Properties");
+        public string Signature => P(SignatureTeam, "فريق خدمة عملاء Tiger");
         public string AutomatedNotice => P(
             $"This is an automated message from {BrandName}. Please do not reply to this email.",
             $"هذه رسالة آلية من {BrandName}. يرجى عدم الرد على هذا البريد الإلكتروني.");
