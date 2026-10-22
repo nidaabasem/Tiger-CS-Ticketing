@@ -18,11 +18,11 @@ public readonly record struct CustomerDeliveryDecision(bool Deliver, string? Rec
 /// <summary>The Tiger Properties branding shared by every customer email.</summary>
 /// <param name="LogoUrl">Absolute https URL of the logo; <c>null</c> renders the brand name as text instead.</param>
 /// <param name="WebsiteUrl">Company website shown in the footer.</param>
-/// <param name="ContactEmail">Customer-service mailbox shown in the footer; <c>null</c> omits the line.</param>
+/// <param name="ContactEmail">Customer-service mailbox shown in the footer; <c>null</c> omits the line (the configured policy falls back to the default).</param>
 /// <param name="ContactPhone">Customer-service phone shown in the footer; <c>null</c> omits the line.</param>
 public sealed record CustomerEmailBranding(string? LogoUrl, string WebsiteUrl, string? ContactEmail, string? ContactPhone)
 {
-    public static CustomerEmailBranding Default { get; } = new(null, "https://tigergroup.ae", null, null);
+    public static CustomerEmailBranding Default { get; } = new(null, "https://www.tigergroup.ae", "contact@tigergroup.com", "800 300 300");
 }
 
 /// <summary>
@@ -66,8 +66,8 @@ public sealed class CustomerNotificationModePolicy
         {
             LogoUrl = CustomerEmailAddress.Normalize(b.LogoUrl) ?? (PublicBaseUrl is null ? null : PublicBaseUrl + "/img/tiger-logo.png"),
             WebsiteUrl = CustomerEmailAddress.Normalize(b.WebsiteUrl) ?? CustomerEmailBranding.Default.WebsiteUrl,
-            ContactEmail = CustomerEmailAddress.IsValid(b.ContactEmail) ? CustomerEmailAddress.Normalize(b.ContactEmail) : null,
-            ContactPhone = CustomerEmailAddress.Normalize(b.ContactPhone)
+            ContactEmail = CustomerEmailAddress.IsValid(b.ContactEmail) ? CustomerEmailAddress.Normalize(b.ContactEmail) : CustomerEmailBranding.Default.ContactEmail,
+            ContactPhone = CustomerEmailAddress.Normalize(b.ContactPhone) ?? CustomerEmailBranding.Default.ContactPhone
         };
     }
 
