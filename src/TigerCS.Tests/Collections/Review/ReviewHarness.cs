@@ -62,8 +62,12 @@ public sealed class FakeGenesysClient : IGenesysOutboundClient
         }
     }
 
-    public Task<GenesysCampaignCreateResult> CreateCampaignAsync(string name, string contactListId, GenesysCampaignOptions template, CancellationToken ct)
+    /// <summary>Awaited before a create is applied: lets a test hold one dispatch inside "create" while another reaches its own lookup.</summary>
+    public Func<Task>? BeforeCreate { get; set; }
+
+    public async Task<GenesysCampaignCreateResult> CreateCampaignAsync(string name, string contactListId, GenesysCampaignOptions template, CancellationToken ct)
     {
+        if (BeforeCreate is not null) await BeforeCreate();
         lock (_gate)
         {
             CampaignCreates.Add((name, contactListId));
@@ -72,9 +76,9 @@ public sealed class FakeGenesysClient : IGenesysOutboundClient
             {
                 var made = new GenesysCampaignRef($"campaign-{Campaigns.Count + 1}", name, contactListId, "off");
                 Campaigns.Add(made);
-                if (outcome == GenesysUploadOutcome.Accepted) return Task.FromResult(new GenesysCampaignCreateResult(outcome, 200, made, null));
+                if (outcome == GenesysUploadOutcome.Accepted) return new GenesysCampaignCreateResult(outcome, 200, made, null);
             }
-            return Task.FromResult(new GenesysCampaignCreateResult(outcome, outcome == GenesysUploadOutcome.Rejected ? 400 : null, null, "Genesys did not confirm."));
+            return new GenesysCampaignCreateResult(outcome, outcome == GenesysUploadOutcome.Rejected ? 400 : null, null, "Genesys did not confirm.");
         }
     }
 

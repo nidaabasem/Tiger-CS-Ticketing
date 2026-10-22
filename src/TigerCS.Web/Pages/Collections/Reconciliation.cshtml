@@ -1,0 +1,96 @@
+@page "/Collections/Reconciliation"
+@model TigerCS.Web.Pages.Collections.ReconciliationModel
+@using TigerCS.Application.Modules.Collections.Reconciliation
+@using TigerCS.Web.Pages.Collections
+@using TigerCS.Web.Services.Api
+@{
+    ViewData["Title"] = "Financial reconciliation";
+    ViewData["ActiveNav"] = "collections";
+    Layout = "_Layout";
+}
+<link rel="stylesheet" href="~/css/collections-snapshot.css" asp-append-version="true" />
+@if (Model.Running) { <meta http-equiv="refresh" content="8" /> }
+<div class="page receivables-workspace">
+    <div class="page-header">
+        <div>
+            <p class="receivables-eyebrow">Collections</p>
+            <h1 class="page-title">Financial reconciliation</h1>
+        </div>
+        <div class="page-header__actions"><a class="btn" href="/Collections/Campaigns">Campaigns</a></div>
+    </div>
+    @if (Model.Notice is { } notice) { <div class="receivables-notice" role="status" data-reconciliation-notice>@notice</div> }
+    @if (Model.Overview is not { } overview)
+    {
+        <div class="panel"><div class="error-state" role="alert">@(Model.Outcome == ApiOutcome.Forbidden ? "Your account does not have permission to see the reconciliation." : Model.Error ?? "The reconciliation status could not be read.")</div></div>
+    }
+    else
+    {
+        var gate = overview.Gate;
+        <div class="panel" data-source-gate="@gate.Code">
+            <h2 class="campaign-snapshot__title">Financial source: @(gate.Reconciled ? "Reconciled" : "Not reconciled")</h2>
+            <p>@gate.Message</p>
+            <p class="receivables-meta">
+                Sign-off: <strong>@(gate.SignOffRecorded ? "recorded" : "not recorded")</strong>@(gate.Reference is { } r ? $" ({r})" : "")
+                @if (gate.EvidenceAtUtc is { } at) { <text> · Automated evidence: <strong>@CollectionsDisplay.DubaiTime(at)</strong></text> }
+            </p>
+            <p class="receivables-meta">
+                The automated run compares the local snapshot with a fresh, direct read of the same configured PACT procedure, unit by unit and instalment by instalment. It proves the data being approved is what the procedure returns now;
+                it does not replace the sign-off that the procedure itself is right. A run that could not complete is shown as such: it is missing evidence, not a finding.
+            </p>
+            <form method="post" asp-page-handler="Run" class="snapshot-status__load">
+                <button class="btn btn-primary" type="submit" data-run-reconciliation disabled="@Model.Running">Run reconciliation (both companies)</button>
+                <button class="btn" type="submit" name="companyId" value="4" disabled="@Model.Running">Dubai only</button>
+                <button class="btn" type="submit" name="companyId" value="32" disabled="@Model.Running">Sharjah only</button>
+            </form>
+        </div>
+        @if (overview.Latest is { } run)
+        {
+            <div class="panel" data-latest-run="@run.Status">
+                <h2 class="campaign-snapshot__title">Latest run: @ReconciliationModel.StateText(run.Status)</h2>
+                <p class="receivables-meta">Started @CollectionsDisplay.DubaiTime(run.StartedUtc)@(run.FinishedUtc is { } f ? $", finished {CollectionsDisplay.DubaiTime(f)}" : "") · due dates @run.From.ToString("yyyy-MM-dd") to @run.Through.ToString("yyyy-MM-dd") · tolerance AED @run.Tolerance.ToString("0.00###")</p>
+                @foreach (var c in run.Companies)
+                {
+                    <div class="reconciliation-company" data-company="@c.CompanyId" data-company-status="@c.Status">
+                        <h3>@c.CompanyName: @ReconciliationModel.StateText(c.Status)</h3>
+                        <p class="receivables-meta">Procedure @c.Procedure@(c.SnapshotSuccessUtc is { } s ? $" · snapshot published {CollectionsDisplay.DubaiTime(s)}" : "")</p>
+                        @if (c.Message is { } message) { <p>@message</p> }
+                        @if (c.Comparison is { } cmp)
+                        {
+                            <ul>
+                                <li>Snapshot: @cmp.SnapshotUnits.ToString("N0") units, @cmp.SnapshotLines.ToString("N0") instalments, AED @cmp.SnapshotTotal.ToString("N2")</li>
+                                <li>PACT (fresh read): @cmp.SourceUnits.ToString("N0") units, @cmp.SourceLines.ToString("N0") instalments, AED @cmp.SourceTotal.ToString("N2")</li>
+                                <li>Units that agree: @cmp.MatchedUnits.ToString("N0") · differ: <strong>@cmp.MismatchedUnits.ToString("N0")</strong> (only in the snapshot: @cmp.UnitsOnlyInSnapshot.ToString("N0"), only in PACT: @cmp.UnitsOnlyInSource.ToString("N0"))</li>
+                                @if (cmp.SnapshotDuplicateInstalments + cmp.SourceDuplicateInstalments > 0) { <li data-duplicates>Repeated instalments (same voucher, unit and due day): @cmp.SnapshotDuplicateInstalments.ToString("N0") in the snapshot, @cmp.SourceDuplicateInstalments.ToString("N0") in PACT. They are not removed automatically; whether a repeat is legitimate needs a business decision.</li> }
+                            </ul>
+                            @if (cmp.Diffs.Count > 0)
+                            {
+                                <div class="table-scroll">
+                                    <table class="table receivables-table" data-differences>
+                                        <thead><tr><th>Unit</th><th class="num">Snapshot</th><th class="num">PACT</th><th>Why</th><th>Instalments</th></tr></thead>
+                                        <tbody>
+                                        @foreach (var d in cmp.Diffs)
+                                        {
+                                            <tr>
+                                                <td>@d.UnitCode</td>
+                                                <td class="num">@d.SnapshotTotal.ToString("N2")<span class="receivables-meta"> (@d.SnapshotCount; due @d.SnapshotDue.ToString("N2"), overdue @d.SnapshotOverdue.ToString("N2"))</span></td>
+                                                <td class="num">@d.SourceTotal.ToString("N2")<span class="receivables-meta"> (@d.SourceCount; due @d.SourceDue.ToString("N2"), overdue @d.SourceOverdue.ToString("N2"))</span></td>
+                                                <td>@d.Summary</td>
+                                                <td>@foreach (var i in d.Instalments) { <div class="receivables-meta">@ReconciliationModel.KindText(i.Kind) @(i.Voucher.Length > 0 ? $"· voucher {i.Voucher}" : "") · snapshot @(i.SnapshotAmount?.ToString("N2") ?? "—")@(i.SnapshotDue is { } sd ? $" ({sd:yyyy-MM-dd})" : "") · PACT @(i.SourceAmount?.ToString("N2") ?? "—")@(i.SourceDue is { } pd ? $" ({pd:yyyy-MM-dd})" : "")@(i.CrossesDueOverdueBoundary ? " · Due on one side, Overdue on the other" : "")</div> }</td>
+                                            </tr>
+                                        }
+                                        </tbody>
+                                    </table>
+                                </div>
+                                @if (cmp.DiffsTruncated) { <p class="receivables-meta">Only the first @cmp.Diffs.Count.ToString("N0") differing units are listed; the counts above are complete.</p> }
+                            }
+                        }
+                    </div>
+                }
+            </div>
+        }
+        else
+        {
+            <div class="panel"><p class="receivables-meta" data-never-run>No reconciliation has been run since the application started.</p></div>
+        }
+    }
+</div>

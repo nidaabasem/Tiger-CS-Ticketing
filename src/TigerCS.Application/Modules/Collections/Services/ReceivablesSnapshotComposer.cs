@@ -12,9 +12,9 @@ public static class ReceivablesSnapshotComposer
     /// <summary>Status of the snapshot for the requested range. Never throws: a company that was never loaded is a whole-range gap, not an empty result.</summary>
     public static SnapshotStatusDto BuildStatus(
         DateOnly from, DateOnly through, IReadOnlyList<SnapshotCompanyRaw> companies, IReadOnlyList<UnmatchedTowerDto> unmatched,
-        DateTime nowUtc, int maxAgeMinutes)
+        DateTime nowUtc, int maxAgeMinutes, int maxRunMinutes = 0)
     {
-        var status = ReceivablesSnapshotStatusBuilder.Build(companies, unmatched, nowUtc, maxAgeMinutes);
+        var status = ReceivablesSnapshotStatusBuilder.Build(companies, unmatched, nowUtc, maxAgeMinutes, maxRunMinutes);
         // Coverage gaps: the part of the requested range outside a company's coverage (or all of it when the company was never loaded).
         // It is REPORTED, never truncated silently and never presented as zero receivables.
         var gaps = new List<CoverageGapDto>();
@@ -34,9 +34,9 @@ public static class ReceivablesSnapshotComposer
 
     public static PactReceivablesSnapshot Compose(
         DateOnly from, DateOnly through, IReadOnlyList<SnapshotCompanyRaw> companies, IReadOnlyList<UnmatchedTowerDto> unmatched,
-        IReadOnlyList<PactReceivableInstalment> rows, DateTime nowUtc, int maxAgeMinutes)
+        IReadOnlyList<PactReceivableInstalment> rows, DateTime nowUtc, int maxAgeMinutes, int maxRunMinutes = 0)
     {
-        var status = BuildStatus(from, through, companies, unmatched, nowUtc, maxAgeMinutes);
+        var status = BuildStatus(from, through, companies, unmatched, nowUtc, maxAgeMinutes, maxRunMinutes);
         return new PactReceivablesSnapshot(rows, ReadAt(status), false, status);
     }
 }

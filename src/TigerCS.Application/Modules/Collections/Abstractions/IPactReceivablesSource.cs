@@ -54,6 +54,12 @@ public interface ICollectionsTowerCatalog
 /// <summary>Raised when the request names a tower that does not exist (or clashes with the company filter).</summary>
 public sealed class PactReceivablesScopeException(string message) : Exception(message);
 
+/// <summary>The per-company refresh state alone (no receivables): what the pages poll while a refresh runs. Never starts a refresh.</summary>
+public interface ISnapshotStatusSource
+{
+    Task<SnapshotStatusDto> ReadStatusAsync(CancellationToken cancellationToken);
+}
+
 /// <summary>Runs one snapshot refresh (PACT -> staging -> validated publish). Overlap-safe; companies succeed or fail independently.</summary>
 public interface IReceivablesRefresher
 {

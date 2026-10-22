@@ -37,6 +37,8 @@ internal sealed class FakeCollectionsApi : HttpMessageHandler
     public bool Breakdown { get; set; }
     /// <summary>Tiger Group Sharjah (company 32) never loaded: its latest refresh failed, so the Dubai rows are served without it.</summary>
     public bool SharjahFailed { get; set; }
+    /// <summary>What GET api/collections/reconciliation answers (null = nothing has been run).</summary>
+    public TigerCS.Application.Modules.Collections.Reconciliation.ReconciliationOverviewDto? Reconciliation { get; set; }
     public List<string> Requests { get; } = [];
     public List<PactInstalmentRowDto> Rows { get; } = [];
 
@@ -64,6 +66,16 @@ internal sealed class FakeCollectionsApi : HttpMessageHandler
         {
             case "/api/collections/receivables/towers":
                 return Json(new List<CollectionsTowerDto> { new(7, "124", "Tower 124", 4, true), new(8, "127", "Faradis", 32, true) });
+            case "/api/collections/reconciliation":
+                return Json(Reconciliation ?? new TigerCS.Application.Modules.Collections.Reconciliation.ReconciliationOverviewDto(
+                    new(false, "EvidenceNotRun", "No automated reconciliation has been run for Tiger Group Dubai and Tiger Group Sharjah.", null, 0, true, null), null, []));
+            case "/api/collections/reconciliation/run":
+                return Json(new TigerCS.Application.Modules.Collections.Reconciliation.ReconciliationRunDto(Guid.NewGuid(), "Running", DateTime.UtcNow, null, new(2026, 1, 1), new(2026, 10, 31), null, 0.01m, null, []), HttpStatusCode.Accepted);
+            case "/api/collections/receivables/snapshot/status":
+            {
+                var today = new DateOnly(2026, 10, 9);
+                return Json(Snapshot(today, today));
+            }
             case "/api/collections/receivables/coverage/load":
                 return Json(new ReceivablesRangeLoadDto(true, false, false, "started"), HttpStatusCode.Accepted);
             case "/api/collections/receivables/instalments":

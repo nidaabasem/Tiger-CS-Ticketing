@@ -5,6 +5,9 @@
   refreshing that company).  So IsLoading is TRUE only while a refresh of THAT company is really executing: it ends when that company's attempt ends, and a
   company that finished, failed or was abandoned is never reported as loading because of another company's (or an older) run.
 
+  EVIDENCE COLUMNS (added later, appended so older readers are unaffected): LastFetchMs / LastRawRows of the LAST ATTEMPT's run (NULL fetch time on a failed run = the PACT call did not finish,
+  i.e. the failure is in the linked-server read; set fetch time + failure = validation or publish).  The application turns them into the phase shown on the page.
+
   One row per company: HasSnapshot (a run is published; FALSE = "not loaded", never "zero receivables"), LastSuccessUtc, PublishedRows, the last attempt
   (LastStatus Never | Running | Succeeded | Failed | Abandoned, started / finished, error number + message) and ConsecutiveFailures.
 */
@@ -15,11 +18,13 @@ BEGIN
     SET NOCOUNT ON;
     IF @CompanyId IS NOT NULL AND @CompanyId NOT IN (4, 32) THROW 50001, N'Company must be 4, 32 or NULL.', 1;
     EXEC dbo.usp_CollectionsRcv_ReapDeadRuns @CompanyId = @CompanyId;
-    SELECT CompanyId, CAST(CASE WHEN CurrentRunId IS NULL THEN 0 ELSE 1 END AS bit) AS HasSnapshot, LastSuccessUtc, PublishedRows,
-           LastAttemptUtc, LastFinishedUtc, LastStatus, LastErrorNumber, LastError, ConsecutiveFailures,
-           CAST(CASE WHEN LastStatus = 'Running' THEN 1 ELSE 0 END AS bit) AS IsLoading
-      FROM dbo.CollectionsRcvCompany
-     WHERE @CompanyId IS NULL OR CompanyId = @CompanyId
-     ORDER BY CompanyId;
+    SELECT c.CompanyId, CAST(CASE WHEN c.CurrentRunId IS NULL THEN 0 ELSE 1 END AS bit) AS HasSnapshot, c.LastSuccessUtc, c.PublishedRows,
+           c.LastAttemptUtc, c.LastFinishedUtc, c.LastStatus, c.LastErrorNumber, c.LastError, c.ConsecutiveFailures,
+           CAST(CASE WHEN c.LastStatus = 'Running' THEN 1 ELSE 0 END AS bit) AS IsLoading,
+           r.FetchMs AS LastFetchMs, r.RawRows AS LastRawRows
+      FROM dbo.CollectionsRcvCompany c
+      LEFT JOIN dbo.CollectionsRcvRun r ON r.RunId = c.LastRunId
+     WHERE @CompanyId IS NULL OR c.CompanyId = @CompanyId
+     ORDER BY c.CompanyId;
 END;
 GO
