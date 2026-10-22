@@ -86,7 +86,7 @@ public sealed class GenesysConversationEndAppService(
 
         var conversationId = request.ConversationId.Trim();
 
-        var interaction = await conversationRepository.GetByConversationIdAsync(conversationId, cancellationToken);
+        var interaction = await conversationRepository.ResolveAsync(conversationId, request.TicketId, cancellationToken);
         if (interaction is null)
         {
             // A conversation that never produced a ticket — most commonly a
@@ -187,7 +187,7 @@ public sealed class GenesysConversationEndAppService(
     /// </summary>
     public async Task<GenesysTranscriptAppendResult> AppendTranscriptAsync(
         Guid callerEmployeeId, string conversationId, IReadOnlyList<GenesysTranscriptMessageDto>? transcript,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default, long? ticketId = null)
     {
         if (!options.Enabled)
         {
@@ -199,7 +199,7 @@ public sealed class GenesysConversationEndAppService(
             return GenesysTranscriptAppendResult.Failure(GenesysTranscriptAppendOutcome.ConversationNotFound);
         }
 
-        var interaction = await conversationRepository.GetByConversationIdAsync(conversationId.Trim(), cancellationToken);
+        var interaction = await conversationRepository.ResolveAsync(conversationId.Trim(), ticketId, cancellationToken);
         if (interaction is null)
         {
             return GenesysTranscriptAppendResult.Failure(GenesysTranscriptAppendOutcome.ConversationNotFound);

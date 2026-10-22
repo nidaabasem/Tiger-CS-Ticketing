@@ -26,7 +26,7 @@ integration account), `504` (budget spent).
 | # | Method | Public URL | TigerCS URL | Data action | Required headers | Query parameters | Expected statuses |
 |---|---|---|---|---|---|---|---|
 | 1 | POST | `https://tigergroup.ae/api/genesys/tickets` | `{TCS}/api/genesys/tickets` | 02 | - | - | 200, 201, 400, 401, 413, 422, 502, 503, 504 |
-| 2 | PATCH | `https://tigergroup.ae/api/genesys/tickets/{ticketId}` | `{TCS}/api/genesys/tickets/{ticketId}` | 03, 04, 05, 06, 07, 10 | - | - | 200, 400, 401, 404, 409, 413, 422, 502, 503, 504 |
+| 2 | PATCH | `https://tigergroup.ae/api/genesys/tickets/{ticketId}` | `{TCS}/api/genesys/tickets/{ticketId}` | 03, 04, 05, 06, 07, 10, 17 | - | - | 200, 400, 401, 404, 409, 413, 422, 502, 503, 504 |
 | 3 | GET | `https://tigergroup.ae/api/genesys/customers/lookup` | `{TCS}/api/genesys/customers/lookup` | 01 | - | phoneNumber | 200, 400, 401, 502, 503, 504 |
 | 4 | POST | `https://tigergroup.ae/api/genesys/customers/unit-details` | `{TCS}/api/genesys/customers/unit-details` | 12 | - | - | 200, 400, 401, 403, 409, 413, 502, 503, 504 |
 | 5 | POST | `https://tigergroup.ae/api/genesys/verification/buyer-lookup` | `{TCS}/api/genesys/verification/buyer-lookup` | 13 | - | - | 200, 400, 401, 404, 409, 413, 502, 503, 504 |

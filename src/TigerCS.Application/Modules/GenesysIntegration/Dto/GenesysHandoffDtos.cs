@@ -25,6 +25,7 @@ namespace TigerCS.Application.Modules.GenesysIntegration.Dto;
 /// <param name="AgentName">The agent's display name, when supplied — recorded on the interaction.</param>
 /// <param name="WorkItemId">Genesys' own routing-task/work-item identifier, if it supplies one. Used as the stronger idempotency key when present; never invented.</param>
 /// <param name="RequestedAtUtc">When Genesys decided a human was needed. Defaults to now when not supplied.</param>
+/// <param name="TicketId">The ticket the human work belongs to, when the conversation carries several tickets. Absent resolves the conversation's default (first) ticket.</param>
 public sealed record GenesysHandoffRequestDto(
     string ConversationId,
     bool AgentAvailable = false,
@@ -34,23 +35,27 @@ public sealed record GenesysHandoffRequestDto(
     string? AgentId = null,
     string? AgentName = null,
     string? WorkItemId = null,
-    DateTime? RequestedAtUtc = null);
+    DateTime? RequestedAtUtc = null,
+    long? TicketId = null);
 
 /// <summary>Genesys standing the pending human work down — the human is no longer needed.</summary>
 /// <param name="ConversationId">The conversation whose outstanding work this stands down.</param>
 /// <param name="Reason">Why the human is no longer needed. Required — pending customer work is never dropped without a recorded why.</param>
-public sealed record GenesysHandoffCancellationDto(string ConversationId, string? Reason = null);
+/// <param name="TicketId">The ticket whose work this stands down, when the conversation carries several tickets.</param>
+public sealed record GenesysHandoffCancellationDto(string ConversationId, string? Reason = null, long? TicketId = null);
 
 /// <summary>Genesys reporting that an agent has (or has not) taken the pending work.</summary>
 /// <param name="ConversationId">The conversation whose pending work this concerns.</param>
 /// <param name="AgentId">Genesys' agent identifier. Required — an assignment must name someone.</param>
 /// <param name="AgentName">The agent's display name, when supplied.</param>
 /// <param name="AssignedAtUtc">When the assignment happened. Defaults to now.</param>
+/// <param name="TicketId">The ticket whose work this concerns, when the conversation carries several tickets.</param>
 public sealed record GenesysHandoffAssignmentDto(
     string ConversationId,
     string? AgentId = null,
     string? AgentName = null,
-    DateTime? AssignedAtUtc = null);
+    DateTime? AssignedAtUtc = null,
+    long? TicketId = null);
 
 public enum GenesysHandoffOutcome
 {

@@ -41,6 +41,8 @@ namespace TigerCS.Application.Modules.GenesysIntegration.Dto;
 /// <param name="Direction">Interaction direction as reported by Genesys (e.g. "Inbound"), where available.</param>
 /// <param name="CustomerName">The customer's name as the channel collected it (e.g. a website chat form's Full Name), where available — display/audit only, never a verified identity.</param>
 /// <param name="CustomerEmail">The customer's email as the channel collected it, where available — same display/audit-only status as <paramref name="CustomerName"/>.</param>
+/// <param name="ServiceRequestId">The caller's identifier of the distinct service request this interaction (and ticket) is for, where the conversation carries several. Null for a conversation that is one ticket.</param>
+/// <param name="RequiresHumanFollowUp">The ticket is human work from the start: no chatbot clock may close it.</param>
 public sealed record GenesysInteractionContextDto(
     string ConversationId,
     string? CalledNumber = null,
@@ -51,4 +53,6 @@ public sealed record GenesysInteractionContextDto(
     DateTime? InteractionStartedAtUtc = null,
     string? Direction = null,
     string? CustomerName = null,
-    string? CustomerEmail = null);
+    string? CustomerEmail = null,
+    string? ServiceRequestId = null,
+    bool RequiresHumanFollowUp = false);

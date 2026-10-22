@@ -73,6 +73,12 @@ public enum GenesysChannel
 /// <param name="UnitNumber">The unit number the customer typed into the website chat form, where collected — see <paramref name="TowerName"/>.</param>
 /// <param name="Subject">A short subject/summary the channel collected, where available. Used as the ticket's request summary; a generated, channel-named summary is used when absent.</param>
 /// <param name="RequestType">The request type the bot identified, when it already has one; otherwise null and the ticket awaits classification in the human follow-up queue.</param>
+/// <param name="ServiceRequestId">
+/// The caller's identifier of ONE distinct service request inside the conversation (e.g. "documents", "leasing"). A conversation may carry
+/// several; each (<paramref name="ConversationId"/>, <paramref name="ServiceRequestId"/>) pair is its own idempotent ticket. Absent keeps the
+/// original rule: the conversation is one ticket, and every repeat returns it.
+/// </param>
+/// <param name="HumanFollowUpRequired">true = this service request needs a person (leasing, a complaint). Such a ticket is never closed by the chatbot inactivity rules, by the AI or by document delivery — only by the authorized TigerCS workflow.</param>
 public sealed record GenesysInquiryDto(
     string ConversationId,
     GenesysChannel Channel,
@@ -94,7 +100,9 @@ public sealed record GenesysInquiryDto(
     string? TowerName = null,
     string? UnitNumber = null,
     string? Subject = null,
-    GenesysRequestTypeDto? RequestType = null);
+    GenesysRequestTypeDto? RequestType = null,
+    string? ServiceRequestId = null,
+    bool? HumanFollowUpRequired = null);
 
 /// <summary>
 /// The normalized end-of-conversation report, with the transcript available
@@ -109,13 +117,15 @@ public sealed record GenesysInquiryDto(
 /// <param name="AgentId">The handling agent, where the end event names one and the interaction did not already know it.</param>
 /// <param name="AgentName">The handling agent's display name — see <paramref name="AgentId"/>.</param>
 /// <param name="Transcript">The conversation's messages, in order. Empty/absent for a voice call, or for a chat that ended before anything was said.</param>
+/// <param name="TicketId">The ticket whose interaction this ends, when the conversation carries several tickets; absent resolves the conversation's default (first) ticket.</param>
 public sealed record GenesysConversationEndDto(
     string ConversationId,
     DateTime? EndedAtUtc = null,
     string? EndReason = null,
     string? AgentId = null,
     string? AgentName = null,
-    IReadOnlyList<GenesysTranscriptMessageDto>? Transcript = null);
+    IReadOnlyList<GenesysTranscriptMessageDto>? Transcript = null,
+    long? TicketId = null);
 
 /// <summary>One transcript message, normalized. Order is taken from the list's own order; <paramref name="SentAtUtc"/> is what the UI displays.</summary>
 /// <param name="Sender">"Customer", "Agent" or "System" (case-insensitive). Anything else is rejected rather than silently attributed.</param>

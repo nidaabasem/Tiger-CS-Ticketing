@@ -106,7 +106,7 @@ public sealed class GenesysAgentHandoffAppService(
 
         var conversationId = request.ConversationId.Trim();
 
-        var interaction = await conversationRepository.GetByConversationIdAsync(conversationId, cancellationToken);
+        var interaction = await conversationRepository.ResolveAsync(conversationId, request.TicketId, cancellationToken);
         if (interaction is null)
         {
             return GenesysHandoffResult.Failure(
@@ -234,7 +234,7 @@ public sealed class GenesysAgentHandoffAppService(
                 GenesysHandoffOutcome.AgentRequired, "An assignment must name the agent who took the work.");
         }
 
-        var interaction = await conversationRepository.GetByConversationIdAsync(request.ConversationId.Trim(), cancellationToken);
+        var interaction = await conversationRepository.ResolveAsync(request.ConversationId.Trim(), request.TicketId, cancellationToken);
         if (interaction is null)
         {
             return GenesysHandoffResult.Failure(GenesysHandoffOutcome.ConversationNotFound);
@@ -338,7 +338,7 @@ public sealed class GenesysAgentHandoffAppService(
                 "Standing down pending human work needs a reason — work is never dropped without a recorded why.");
         }
 
-        var interaction = await conversationRepository.GetByConversationIdAsync(request.ConversationId.Trim(), cancellationToken);
+        var interaction = await conversationRepository.ResolveAsync(request.ConversationId.Trim(), request.TicketId, cancellationToken);
         if (interaction is null)
         {
             return GenesysHandoffResult.Failure(GenesysHandoffOutcome.ConversationNotFound);
