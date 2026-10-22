@@ -11,7 +11,28 @@
 .receivables-workspace .receivables-table td:last-child { max-width: 340px; }
 
 /* Campaigns preview totals and the Review & approve snapshot */
-.campaign-totals { display: flex; flex-wrap: wrap; gap: 0.25rem 1.5rem; margin: 0 0 0.75rem; padding: 0; list-style: none; }
+/* Review & approve summary: cards, details, blockers, actions - each its own block, then the table */
+.campaign-section { padding: var(--space-4) var(--space-5); border-bottom: 1px solid var(--color-border); }
+.campaign-section__title { margin: 0 0 var(--space-3); font-size: var(--text-sm); font-weight: 600; text-transform: uppercase; letter-spacing: .03em; color: var(--color-text-secondary); }
+.campaign-totals { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: var(--space-3); margin: 0; padding: 0; list-style: none; }
+.campaign-card { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; padding: var(--space-3) var(--space-4); border: 1px solid var(--color-border); border-radius: var(--radius-md, 8px); background: var(--color-surface, transparent); }
+.campaign-card__label { font-size: var(--text-sm); font-weight: 600; color: var(--color-text-secondary); }
+.campaign-card__value { font-size: 1.5rem; line-height: 1.2; font-weight: 700; overflow-wrap: anywhere; }
+.campaign-card__hint { font-size: var(--text-xs, 0.8rem); color: var(--color-text-secondary); }
+.campaign-card--ok { border-left: 4px solid var(--color-success, #1f8a4c); }
+.campaign-card--warn { border-left: 4px solid var(--color-warning, #c77700); }
+.campaign-helper { display: block; margin: var(--space-3) 0 0; max-width: 72ch; font-size: var(--text-sm); line-height: 1.5; color: var(--color-text-secondary); }
+.campaign-helper--warn { color: var(--color-warning-text, #8a5200); font-weight: 600; }
+.campaign-details__list { display: flex; flex-wrap: wrap; gap: var(--space-3) var(--space-6); margin: 0; }
+.campaign-details__list > div { min-width: 0; }
+.campaign-details__list dt { font-size: var(--text-sm); color: var(--color-text-secondary); }
+.campaign-details__list dd { margin: 0; }
+.campaign-blockers { background: var(--color-warning-bg, rgba(199, 119, 0, .08)); border-left: 4px solid var(--color-warning, #c77700); }
+.campaign-blockers__lead { margin: 0 0 var(--space-2); font-weight: 600; }
+.campaign-blockers__list { margin: 0; padding-left: 1.25rem; display: grid; gap: var(--space-2); }
+.campaign-blockers__list li { line-height: 1.45; }
+.campaign-approve__choices { display: grid; gap: var(--space-2); margin-bottom: var(--space-3); }
+.campaign-actions-section .campaign-actions { margin: 0; }
 .review-snapshot { display: grid; grid-template-columns: max-content 1fr; gap: 0.25rem 1rem; margin: 0.5rem 0 1rem; }
 .review-snapshot dt { font-weight: 600; }
 .review-snapshot dd { margin: 0; }
@@ -53,8 +74,8 @@
 }
 
 /* Count lines: the explanation sits under each figure instead of wrapping beside it */
-.campaign-totals li { display: flex; flex-direction: column; min-width: 0; }
-.campaign-totals li .receivables-meta { display: block; }
+
+
 .campaign-advanced > summary { list-style: none; }
 .campaign-advanced > summary::before { content: "▸"; display: inline-block; width: 1em; transition: transform .15s; }
 .campaign-advanced[open] > summary::before { transform: rotate(90deg); }

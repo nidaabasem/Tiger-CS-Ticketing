@@ -64,7 +64,7 @@ public sealed class CollectionsCampaignReadinessTests
     public async Task Counts_AreLabelledEligibleReadyAndNeedsReview_AndAddUp()
     {
         var needsReview = await Results(new FakeCollectionsApi());                          // 1 listed, eligible, not ready
-        Assert.Contains("Financially eligible customers:", needsReview); Assert.Contains("Ready to send:", needsReview); Assert.Contains("Needs review / blocked:", needsReview);
+        Assert.Contains("Financially eligible customers<", needsReview); Assert.Contains("Ready to send<", needsReview); Assert.Contains("Needs review / blocked<", needsReview);
         Assert.Contains("data-eligible-count>1<", needsReview); Assert.Contains("data-ready-count>0<", needsReview); Assert.Contains("data-blocked-count>1<", needsReview);
 
         var mixed = await Results(new FakeCollectionsApi { IncludeNotEligible = true });    // 2 listed: 1 ready + 1 not eligible
@@ -85,5 +85,26 @@ public sealed class CollectionsCampaignReadinessTests
         var ready = await Results(new FakeCollectionsApi());                                // reconciled, fresh, but the customer needs review
         var reason = Regex.Match(ready, "data-approve-reason[^>]*>(.*?)</span>", RegexOptions.Singleline).Groups[1].Value;
         Assert.Contains("No customers are Ready to send", reason); Assert.Contains("need review or are blocked", reason);
+    }
+
+    [Fact]
+    public async Task TheReviewSummary_IsFiveCards_ThenDetails_ThenBlockers_ThenActions_ThenTheTable_InThatOrder()
+    {
+        var html = await Results(new FakeCollectionsApi { SourceUnreconciled = true });
+        int At(string marker) { var i = html.IndexOf(marker, StringComparison.Ordinal); Assert.True(i >= 0, marker); return i; }
+        var order = new[] { "data-campaign-totals", "Campaign details", "Why sending is blocked", "id=\"campaignActionsTitle\"", "<table" }.Select(At).ToArray();
+        Assert.Equal(order.OrderBy(x => x), order);
+        // three count cards always; the two amount cards appear exactly when the report carries those amounts (unchanged logic)
+        var amountCards = (html.Contains("data-eligible-total") ? 1 : 0) + (html.Contains("data-eligible-outstanding") ? 1 : 0);
+        Assert.Equal(3 + amountCards, System.Text.RegularExpressions.Regex.Matches(html, "class=\"campaign-card[ \"]").Count);
+        Assert.Equal(html.Contains("data-eligible-total") && html.Contains("data-eligible-outstanding"), html.Contains("data-amount-explanation"));   // the helper under the cards, only when both amounts exist
+        // the campaign name and payment status live in the details block, not between the cards and the blockers elsewhere
+        Assert.True(At("data-campaign-name") > At("Campaign details") && At("data-campaign-name") < At("Why sending is blocked"));
+        // blocked: Approve is disabled and the short explanation sits in the actions block
+        Assert.Matches("<button[^>]*data-approve-button[^>]*disabled", html);
+        Assert.Contains("Sending is disabled until reconciliation and schedule checks pass.", html);
+        Assert.True(At("data-send-disabled-note") > At("campaignActionsTitle"));
+        // each blocker is its own list item
+        Assert.True(System.Text.RegularExpressions.Regex.Matches(html, "<li data-not-ready-reason>").Count >= 2);
     }
 }
