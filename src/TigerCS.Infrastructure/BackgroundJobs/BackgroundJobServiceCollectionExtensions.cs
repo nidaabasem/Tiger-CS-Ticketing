@@ -31,6 +31,10 @@ public static class BackgroundJobServiceCollectionExtensions
 
         services.Configure<OutboxDispatchOptions>(configuration.GetSection(OutboxDispatchOptions.SectionName));
 
+        // Tells the Collections pages whether the scheduled snapshot refresh really exists in this process (informational; registered whether or not Hangfire runs).
+        services.AddSingleton<TigerCS.Application.Modules.Collections.Abstractions.ISnapshotSchedule>(sp =>
+            new SnapshotSchedule(options, sp.GetRequiredService<TigerCS.Application.Modules.Collections.ReceivablesSnapshotOptions>()));
+
         // Registered whether or not Hangfire runs, so a fired job resolves
         // the same way in every environment.
         services.AddScoped<SlaDeadlineCheckJob>();

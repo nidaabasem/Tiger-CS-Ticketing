@@ -15,14 +15,17 @@ public sealed class ReviewRefreshService(
     CollectionsOptions options, CollectionsCampaignOptions campaignOptions, PactReceivablesOptions sourceOptions,
     CollectionsReviewOptions reviewOptions, CollectionsAuthorizationService authorization, CollectionsClock clock,
     IPactReceivablesSource source, IReviewStore store, IReviewJobScheduler scheduler, ReviewQueryService query,
-    ILogger<ReviewRefreshService> logger, CollectionsUnitLinkService? links = null)
+    ILogger<ReviewRefreshService> logger, CollectionsUnitLinkService? links = null,
+    TigerCS.Application.Modules.Collections.Reconciliation.IFinancialReconciliationEvidence? reconciliation = null)
 {
     public const string SourceLabel = "PACT receivables (companies 4 and 32)";
 
     /// <summary>Whether the reconciliation sign-off applies to the procedure that is configured now.</summary>
-    public bool SourceReconciled =>
-        campaignOptions.FinancialSourceValidated
-        && string.Equals(campaignOptions.ValidatedProcedureSuffix ?? "", sourceOptions.ProcedureSuffix ?? "", StringComparison.Ordinal);
+    public bool SourceReconciled => SourceGate().Reconciled;
+
+    /// <summary>The one gate definition (sign-off, procedure, recent automated reconciliation) shared with the Campaigns preview.</summary>
+    public TigerCS.Application.Modules.Collections.Reconciliation.SourceGateDto SourceGate() =>
+        TigerCS.Application.Modules.Collections.Reconciliation.SourceGate.Evaluate(campaignOptions, sourceOptions, reconciliation, clock.UtcNow);
 
     public ReviewBuildContext Context(DateOnly asOf, DateTime readAtUtc, CrmLinkSet? crm = null) => new(asOf, readAtUtc, SourceLabel, sourceOptions.Currency,
         SourceReconciled, campaignOptions.LegalNoticeExportEnabled, campaignOptions.LegalCaseDispatchApproved,

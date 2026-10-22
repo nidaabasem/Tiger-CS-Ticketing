@@ -33,10 +33,14 @@ internal sealed class FakeCollectionsApi : HttpMessageHandler
     /// <summary>The caller lacks the export / send permission (the preview's CanExportReview is false).</summary>
     public bool ExportForbidden { get; set; }
     public bool Stale { get; set; }
+    /// <summary>The API reports that no scheduled refresh runs (BackgroundJobs:Enabled is false).</summary>
+    public bool ScheduleOff { get; set; }
     public bool PaidRetained { get; set; } = true;
     public bool Breakdown { get; set; }
     /// <summary>Tiger Group Sharjah (company 32) never loaded: its latest refresh failed, so the Dubai rows are served without it.</summary>
     public bool SharjahFailed { get; set; }
+    /// <summary>What GET api/collections/reconciliation answers (null = nothing has been run).</summary>
+    public TigerCS.Application.Modules.Collections.Reconciliation.ReconciliationOverviewDto? Reconciliation { get; set; }
     public List<string> Requests { get; } = [];
     public List<PactInstalmentRowDto> Rows { get; } = [];
 
@@ -51,9 +55,10 @@ internal sealed class FakeCollectionsApi : HttpMessageHandler
                 new DateOnly(2026, 1, 1), new DateOnly(2099, 12, 31), 0, 0m, 0, 0m, 0, 0, Stale ? "Stale" : "Fresh", Stale ? 300 : 5, Loading || DubaiLoadingOnly, null, null, PaidRetained, Breakdown, Breakdown ? 0 : 3);
         var gaps = NothingLoaded ? [new CoverageGapDto(4, "Tiger Group Dubai", from, through)]
             : Covered ? [] : (IReadOnlyList<CoverageGapDto>)[new CoverageGapDto(4, "Tiger Group Dubai", from, new DateOnly(2025, 12, 31))];
-        if (!SharjahFailed) return new SnapshotStatusDto([company], [], 90, from, through, gaps);
+        var schedule = ScheduleOff ? (false, "Scheduled refresh is OFF on this server (BackgroundJobs:Enabled is false): the data only changes when someone presses Retry.") : ((bool?)null, (string?)null);
+        if (!SharjahFailed) return new SnapshotStatusDto([company], [], 90, from, through, gaps, schedule.Item1, schedule.Item2);
         var sharjah = new SnapshotCompanyStatusDto(32, "Tiger Group Sharjah", false, null, now.AddMinutes(-2), "Failed", 7399, 3, 0, null, null, 0, 0m, 0, 0m, 0, 0, "Missing", null, Loading);
-        return new SnapshotStatusDto([company, sharjah], [], 90, from, through, [.. gaps, new CoverageGapDto(32, "Tiger Group Sharjah", from, through)]);
+        return new SnapshotStatusDto([company, sharjah], [], 90, from, through, [.. gaps, new CoverageGapDto(32, "Tiger Group Sharjah", from, through)], schedule.Item1, schedule.Item2);
     }
 
     protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
@@ -64,6 +69,16 @@ internal sealed class FakeCollectionsApi : HttpMessageHandler
         {
             case "/api/collections/receivables/towers":
                 return Json(new List<CollectionsTowerDto> { new(7, "124", "Tower 124", 4, true), new(8, "127", "Faradis", 32, true) });
+            case "/api/collections/reconciliation":
+                return Json(Reconciliation ?? new TigerCS.Application.Modules.Collections.Reconciliation.ReconciliationOverviewDto(
+                    new(false, "EvidenceNotRun", "No automated reconciliation has been run for Tiger Group Dubai and Tiger Group Sharjah.", null, 0, true, null), null, []));
+            case "/api/collections/reconciliation/run":
+                return Json(new TigerCS.Application.Modules.Collections.Reconciliation.ReconciliationRunDto(Guid.NewGuid(), "Running", DateTime.UtcNow, null, new(2026, 1, 1), new(2026, 10, 31), null, 0.01m, null, []), HttpStatusCode.Accepted);
+            case "/api/collections/receivables/snapshot/status":
+            {
+                var today = new DateOnly(2026, 10, 9);
+                return Json(Snapshot(today, today));
+            }
             case "/api/collections/receivables/coverage/load":
                 return Json(new ReceivablesRangeLoadDto(true, false, false, "started"), HttpStatusCode.Accepted);
             case "/api/collections/receivables/instalments":

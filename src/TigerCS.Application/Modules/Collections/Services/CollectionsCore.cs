@@ -44,7 +44,10 @@ public enum CollectionsOutcome
     /// <summary>A record is already part of a pending or sent dispatch, or the same key was used for a different list (409).</summary>
     DuplicateDispatch,
 
-    NotFound
+    NotFound,
+
+    /// <summary>The request conflicts with the current state (for example a reconciliation is already running) - 409.</summary>
+    Conflict
 }
 
 public sealed record CollectionsResult<T>(

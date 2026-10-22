@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Web;
 using Microsoft.Extensions.Logging;
 using TigerCS.Application.Modules.Collections.Dto;
+using TigerCS.Application.Modules.Collections.Reconciliation;
 using TigerCS.Application.Modules.Collections.Review;
 
 namespace TigerCS.Web.Services.Api;
@@ -54,9 +55,21 @@ public sealed class CollectionsApiClient(HttpClient httpClient, ILogger<Collecti
             + (companyId is { } company ? $"&companyId={Id(company)}" : ""),
             new { }, cancellationToken);
 
+    /// <summary>Per-company refresh state only (small); polled while a refresh runs.</summary>
+    public Task<ApiResult<SnapshotStatusDto>> GetSnapshotStatusAsync(CancellationToken cancellationToken) =>
+        GetAsync<SnapshotStatusDto>($"{Base}/receivables/snapshot/status", cancellationToken);
+
     /// <summary>Active towers for the searchable tower dropdown (local table; no PACT call).</summary>
     public Task<ApiResult<List<CollectionsTowerDto>>> GetTowersAsync(CancellationToken cancellationToken) =>
         GetAsync<List<CollectionsTowerDto>>($"{Base}/receivables/towers", cancellationToken);
+
+    // ---- reconciliation of the snapshot with PACT (explicit, never triggered by a page view)
+
+    public Task<ApiResult<ReconciliationOverviewDto>> GetReconciliationAsync(CancellationToken cancellationToken) =>
+        GetAsync<ReconciliationOverviewDto>("api/collections/reconciliation", cancellationToken);
+
+    public Task<ApiResult<ReconciliationRunDto>> StartReconciliationAsync(int? companyId, CancellationToken cancellationToken) =>
+        PostAsync<object, ReconciliationRunDto>("api/collections/reconciliation/run", new { companyId }, cancellationToken);
 
     // ---- review and approval (stored review data; the page never reads the financial source)
 

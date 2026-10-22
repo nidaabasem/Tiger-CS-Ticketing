@@ -396,7 +396,23 @@ public sealed class DispatchService(
     /// records are released, and a later send looks the campaign up again first, so an unconfirmed creation can never produce a duplicate.
     /// Returns false when the batch was failed.
     /// </summary>
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, SemaphoreSlim> CampaignGates = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// "Look up, then create" is not atomic in Genesys, so two dispatches of the same stage working at once could both find nothing and both create the campaign. Lookup and creation
+    /// therefore run one at a time per campaign name inside this process (the second waits, then finds the first one's campaign and reuses it). Several API instances would need
+    /// Genesys's own unique-name rule as the backstop - it refuses a second campaign with the same name, which the batch then reports as not created.
+    /// </summary>
     private async Task<bool> EnsureCampaignAsync(CollectionsDispatch dispatch, CollectionsGenesysBatch batch, CancellationToken ct)
+    {
+        if (!genesys.Campaign.Enabled) return true;
+        var gate = CampaignGates.GetOrAdd(batch.StageName ?? CampaignReminderTypes.StageName(batch.ReminderType), _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync(ct);
+        try { return await EnsureCampaignCoreAsync(dispatch, batch, ct); }
+        finally { gate.Release(); }
+    }
+
+    private async Task<bool> EnsureCampaignCoreAsync(CollectionsDispatch dispatch, CollectionsGenesysBatch batch, CancellationToken ct)
     {
         var campaign = genesys.Campaign;
         var stageName = batch.StageName ??= CampaignReminderTypes.StageName(batch.ReminderType);

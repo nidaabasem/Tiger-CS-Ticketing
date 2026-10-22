@@ -139,7 +139,10 @@ public sealed class CollectionsCampaignRenderTests
         var api = new FakeCollectionsApi { Stale = true };
         using var factory = CollectionsWebHost.Factory(api); using var client = factory.CreateClient();
         var html = await (await client.GetAsync("/Collections/Campaigns?handler=Results&stage=CurrentMonthReminder&towerId=7&businessDate=2026-10-14")).Content.ReadAsStringAsync();
-        Assert.Contains("Could not load data for <strong>Tiger Group Dubai</strong>.", html);
+        // Stale data is not a load failure: the page says the data is out of date (with its time) and offers Retry for that company only.
+        Assert.Contains("Data for <strong>Tiger Group Dubai</strong> is out of date.", html);
+        Assert.DoesNotContain("Could not load data for", html);
+        Assert.Contains("data-state=\"Stale\"", html);
         Assert.Contains(">Retry<", html);
         Assert.DoesNotContain("handler=Export", html); Assert.DoesNotContain("Export Genesys CSV", html);   // an export of old data stays blocked
         Assert.Contains("data-export-review-unavailable", html);                                          // ... but the button is still there, disabled, with its reason

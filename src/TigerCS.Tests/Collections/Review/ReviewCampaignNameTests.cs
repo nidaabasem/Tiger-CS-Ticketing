@@ -173,6 +173,28 @@ public sealed class ReviewCampaignNameTests
     }
 
     [Fact]
+    public async Task TwoSendsOfTheSameStageAtOnce_CreateTheGenesysCampaignOnce_AndTheSecondReusesIt()
+    {
+        using var h = await SeededAsync();
+        h.Client.BeforeCreate = () => Task.Delay(300);                  // the first send is still inside "create" when the second one looks the campaign up
+        var (_, first) = await h.PrepareAsync(h.All(new ReviewFilter(ReminderType: "CurrentMonth", Customer: "Customer 1")), "k1");
+        var (_, second) = await h.PrepareAsync(h.All(new ReviewFilter(ReminderType: "CurrentMonth", Customer: "Customer 2")), "k2");
+        long id1, id2;
+        using (var scope = h.NewScope()) { id1 = (await scope.Dispatch.ConfirmAsync(h.Manager, first, CancellationToken.None)).Value!.DispatchId is var a ? h.Scheduler.Dispatches.Last() : 0; }
+        using (var scope = h.NewScope()) { id2 = (await scope.Dispatch.ConfirmAsync(h.Manager, second, CancellationToken.None)).Value!.DispatchId is var b ? h.Scheduler.Dispatches.Last() : 0; }
+        Assert.NotEqual(id1, id2);
+
+        async Task Execute(long id) { using var scope = h.NewScope(); await scope.Dispatch.ExecuteAsync(id, CancellationToken.None); }
+        await Task.WhenAll(Execute(id1), Execute(id2));
+
+        Assert.Single(h.Client.CampaignCreates);                         // never two campaigns for one stage
+        Assert.Equal(2, h.Client.Calls.Count);                           // both lists were uploaded
+        using var context = h.CreateContext();
+        var actions = await context.CollectionsGenesysBatches.AsNoTracking().Select(b => b.CampaignAction).OrderBy(x => x).ToListAsync();
+        Assert.Equal(["Created", "ReusedExisting"], actions);
+    }
+
+    [Fact]
     public async Task CampaignHandlingOff_KeepsTheCurrentUploadFlow_AndStillRecordsTheStageName()
     {
         using var h = await SeededAsync(enabled: false);

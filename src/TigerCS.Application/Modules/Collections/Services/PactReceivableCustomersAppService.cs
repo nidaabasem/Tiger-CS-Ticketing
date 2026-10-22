@@ -57,6 +57,20 @@ public sealed class PactReceivableCustomersAppService(
             : new(false, false, true, "A load is already running. Reload this page in a few minutes."));
     }
 
+    /// <summary>
+    /// The per-company refresh state only (no receivables): the small read the pages poll while a refresh is running. Same permission as reading the list.
+    /// It never starts a refresh and never reads PACT.
+    /// </summary>
+    public async Task<CollectionsResult<SnapshotStatusDto>> GetSnapshotStatusAsync(CollectionsCaller caller, CancellationToken cancellationToken = default)
+    {
+        if (!(await authorization.ResolveAsync(caller, cancellationToken)).CanReadFinancials)
+            return CollectionsResult<SnapshotStatusDto>.Fail(CollectionsOutcome.Forbidden);
+        if (!collectionsOptions.Enabled || !sourceOptions.Enabled || source is not ISnapshotStatusSource statusSource)
+            return CollectionsResult<SnapshotStatusDto>.Fail(CollectionsOutcome.Disabled);
+        try { return CollectionsResult<SnapshotStatusDto>.Ok(await statusSource.ReadStatusAsync(cancellationToken)); }
+        catch (PactReceivablesSourceException ex) { return CollectionsResult<SnapshotStatusDto>.Fail(CollectionsOutcome.FinanceUnavailable, ex.Message); }
+    }
+
     /// <summary>Active towers for the searchable dropdown (local table). Same authorization as the list itself.</summary>
     public async Task<CollectionsResult<IReadOnlyList<CollectionsTowerDto>>> ListTowersAsync(CollectionsCaller caller, CancellationToken cancellationToken = default)
     {

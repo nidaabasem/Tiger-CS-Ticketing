@@ -77,6 +77,22 @@ public sealed class PactReceivablesController(PactReceivableCustomersAppService 
         return result.IsSuccess ? Ok(result.Value) : Failure(result.Outcome, result.Detail);
     }
 
+    /// <summary>
+    /// Per-company state of the local receivables snapshot (Loading / Ready / Stale / Failed / NeverLoaded / Stuck, last good refresh, failure text). A few hundred bytes; the pages poll this
+    /// while a refresh runs instead of re-reading the list. Never starts a refresh.
+    /// </summary>
+    [HttpGet("/api/collections/receivables/snapshot/status")]
+    [ProducesResponseType<SnapshotStatusDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status503ServiceUnavailable)]
+    public async Task<IActionResult> SnapshotStatus(CancellationToken cancellationToken = default)
+    {
+        var caller = Caller();
+        if (caller is null) return Unauthorized();
+        var result = await service.GetSnapshotStatusAsync(caller, cancellationToken);
+        return result.IsSuccess ? Ok(result.Value) : Failure(result.Outcome, result.Detail);
+    }
+
     /// <summary>Active towers (number and name) for the tower dropdown. Read from the local table; PACT is not contacted.</summary>
     [HttpGet("/api/collections/receivables/towers")]
     [ProducesResponseType<IReadOnlyList<CollectionsTowerDto>>(StatusCodes.Status200OK)]
