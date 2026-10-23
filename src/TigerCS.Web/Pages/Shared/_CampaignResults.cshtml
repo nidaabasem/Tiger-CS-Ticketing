@@ -75,14 +75,8 @@ else if (Model.Report is { } report)
         @* Review export is independent of Approve & Send. The safeguards are unchanged: it needs the export permission and fresh, fully covered data (the API refuses otherwise);
            when it cannot run the button stays visible but disabled and says why, so nobody has to guess where it went. Genesys export keeps its stricter rule. *@
         @{ var exportProblem = Model.ExportReviewProblem; }
-        <section class="campaign-section campaign-section--actions" aria-labelledby="campaign-actions-title">
+        <section class="campaign-section" aria-labelledby="campaign-actions-title">
         <h3 class="campaign-section__title" id="campaign-actions-title">Actions</h3>
-        <div class="campaign-actions">
-            @if (exportProblem is null) { <a class="btn" href="@Model.PageUrl(export: "review")" data-export-review>Export review CSV</a> }
-            else { <button class="btn" type="button" disabled aria-disabled="true" title="@exportProblem" data-export-review-unavailable>Export review CSV</button><span class="receivables-meta" data-export-review-reason>@exportProblem</span> }
-            @if (exportProblem is null && report.ReadyCount > 0 && report.ReadyCount + report.NotEligibleCount == report.TotalCount)
-            { <a class="btn btn-primary" href="@Model.PageUrl(export: "genesys")">Export Genesys CSV</a> }
-        </div>
         @{ var blocked = Model.ApproveBlockedReason; }
         <form method="post" class="campaign-approve" data-approve-form asp-page-handler="Approve">
             @foreach (var name in CampaignsModel.FilterFieldNames)
@@ -94,13 +88,25 @@ else if (Model.Report is { } report)
             <input type="hidden" name="unitKeys" value="" data-selected-units />
             @if (report.ReadyCount > 0)
             {
-                <label><input type="radio" name="selectionMode" value="SelectedUnits" checked /> Only the customers I ticked (<span data-selected-count>0</span>, kept across pages)</label>
-                <label><input type="radio" name="selectionMode" value="AllMatching" data-all-matching /> All eligible customers matching the filters (<span data-all-count>@report.ReadyCount.ToString("N0")</span>, on every page)</label>
+                <div class="campaign-approve__mode">
+                    <label><input type="radio" name="selectionMode" value="SelectedUnits" checked /> Only the customers I ticked (<span data-selected-count>0</span>, kept across pages)</label>
+                    <label><input type="radio" name="selectionMode" value="AllMatching" data-all-matching /> All eligible customers matching the filters (<span data-all-count>@report.ReadyCount.ToString("N0")</span>, on every page)</label>
+                </div>
             }
-            <button class="btn btn-primary" type="submit" data-approve-button disabled="@(blocked is not null)" data-blocked="@(blocked is not null ? "true" : "false")">Approve &amp; Send to Genesys</button>
-            @if (report.ReadyCount > 0) { <button class="btn" type="button" data-clear-selection>Clear ticks</button> }
-            <span class="receivables-meta" data-approve-reason role="status">@(blocked ?? "Only Ready customers can be sent. Nothing is sent until you confirm the exact count, amount and Genesys contact list.")</span>
-            @if (blocked is not null) { <span class="campaign-approve__hint" data-approve-blocked-hint>Sending is disabled until reconciliation and schedule checks pass.</span> }
+            <div class="campaign-actions">
+                @if (exportProblem is null) { <a class="btn" href="@Model.PageUrl(export: "review")" data-export-review>Export review CSV</a> }
+                else { <button class="btn" type="button" disabled aria-disabled="true" title="@exportProblem" data-export-review-unavailable>Export review CSV</button> }
+                @if (exportProblem is null && report.ReadyCount > 0 && report.ReadyCount + report.NotEligibleCount == report.TotalCount)
+                { <a class="btn btn-primary" href="@Model.PageUrl(export: "genesys")">Export Genesys CSV</a> }
+                <button class="btn btn-primary" type="submit" data-approve-button disabled="@(blocked is not null)" data-blocked="@(blocked is not null ? "true" : "false")">Approve &amp; Send to Genesys</button>
+                @if (report.ReadyCount > 0) { <button class="btn" type="button" data-clear-selection>Clear ticks</button> }
+            </div>
+            @* The reasons a button is disabled sit under the whole button row, never beside one button. *@
+            <div class="campaign-action-notes">
+                @if (exportProblem is not null) { <span class="receivables-meta" data-export-review-reason>@exportProblem</span> }
+                <span class="receivables-meta" data-approve-reason role="status">@(blocked ?? "Only Ready customers can be sent. Nothing is sent until you confirm the exact count, amount and Genesys contact list.")</span>
+                @if (blocked is not null) { <span class="campaign-approve__hint" data-approve-blocked-hint>Sending is disabled until reconciliation and schedule checks pass.</span> }
+            </div>
         </form>
         </section>
         <div class="table-scroll">
