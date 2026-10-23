@@ -206,17 +206,32 @@ else
 
                         @if (Model.CanClassify)
                         {
-                            @* Classify an Unclassified ticket: category, priority and request type for the ticket's own department.
-                               This only classifies — it never requests a human handoff. *@
+                            @* Classify an Unclassified ticket: category, request type and priority for the ticket's own department.
+                               This only classifies — it never requests a human handoff. When the department has nothing valid to choose
+                               from, the form is replaced by the reason and the existing administrative path: Classify is never offered
+                               as something to do while it cannot be completed. *@
                             <details class="disclosure" id="action-classify" data-action="classify" open="@(Model.OpenSection == "classify" ? "open" : null)">
-                                <summary class="btn btn-gold btn-sm@(Rec("classify"))">Classify</summary>
+                                <summary class="btn @(Model.ClassifyNotice is null ? "btn-gold " : "")btn-sm@(Model.ClassifyNotice is null ? Rec("classify") : "")">Classify@(Model.ClassifyNotice is null ? "" : " (not available)")</summary>
                                 <div class="disclosure__panel">
-                                    <form method="post" asp-page-handler="Classify" class="action-form">
+                                    @if (Model.ClassifyNotice is { } classifyNotice)
+                                    {
+                                        <div class="classify-notice@(classifyNotice.IsConfiguration ? "" : " classify-notice--error")" role="status">
+                                            <p class="classify-notice__title">@classifyNotice.Headline</p>
+                                            <p class="classify-notice__detail">@classifyNotice.Detail</p>
+                                            @if (classifyNotice.AdminHref is { } classifyAdminHref)
+                                            {
+                                                <a class="btn btn-sm" href="@classifyAdminHref">@classifyNotice.AdminLabel</a>
+                                            }
+                                        </div>
+                                    }
+                                    else
+                                    {
+                                    <form method="post" asp-page-handler="Classify" class="action-form" data-classify-form>
                                         <input type="hidden" asp-for="Classify.RowVersionBase64" />
                                         <div class="field-group">
                                             <label class="field-label" asp-for="Classify.CategoryId">Category</label>
-                                            <select class="field-select" asp-for="Classify.CategoryId">
-                                                @foreach (var c in Model.ClassifyCategories)
+                                            <select class="field-select" asp-for="Classify.CategoryId" data-classify-category>
+                                                @foreach (var c in Model.ClassifyOptions.Categories)
                                                 {
                                                     <option value="@c.CategoryId">@c.Name</option>
                                                 }
@@ -232,14 +247,21 @@ else
                                         }
                                         else
                                         {
-                                            <div class="field-group">
+                                            <div class="field-group" data-classify-request-types-group>
                                                 <label class="field-label" asp-for="Classify.RequestTypeId">Request type</label>
-                                                <select class="field-select" asp-for="Classify.RequestTypeId">
-                                                    @foreach (var r in Model.ClassifyRequestTypes)
+                                                @* Each option names the category it belongs under; the script shows only the chosen category's.
+                                                   Without script every option is listed and the server refuses a mismatched pair. *@
+                                                <select class="field-select" asp-for="Classify.RequestTypeId" data-classify-request-type>
+                                                    <option value="0" data-category-ids="">No request type for this category</option>
+                                                    @foreach (var c in Model.ClassifyOptions.Categories)
                                                     {
-                                                        <option value="@r.RequestTypeId">@r.Name</option>
+                                                        foreach (var r in c.RequestTypes)
+                                                        {
+                                                            <option value="@r.RequestTypeId" data-category-ids="@c.CategoryId">@r.Name</option>
+                                                        }
                                                     }
                                                 </select>
+                                                <span class="field-hint" data-classify-request-type-hint>Choose the request type that belongs under the selected category.</span>
                                             </div>
                                         }
                                         <div class="field-group">
@@ -252,16 +274,13 @@ else
                                             </select>
                                             <span class="field-hint">Only the current priority or a more urgent one — lowering it needs an approved downgrade.</span>
                                         </div>
-                                        @if (Model.ClassifyOptionsUnavailable)
+                                        @if (Model.ClassifyOptions.UnreachableRequestTypes.Count > 0 && !Model.Classify.RequestTypeAlreadySet)
                                         {
-                                            <span class="field-hint field-hint--error">The category / request type lists could not be loaded. Reload the page.</span>
+                                            <span class="field-hint">@Model.ClassifyOptions.UnreachableRequestTypes.Count request type@(Model.ClassifyOptions.UnreachableRequestTypes.Count == 1 ? "" : "s") in this department cannot be chosen because no category carries the same name.</span>
                                         }
-                                        else if (Model.ClassifyCategories.Count == 0 || (!Model.Classify.RequestTypeAlreadySet && Model.ClassifyRequestTypes.Count == 0))
-                                        {
-                                            <span class="field-hint">This department has no active category or no request type with a published workflow to choose from.</span>
-                                        }
-                                        <div class="action-form__footer"><button type="submit" class="btn btn-gold btn-sm" disabled="@(Model.ClassifyCategories.Count == 0 || (!Model.Classify.RequestTypeAlreadySet && Model.ClassifyRequestTypes.Count == 0) ? "disabled" : null)">Classify</button></div>
+                                        <div class="action-form__footer"><button type="submit" class="btn btn-gold btn-sm">Classify</button></div>
                                     </form>
+                                    }
                                 </div>
                             </details>
                         }
@@ -515,8 +534,6 @@ else
             <label class="tab-label" for="tab-activity">Activity <span class="tab-count">@(Model.ActivityFeed.Count + Model.Escalations.Count)</span></label>
             <input type="radio" name="pageTab" id="tab-customer" class="tab-input" />
             <label class="tab-label" for="tab-customer">Customer@(Model.CustomerHistory is not null ? $" ({Model.CustomerHistory.TotalTickets})" : "")</label>
-            <input type="radio" name="pageTab" id="tab-conversations" class="tab-input" />
-            <label class="tab-label" for="tab-conversations">Interactions@(Model.Interactions.Count > 0 ? $" ({Model.Interactions.Count})" : "")</label>
             <input type="radio" name="pageTab" id="tab-approvals" class="tab-input" />
             <label class="tab-label" for="tab-approvals">Approvals@(Model.Approvals is { } approvalsTab && approvalsTab.Approvals.Count > 0 ? $" ({approvalsTab.Approvals.Count})" : "")</label>
             <input type="radio" name="pageTab" id="tab-attachments" class="tab-input" />
@@ -592,105 +609,32 @@ else
                             @* ---- 2. Who is the customer ---- *@
 @await Html.PartialAsync("_TicketCustomerCard", Model, new ViewDataDictionary(ViewData) { ["Compact"] = true })
 
-                            @* ---- 3. What is the request ---- *@
-                            <section class="facts-panel" aria-label="About this request">
-                                <div class="facts-section__title">About this request</div>
-                                @{
-                                    var handedOff = Model.Interactions.LastOrDefault(i => i.Handoff is not null)?.Handoff;
-                                    var handlingNow = Model.Interactions.LastOrDefault(i => i.HandlingState is not null);
-                                }
+                            @* ---- 4. Request Details: what was asked and how it is classified. Status, priority, owner, department
+                                  and SLA live in Quick facts, and who handled it lives in Conversation History — not repeated here. ---- *@
+                            <section class="facts-panel" aria-label="Request details">
+                                <div class="facts-section__title">Request Details</div>
                                 <dl class="request-facts">
+                                    <div class="facts-row"><dt>Request</dt><dd>@t.RequestSummary</dd></div>
+                                    @* An unclassified ticket says so plainly — a real state, not missing data. Categories are shown by name, never by id. *@
+                                    <div class="facts-row"><dt>Category</dt><dd>@(t.CategoryId is null ? "Not yet classified" : Model.CategoryName ?? "Classified")</dd></div>
                                     <div class="facts-row"><dt>Request type</dt><dd>@(t.RequestTypeName ?? "Not yet classified")</dd></div>
                                     @if (t.OriginatingChannelId is not null)
                                     {
+                                        @* The channel the ticket ENTERED on, resolved from channel configuration by id (still named once deactivated). *@
                                         <div class="facts-row"><dt>Came in through</dt><dd>@(t.OriginatingChannelName ?? "Unknown channel")</dd></div>
                                     }
-                                    @if (handlingNow is not null)
+                                    @if (t.WorkflowName is not null)
                                     {
-                                        <div class="facts-row"><dt>Being handled by</dt><dd>@TicketDisplay.HandlingStateLabel(handlingNow.HandlingState, handlingNow.AgentName)</dd></div>
-                                    }
-                                    @if (handedOff is not null)
-                                    {
-                                        <div class="facts-row"><dt>A person was asked for because</dt><dd>@(string.IsNullOrWhiteSpace(handedOff.RequestReason) ? TicketDisplay.HandoffInitiatorLabel(handedOff.Trigger) : handedOff.RequestReason) <span class="text-secondary">(@TicketDisplay.HandoffStatusLabel(handedOff.Status).ToLowerInvariant())</span></dd></div>
+                                        <div class="facts-row"><dt>Workflow</dt><dd>@t.WorkflowName <span class="badge badge-neutral">V@(t.WorkflowVersionNumber)</span></dd></div>
                                     }
                                 </dl>
                             </section>
 
-                            @* ---- 4. What has happened ---- *@
-                            <section class="facts-panel" aria-label="Recent activity">
-                                <div class="facts-section__title">What has happened</div>
-                                @if (Model.ActivityFeed.Count == 0)
-                                {
-                                    <div class="empty-state empty-state--compact"><p>No activity recorded yet.</p></div>
-                                }
-                                else
-                                {
-                                    <ol class="timeline">
-                                        @foreach (var entry in Model.ActivityFeed.Take(3))
-                                        {
-                                            var iconCss = entry.Kind switch { "escalation" => "icon-critical", "note" => "icon-info", "reopen" => "icon-warning", "approval" => "icon-info", _ => "icon-quiet" };
-                                            <li class="timeline-item">
-                                                <span class="timeline-icon @iconCss"><svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="4" fill="currentColor" /></svg></span>
-                                                <div class="timeline-row">
-                                                    <span class="timeline-text"><strong>@entry.Actor</strong> &mdash; @entry.Description</span>
-                                                    <span class="timeline-time">@entry.TimestampUtc.ToLocalTime().ToString("MMM d, HH:mm")</span>
-                                                </div>
-                                            </li>
-                                        }
-                                    </ol>
-                                    <label class="link-muted tab-jump" for="tab-activity">Open the full activity timeline</label>
-                                }
-                            </section>
+                            @* ---- 5. Conversation History: the customer's whole conversation, without leaving the Overview ---- *@
+                            @await Html.PartialAsync("_TicketConversationHistory", Model)
 
-                            @* ---- 5. Reference detail, out of the way until needed ---- *@
-                            <details class="more-details">
-                                <summary>All ticket details, verification, SLA and customer review</summary>
-                                <div class="more-details__body">
-                <div class="facts-section">
-                    <div class="facts-section__title">Ticket Information</div>
-                    <dl>
-                        <div class="facts-row"><dt>Ticket number</dt><dd>@t.TicketNumber</dd></div>
-                        <div class="facts-row"><dt>Status</dt><dd>@TicketDisplay.TicketStatusLabel(t.TicketStatus)</dd></div>
-                        <div class="facts-row"><dt>Priority</dt><dd>@TicketDisplay.PriorityLabel(t.PriorityId)</dd></div>
-                        @* An unclassified ticket has no category at all — say so plainly
-                           rather than rendering an empty id. It is a real state, not
-                           missing data. *@
-                        <div class="facts-row">
-                            <dt>Category</dt>
-                            <dd class="@(t.CategoryId is null ? "" : "id-fallback")">@(t.CategoryId is int catId ? $"#{catId}" : "Unclassified")</dd>
-                        </div>
-                        <div class="facts-row"><dt>Assigned Department</dt><dd>@TicketDisplay.AssignedDepartmentLabel(t.CurrentDepartmentId, Model.DepartmentName)</dd></div>
-                        @if (t.OriginatingChannelId is not null)
-                        {
-                            @* The channel the ticket ENTERED on — resolved
-                               from channel configuration by id, so a channel
-                               deactivated since still shows its name here. *@
-                            <div class="facts-row"><dt>Channel</dt><dd>@(t.OriginatingChannelName ?? "Unknown channel")</dd></div>
-                        }
-                        @* Always shown: an unclassified ticket says so instead of hiding the row. *@
-                        <div class="facts-row"><dt>Request Type</dt><dd>@(t.RequestTypeName ?? "Unclassified")</dd></div>
-                        @if (t.WorkflowName is not null)
-                        {
-                            <div class="facts-row"><dt>Workflow</dt><dd>@t.WorkflowName <span class="badge badge-neutral">V@(t.WorkflowVersionNumber)</span></dd></div>
-                        }
-                        @if (Model.Interactions.LastOrDefault(i => i.HandlingState is not null) is { } handlingInteraction)
-                        {
-                            @* AI versus human handling comes from the Genesys interaction, never from
-                               the ticket owner: a department queue or an auto-assigned employee does not
-                               mean a person is talking to the customer. *@
-                            <div class="facts-row"><dt>Handled by</dt><dd>@TicketDisplay.HandlingStateLabel(handlingInteraction.HandlingState, handlingInteraction.AgentName)</dd></div>
-                        }
-                        <div class="facts-row"><dt>Assigned To</dt><dd>@TicketDisplay.AssignedToLabel(t.CurrentOwnerEmployeeId, Model.OwnerName, t.CurrentDepartmentId, Model.DepartmentName)</dd></div>
-                        <div class="facts-row"><dt>Escalation level</dt><dd>@TicketDisplay.EscalationLevelLabel(t.EscalationLevel)</dd></div>
-                        <div class="facts-row"><dt>Reopen count</dt><dd>@t.ReopenCount</dd></div>
-                        @if (t.ResolutionOutcome is not null)
-                        {
-                            <div class="facts-row"><dt>Resolution</dt><dd>@TicketDisplay.ResolutionOutcomeLabel(t.ResolutionOutcome)</dd></div>
-                        }
-                    </dl>
-                </div>
-
-                <div class="facts-section" id="customer-satisfaction">
+                            @* ---- 6. Customer Satisfaction ---- *@
+                            <section class="facts-panel" id="customer-satisfaction" aria-label="Customer satisfaction">
                     <div class="facts-section__title">Customer Satisfaction</div>
                     @if (Model.ReviewsUnavailable)
                     {
@@ -741,8 +685,38 @@ else
                             </dl>
                         }
                     }
-                </div>
+                            </section>
 
+                            @* ---- 7. Latest Activity ---- *@
+                            <section class="facts-panel" aria-label="Latest activity">
+                                <div class="facts-section__title">Latest Activity</div>
+                                @if (Model.ActivityFeed.Count == 0)
+                                {
+                                    <div class="empty-state empty-state--compact"><p>No activity recorded yet.</p></div>
+                                }
+                                else
+                                {
+                                    <ol class="timeline">
+                                        @foreach (var entry in Model.ActivityFeed.Take(3))
+                                        {
+                                            var iconCss = entry.Kind switch { "escalation" => "icon-critical", "note" => "icon-info", "reopen" => "icon-warning", "approval" => "icon-info", _ => "icon-quiet" };
+                                            <li class="timeline-item">
+                                                <span class="timeline-icon @iconCss"><svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="4" fill="currentColor" /></svg></span>
+                                                <div class="timeline-row">
+                                                    <span class="timeline-text"><strong>@entry.Actor</strong> &mdash; @entry.Description</span>
+                                                    <span class="timeline-time">@TicketDisplay.UaeDateTime(entry.TimestampUtc)</span>
+                                                </div>
+                                            </li>
+                                        }
+                                    </ol>
+                                    <label class="link-muted tab-jump" for="tab-activity">Open the full activity timeline</label>
+                                }
+                            </section>
+
+                            @* ---- Reference detail, out of the way until needed ---- *@
+                            <details class="more-details">
+                                <summary>Verification, unit and SLA details</summary>
+                                <div class="more-details__body">
                 <div class="facts-section">
                     <div class="facts-section__title">Verification &amp; Unit</div>
                     <dl>
@@ -1037,145 +1011,6 @@ else
                             <p class="panel-note"><a class="link-muted" href="@allTicketsHref">See every ticket, unit and interaction on the Customer Profile →</a></p>
                         }
                     </div>
-                </div>
-
-                @* ---- Interactions: the calls and chats this ticket came from ---- *@
-                <div class="tab-panel" id="panel-conversations">
-                    @if (Model.InteractionsUnavailable)
-                    {
-                        <div class="empty-state"><p>Conversation history is unavailable right now.</p></div>
-                    }
-                    else if (Model.Interactions.Count == 0)
-                    {
-                        <div class="empty-state"><p>No calls or chats are recorded against this ticket.</p></div>
-                    }
-                    else
-                    {
-                        @* Chronological, oldest first — the API already orders
-                           them; the view never re-sorts. *@
-                        foreach (var interaction in Model.Interactions)
-                        {
-                            <div class="facts-section">
-                                <div class="facts-section__title">
-                                    @(interaction.ChannelName ?? "Unknown channel")
-                                    @if (interaction.IsOriginatingInteraction)
-                                    {
-                                        <span class="badge badge-status-open"><span class="badge-dot"></span>Originating</span>
-                                    }
-                                </div>
-                                <dl>
-                                    <div class="facts-row">
-                                        <dt>Started</dt>
-                                        <dd>@interaction.StartedAtUtc.ToLocalTime().ToString("dd MMM yyyy HH:mm")</dd>
-                                    </div>
-                                    <div class="facts-row">
-                                        <dt>Ended</dt>
-                                        <dd>@(interaction.EndedAtUtc is { } endedAt ? endedAt.ToLocalTime().ToString("dd MMM yyyy HH:mm") : "Not ended")</dd>
-                                    </div>
-                                    @* A named agent is shown only when a person is actually
-                                       handling the interaction — an AI-only conversation never
-                                       displays a human agent. *@
-                                    @if (interaction.HandlingState is "Human" && !string.IsNullOrWhiteSpace(interaction.AgentName))
-                                    {
-                                        <div class="facts-row"><dt>Agent</dt><dd>@interaction.AgentName</dd></div>
-                                    }
-                                    @if (interaction.HandlingState is not null)
-                                    {
-                                        <div class="facts-row"><dt>Handled by</dt><dd>@TicketDisplay.HandlingStateLabel(interaction.HandlingState, interaction.AgentName)</dd></div>
-                                    }
-                                    @if (!string.IsNullOrWhiteSpace(interaction.CustomerName))
-                                    {
-                                        <div class="facts-row"><dt>Customer</dt><dd>@interaction.CustomerName</dd></div>
-                                    }
-                                    @if (!string.IsNullOrWhiteSpace(interaction.CustomerPhone))
-                                    {
-                                        <div class="facts-row"><dt>Phone</dt><dd>@interaction.CustomerPhone</dd></div>
-                                    }
-                                    @* The INTERACTION's own lifecycle — deliberately
-                                       separate from the ticket's status: a conversation
-                                       that ended never closes the ticket. *@
-                                    <div class="facts-row">
-                                        <dt>Status</dt>
-                                        <dd>@(interaction.Status == "Ended"
-                                                ? $"Ended{(string.IsNullOrWhiteSpace(interaction.EndReason) ? "" : $" ({interaction.EndReason})")}"
-                                                : "Active")</dd>
-                                    </div>
-                                    @* Pending human work raised from this interaction —
-                                       the context an agent taking over most needs, and a
-                                       status deliberately separate from the ticket's own:
-                                       completing the human work never closes the ticket. *@
-                                    @if (interaction.HandlingState is not null)
-                                    {
-                                        <div class="facts-row"><dt>Handoff requested</dt><dd>@(interaction.Handoff is null ? "No" : "Yes")</dd></div>
-                                    }
-                                    @if (interaction.Handoff is { } handoff)
-                                    {
-                                        <div class="facts-row"><dt>Initiated by</dt><dd>@TicketDisplay.HandoffInitiatorLabel(handoff.Trigger)</dd></div>
-                                        <div class="facts-row">
-                                            <dt>Handoff status</dt>
-                                            <dd>
-                                                <span class="badge badge-handoff-@TicketDisplay.HandoffStatusCssKey(handoff.Status)">
-                                                    @TicketDisplay.HandoffStatusLabel(handoff.Status)
-                                                </span>
-                                                <span class="text-secondary">
-                                                    requested @handoff.RequestedAtUtc.ToLocalTime().ToString("dd MMM HH:mm")
-                                                </span>
-                                            </dd>
-                                        </div>
-                                        <div class="facts-row">
-                                            <dt>Follow-up</dt>
-                                            <dd class="@(handoff.Mode is null ? "text-secondary" : null)">@TicketDisplay.HandoffModeLabel(handoff.Mode)</dd>
-                                        </div>
-                                        @if (!string.IsNullOrWhiteSpace(handoff.RequestReason))
-                                        {
-                                            <div class="facts-row"><dt>Handoff reason</dt><dd>@handoff.RequestReason</dd></div>
-                                        }
-                                        @if (!string.IsNullOrWhiteSpace(handoff.ResolutionNote))
-                                        {
-                                            <div class="facts-row"><dt>Outcome note</dt><dd>@handoff.ResolutionNote</dd></div>
-                                        }
-                                    }
-                                </dl>
-
-                                @if (interaction.Messages.Count == 0)
-                                {
-                                    <p class="text-secondary">
-                                        @(interaction.Status == "Ended"
-                                            ? "No transcript was recorded for this interaction."
-                                            : "No messages have been recorded for this conversation yet.")
-                                    </p>
-                                }
-                                else
-                                {
-                                    <ol class="timeline">
-                                        @foreach (var message in interaction.Messages)
-                                        {
-                                            var isCustomer = message.Sender == "Customer";
-                                            var iconCss = isCustomer ? "icon-info" : "icon-quiet";
-                                            @* A bot line is labelled as a bot: an agent taking over
-                                               must be able to tell what a human said from what the
-                                               virtual agent said. *@
-                                            var senderLabel = message.SenderName
-                                                ?? (message.Sender switch
-                                                {
-                                                    "VirtualAgent" => "Virtual agent",
-                                                    "HumanAgent" => "Human agent",
-                                                    _ => message.Sender
-                                                });
-                                            <li class="timeline-item">
-                                                <span class="timeline-icon @iconCss"><svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="4" fill="currentColor" /></svg></span>
-                                                <div class="timeline-row">
-                                                    <span class="timeline-text"><strong>@senderLabel</strong></span>
-                                                    <span class="timeline-time">@message.SentAtUtc.ToLocalTime().ToString("HH:mm")</span>
-                                                </div>
-                                                <div class="timeline-note @(isCustomer ? "timeline-note--human" : "timeline-note--system")">@message.Body</div>
-                                            </li>
-                                        }
-                                    </ol>
-                                }
-                            </div>
-                        }
-                    }
                 </div>
 
                 @* ---- Approvals & Dependencies ---- *@

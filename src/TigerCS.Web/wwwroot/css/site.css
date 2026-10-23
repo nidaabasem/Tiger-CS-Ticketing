@@ -630,7 +630,6 @@ textarea.form-control { min-height: 96px; resize: vertical; padding: var(--space
 #tab-audit:checked ~ .tabs-body #panel-audit,
 #tab-details:checked ~ .tabs-body #panel-details,
 #tab-history:checked ~ .tabs-body #panel-history,
-#tab-conversations:checked ~ .tabs-body #panel-conversations,
 #tab-overview:checked ~ .tabs-body #panel-overview,
 #tab-contact:checked ~ .tabs-body #panel-contact,
 #tab-units:checked ~ .tabs-body #panel-units,
@@ -2170,4 +2169,89 @@ a.ticket-header__customer-name:hover { text-decoration: underline; }
 
 @media (max-width: 1100px) {
   .attention__main { align-items: flex-start; }
+}
+
+/* ---- Ticket Details: Classify explanation ---------------------------------
+   Replaces the Classify form when the department has nothing valid to choose
+   from. Neutral, informational; a failed read (not configuration) is tinted
+   as a warning. */
+.classify-notice { max-width: 460px; padding: var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-bg); }
+.classify-notice--error { border-color: var(--color-warning-line); background: var(--color-warning-tint); }
+.classify-notice__title { margin: 0 0 var(--space-1); font-size: 14px; font-weight: 600; color: var(--color-text); }
+.classify-notice__detail { margin: 0 0 var(--space-3); font-size: 13.5px; line-height: 1.45; color: var(--color-text-secondary); }
+.classify-notice__detail:last-child { margin-bottom: 0; }
+
+/* ---- Ticket Details: Conversation History ---------------------------------
+   A compact chat window inside the Overview. Customer on the right, the bot
+   and team members on the left, platform events set apart. Soft neutral
+   surfaces; Tiger gold only as a hairline/tint on the customer's side. No
+   numbered markers, no full-width boxes. */
+.conversation { display: flex; flex-direction: column; gap: var(--space-2); }
+.conversation > .facts-section__title { margin-bottom: 0; }
+.convo-group { border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-surface); }
+.convo-group__summary {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-1) var(--space-3);
+  cursor: pointer; padding: var(--space-2) var(--space-3); list-style: none;
+}
+.convo-group__summary::-webkit-details-marker { display: none; }
+.convo-group__head::before { content: "▸"; color: var(--color-text-secondary); font-size: 12px; }
+.convo-group[open] > .convo-group__summary .convo-group__head::before { content: "▾"; }
+.convo-group[open] > .convo-group__summary { border-bottom: 1px solid var(--color-border); }
+.convo-group__head { flex: 1 1 auto; display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-2); min-width: 0; }
+.convo-group__channel { font-size: 14px; font-weight: 600; color: var(--color-text); }
+.convo-group__when { font-size: 12.5px; color: var(--color-text-secondary); }
+.convo-chip {
+  display: inline-block; padding: 1px 8px; border: 1px solid var(--color-border); border-radius: 999px;
+  background: var(--color-bg); font-size: 12px; font-weight: 500; color: var(--color-text-secondary); white-space: nowrap;
+}
+.convo-chip--ai { background: var(--color-info-tint); border-color: var(--color-info-line); color: var(--color-info); }
+.convo-chip--human { background: var(--color-progress-tint); border-color: var(--color-progress-line); color: var(--color-progress); }
+.convo-chip--waiting { background: var(--color-warning-tint); border-color: var(--color-warning-line); color: var(--color-warning-text); }
+.convo-chip--handoff { background: var(--color-gold-pale); border-color: var(--color-gold-line); color: var(--color-gold-dark); }
+.convo-chip--quiet { background: var(--color-bg); border-color: var(--color-border); color: var(--color-text-secondary); }
+.convo-group__body { padding: var(--space-2) var(--space-3) var(--space-3); }
+.convo-meta { display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-4); margin: 0 0 var(--space-2); }
+.convo-meta__item { display: flex; gap: var(--space-1); font-size: 12.5px; min-width: 0; }
+.convo-meta__item dt { color: var(--color-text-secondary); }
+.convo-meta__item dt::after { content: ":"; }
+.convo-meta__item dd { margin: 0; color: var(--color-text); overflow-wrap: anywhere; }
+.convo-meta__item--wide { flex: 1 1 100%; }
+.convo-empty { margin: 0; font-size: 13.5px; }
+
+.chat-scroll {
+  max-height: 440px; overflow-y: auto; padding: var(--space-2); border: 1px solid var(--color-border);
+  border-radius: var(--radius-md); background: #FAFAF8; overscroll-behavior: contain;
+}
+.chat-scroll:focus-visible { outline: 2px solid var(--color-gold); outline-offset: 2px; }
+.chat { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.chat-msg { display: flex; }
+.chat-msg--customer { justify-content: flex-end; }
+.chat-msg--bot, .chat-msg--human { justify-content: flex-start; }
+.chat-bubble {
+  max-width: min(78%, 520px); padding: 5px 10px 6px; border: 1px solid var(--color-border); border-radius: 12px;
+  background: var(--color-surface); min-width: 0;
+}
+.chat-msg--customer .chat-bubble { background: var(--color-gold-pale); border-color: var(--color-gold-line); border-bottom-right-radius: 4px; }
+.chat-msg--bot .chat-bubble { background: var(--color-surface); border-bottom-left-radius: 4px; }
+.chat-msg--human .chat-bubble { background: #F3F2EE; border-color: var(--color-border-strong); border-left: 3px solid var(--color-ink); border-bottom-left-radius: 4px; }
+.chat-bubble__meta { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-3); margin-bottom: 1px; }
+.chat-bubble__who { font-size: 12px; font-weight: 600; color: var(--color-text-secondary); overflow-wrap: anywhere; }
+.chat-msg--human .chat-bubble__who { color: var(--color-ink); }
+.chat-msg--customer .chat-bubble__who { color: var(--color-gold-dark); }
+.chat-bubble__time { font-size: 12px; color: var(--color-text-secondary); white-space: nowrap; }
+.chat-bubble__text { font-size: 14px; line-height: 1.4; color: var(--color-text); white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; }
+.chat-day { align-self: center; margin: var(--space-1) 0; }
+.chat-day span { display: inline-block; padding: 1px 10px; border-radius: 999px; background: var(--color-bg); border: 1px solid var(--color-border); font-size: 12px; color: var(--color-text-secondary); }
+.chat-event {
+  align-self: center; max-width: 90%; text-align: center; padding: 2px 10px; border: 1px dashed var(--color-border-strong);
+  border-radius: 999px; font-size: 12.5px; color: var(--color-text-secondary); overflow-wrap: anywhere;
+}
+.chat-event__label { font-weight: 600; }
+.chat-event__time { white-space: nowrap; }
+
+@media (max-width: 720px) {
+  .chat-bubble { max-width: 90%; }
+  .chat-scroll { max-height: 60vh; padding: 6px; }
+  .convo-group__summary { padding: var(--space-2); }
+  .convo-group__body { padding: var(--space-2); }
 }
