@@ -35,9 +35,9 @@
             · approved by @(d.ApprovedByName ?? d.InitiatedByEmployeeId.ToString("D")) · @d.InitiatedAtUtc.ToString("yyyy-MM-dd HH:mm") UTC</p>
         @if (!string.IsNullOrEmpty(d.StatusReason)) { <p role="status">@d.StatusReason</p> }
         <ul class="review-tally">
-            <li><strong>@d.UploadedCount</strong> uploaded to Genesys (accepted by Genesys)</li>
-            <li><strong>@d.ExcludedCount</strong> excluded at sending (paid or settled)</li>
-            <li><strong>@d.FailedCount</strong> rejected by Genesys (nothing created)</li>
+            <li><strong>@d.UploadedCount</strong> uploaded to Genesys<partial name="_InfoTip" model="@(new InfoTipModel("tip-tally-uploaded", "Uploaded to Genesys", "Accepted by Genesys."))" /></li>
+            <li><strong>@d.ExcludedCount</strong> excluded at sending<partial name="_InfoTip" model="@(new InfoTipModel("tip-tally-excluded", "Excluded at sending", "Paid or settled."))" /></li>
+            <li><strong>@d.FailedCount</strong> rejected by Genesys<partial name="_InfoTip" model="@(new InfoTipModel("tip-tally-rejected", "Rejected by Genesys", "Nothing created."))" /></li>
             <li><strong>@d.UnknownCount</strong> unconfirmed</li>
         </ul>
         @if (!string.IsNullOrEmpty(d.Phase) && verdict.Css == "running") { <p role="status">Progress: @d.Phase</p> }
@@ -45,8 +45,10 @@
         @if (d.Status is "Completed" or "CompletedWithErrors" && d.AdminEmailStatus is "Failed" or "NotConfigured" or "None")
         {
             <form method="post" asp-page-handler="RetryEmail" asp-route-dispatch="@d.DispatchId">
-                <button class="btn" type="submit" data-retry-email>Retry administrator email</button>
-                <span class="review-note">Sends the report only. The Genesys upload is never repeated.</span>
+                <span class="campaign-action">
+                    <button class="btn" type="submit" aria-describedby="tip-retry-email" data-retry-email>Retry administrator email</button>
+                    <partial name="_InfoTip" model="@(new InfoTipModel("tip-retry-email", "Retry administrator email", "Sends the report only. The Genesys upload is never repeated."))" />
+                </span>
             </form>
         }
         <p>Paid-after-upload protection: <strong>@d.SuppressedCount</strong> contact(s) already made not callable@(d.SuppressionFailedCount > 0 ? $", {d.SuppressionFailedCount} could not be (needs attention)" : "").
@@ -96,7 +98,7 @@
 @if (Model.Summary is { } s)
 {
     <form method="post" class="panel review-confirm" data-confirm-form asp-page-handler="Confirm">
-        <h2>Confirm Approve &amp; Send</h2>
+        <h2>Confirm Approve &amp; Send<partial name="_InfoTip" model="@(new InfoTipModel("tip-confirm-checks", "What is checked before uploading", "Before uploading, the current balance of every customer is checked again against the financial snapshot. Paid customers are dropped; any other change, or a duplicate of an earlier send, stops the send for review. A copy of the approved list and the Genesys result is emailed to the Collections administrator."))" /></h2>
         <dl class="review-snapshot" data-selection-snapshot>
             <dt>Customers</dt><dd data-snapshot-count>@s.Count</dd>
             <dt>Total amount</dt><dd data-snapshot-total>@string.Join(" · ", s.TotalsByCurrency.Select(t => $"{t.Key} {CampaignsModel.Money(t.Value)}"))</dd>
@@ -105,7 +107,6 @@
             <dd data-snapshot-list>@if (s.ContactListByReminderType is { Count: > 0 } lists) { @foreach (var l in lists) { <div>@CampaignsModel.StageName(l.Key): <code>@l.Value</code></div> } } else { <text>—</text> }</dd>
             <dt>Financial source</dt><dd>@(s.SourceReconciled ? "Reconciled" : "Not reconciled")</dd>
         </dl>
-        <p>Before uploading, the current balance of every customer is checked again against the financial snapshot. Paid customers are dropped; any other change, or a duplicate of an earlier send, stops the send for review. A copy of the approved list and the Genesys result is emailed to the Collections administrator.</p>
         @foreach (var n in s.Notices) { <p role="status">@n</p> }
         @if (Model.Overlaps is { TotalPhones: > 0 } overlaps) { <p role="status" data-overlap-note>@overlaps.TotalPhones phone number(s) are held back to avoid repeated calls (several units on one phone, or several reminder types for one unit). They are not in this list.</p> }
         <div class="table-scroll"><table class="table">

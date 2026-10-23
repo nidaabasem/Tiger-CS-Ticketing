@@ -238,6 +238,37 @@ public sealed class CollectionsCampaignApprovalRenderTests
     }
 
     [Fact]
+    public async Task TheConfirmation_KeepsTheAcknowledgementVisible_AndMovesTheCheckExplanationIntoAnInfoTooltip()
+    {
+        using var factory = Factory(NewApi()); using var client = factory.CreateClient();
+        var html = await (await client.PostAsync("/Collections/Campaigns?handler=Approve", new FormUrlEncodedContent(Form(await TokenAsync(client),
+            ("selectionMode", "SelectedUnits"), ("unitKeys", "4|3001|TP140-1"))))).Content.ReadAsStringAsync();
+        var tip = Regex.Match(html, "id=\"tip-confirm-checks\" role=\"tooltip\" data-info-tip-content>(.*?)</span>", RegexOptions.Singleline).Groups[1].Value;
+        Assert.Contains("checked again against the financial snapshot", tip); Assert.Contains("emailed to the Collections administrator", tip);
+        var visible = Regex.Replace(html, "<span class=\"info-tip__content\".*?</span>", "", RegexOptions.Singleline);
+        Assert.DoesNotContain("checked again against the financial snapshot", visible);
+        Assert.Contains("I understand that an active Genesys campaign using these lists may start calling the uploaded contacts immediately", visible);   // the mandatory warning is never tooltip-only
+        Assert.Contains("data-confirm-button", visible);
+    }
+
+    [Fact]
+    public async Task TheSendResult_KeepsItsFiguresAndStatuses_AndPutsTheirGlossInInfoTooltips()
+    {
+        var api = Set(NewApi(), a => a.Sent = Dispatch(email: "Failed", emailError: "smtp busy"));
+        using var factory = Factory(api); using var client = factory.CreateClient();
+        var html = await (await client.GetAsync($"/Collections/Campaigns?dispatch={DispatchId}")).Content.ReadAsStringAsync();
+        var tally = Regex.Match(html, "<ul class=\"review-tally\">.*?</ul>", RegexOptions.Singleline).Value;
+        Assert.Contains("uploaded to Genesys<span class=\"info-tip\"", tally); Assert.Contains("excluded at sending<span class=\"info-tip\"", tally); Assert.Contains("rejected by Genesys<span class=\"info-tip\"", tally);
+        foreach (var gloss in new[] { "Accepted by Genesys.", "Paid or settled.", "Nothing created." }) Assert.Contains($"data-info-tip-content>{gloss}</span>", tally);
+        Assert.Contains("unconfirmed", tally);
+        // The retry-email button keeps its hook and form; its note is a tooltip, and the failure itself stays visible.
+        var retry = Regex.Match(html, "<span class=\"campaign-action\">\\s*<button[^>]*data-retry-email[^>]*>Retry administrator email</button>\\s*<span class=\"info-tip\".*?</form>", RegexOptions.Singleline).Value;
+        Assert.Contains("aria-describedby=\"tip-retry-email\"", retry); Assert.Contains("Sends the report only. The Genesys upload is never repeated.", retry);
+        Assert.DoesNotContain("<span class=\"review-note\">Sends the report only", html);
+        Assert.Contains("data-admin-email-error", html); Assert.Contains("smtp busy", html);
+    }
+
+    [Fact]
     public async Task RetryingTheEmail_CallsOnlyTheEmailRetry()
     {
         var api = Set(NewApi(), a => a.Sent = Dispatch(email: "Failed", emailError: "smtp busy"));
