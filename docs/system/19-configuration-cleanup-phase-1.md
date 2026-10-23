@@ -1,6 +1,6 @@
 # 19. Configuration cleanup - Phase 0 (verification) and Phase 1 (safe cleanup)
 
-> Part of the [documentation set](README.md). Scope: configuration **files** only. No code logic, schema, job schedule or feature switch was changed, nothing was deployed. Secret values are never reproduced in this document; where a value is sensitive only its presence or emptiness is stated.
+> Part of the [documentation set](README.md). **Reflects `main` as of the merge into this branch (commit `4fb11c1`)**; the base settings changed materially on `main` while this work was in progress and are described as they are now. Scope: configuration **files** only. No code logic, schema, job schedule or feature switch was changed, nothing was deployed. Secret values are never reproduced in this document; where a value is sensitive only its presence or emptiness is stated.
 
 ## 19.1 Configuration precedence (verified from the code)
 
@@ -27,22 +27,26 @@ Arrays merge **by index** across files and never shrink; the cleanup below does 
 
 "Verified" means derived from committed files and code. Anything supplied by the host (environment variables, user-secrets, IIS settings, a Production file) is **unverified** - it cannot be seen from the repository, and no value has been assumed.
 
-| Setting | Code default | Committed (base) | Development | UAT | Production | Server override |
-|---|---|---|---|---|---|---|
-| `BackgroundJobs:Enabled` | `true` | `false` | `false` (inherited) | `false` (inherited, test-pinned) | `false` | **Unverified** |
-| `Collections:ReceivablesSnapshot:RefreshEnabled` | `true` | `true` | `true` | `true` | `true` | Unverified |
-| `Collections:ReceivablesSnapshot:RefreshOnStartup` | `true` | `true` | `true` | `true` | `true` | Unverified |
-| `Collections:ReceivablesSnapshot:RefreshCron` / zone | `0 */2 * * *` / `Asia/Dubai` | same | same | same | same | Unverified |
-| `CollectionsSource:CrmOwners:Enabled` | `false` | `true` | `true` | `true` | `true` | Unverified |
-| `CollectionsSource:CrmOwners:RefreshOnStartup` / cron | `true` / `15 * * * *` (server local time) | same | same | same | same | Unverified |
-| `Genesys:Enabled` | `false` | `true` | `true` | `true` | `true` | Unverified |
-| `Genesys:CustomerInactivityTimeoutMinutes` / `AwaitingReplyTimeoutMinutes` / `DefaultTicketPriority` | `10` / `5` / `Normal` | same | same | same | same | Unverified |
-| `Genesys:ScreenPopWebBaseUrl` | unset | **not committed in `src/`** | not committed | not committed | not committed | Unverified (screen pop answers 503 "not configured" until set) |
-| `Genesys:ClassificationDepartmentCode`, `AutoRaiseHandoffOnConversationEnd` | unset / `false` | not committed | not committed | not committed | not committed | Unverified |
-| `Collections:GenesysOutbound:Enabled` / `LiveCustomerDispatchEnabled` / `SuppressionEnabled` | `false` | `false` | `false` | `false` | `false` | Unverified |
-| `Tasleeh:Provider` | `Mock` | **not committed** | not committed | not committed | not committed | Unverified (the code default serves a fixture customer) |
+| Setting | Code default | Development | UAT | Production (base only) | Server override |
+|---|---|---|---|---|---|
+| `BackgroundJobs:Enabled` | `true` | `true` | `true` | `true` | **Unverified** |
+| `Collections:ReceivablesSnapshot:RefreshEnabled` / `RefreshOnStartup` | `true` / `true` | `true` / `true` | `true` / `true` | `true` / `true` | Unverified |
+| `Collections:ReceivablesSnapshot:RefreshCron` / zone | `0 */2 * * *` / `Asia/Dubai` | same | same | same | Unverified |
+| `CollectionsSource:CrmOwners:Enabled` | `false` | `true` | `true` | `true` | Unverified |
+| `CollectionsSource:CrmOwners:RefreshOnStartup` / cron | `true` / `15 * * * *` (server local time) | same | same | same | Unverified |
+| `Genesys:Enabled` | `false` | `true` | `true` | `true` | Unverified |
+| `Genesys:CustomerInactivityTimeoutMinutes` / `AwaitingReplyTimeoutMinutes` / `DefaultTicketPriority` | `10` / `5` / `Normal` | same | same | same | Unverified |
+| `Genesys:ScreenPopWebBaseUrl`, `ClassificationDepartmentCode` | unset | not committed | not committed | not committed | Unverified (screen pop answers 503 until the URL is set) |
+| `Collections:GenesysOutbound:Enabled` / `LiveCustomerDispatchEnabled` / `SuppressionEnabled` | `false` | `false` | `false` | `false` | Unverified |
+| `Collections:Campaigns:FinancialSourceValidated` | `false` | `true` | `true` | `true` | Unverified |
+| `EmailNotifications:Enabled` / `Provider` | `false` / `Smtp` | `true` / `Smtp` | `true` / `Smtp` | `true` / `Smtp` | Unverified (password is empty in every file) |
+| `CrmDocuments:Enabled` | `false` | `true` | `false` | `false` | Unverified |
+| `VerificationTesting:Enabled` | `false` | `true` | `true` | **`true`** | Unverified. Allowed only in Local/Development/UAT/Testing: a host named Production **refuses to start** unless this is overridden. |
+| `Tasleeh:Provider` | `Mock` | not committed | not committed | not committed | Unverified (the code default serves a fixture customer) |
 
-While `BackgroundJobs:Enabled` is `false`, `RefreshEnabled`, `RefreshOnStartup` and the CRM-owners switches are inert: the registration code returns before using them (`BackgroundJobServiceCollectionExtensions`). Enabling `BackgroundJobs` anywhere makes every start trigger one PACT pull per company and one CRM-owners load.
+Background jobs are therefore **on** in the committed base for every environment. That is `main`'s current state, not something this cleanup changed (`git diff eed8d09 origin/main` on the two Api settings files). With them on, each application start triggers one PACT pull per company (`RefreshOnStartup`) and one CRM-owners load.
+
+If `BackgroundJobs:Enabled` is overridden to `false`, `RefreshEnabled`, `RefreshOnStartup` and the CRM-owners switches become inert: the registration code returns before using them (`BackgroundJobServiceCollectionExtensions`).
 
 ## 19.3 Unused keys (Phase 0, item 4)
 
@@ -56,7 +60,7 @@ Method: every key in the five committed files was resolved to the options class 
 
 ### `src/TigerCS.Api/appsettings.Development.json`
 
-The file layered over `appsettings.json` and repeated 80 of its 88 keys with identical values. Removing an identical key cannot change the effective value, because the base file supplies it. The file now contains only what differs from the base.
+The file layered over `appsettings.json` and repeated 132 of its 137 keys with identical values. Removing an identical key cannot change the effective value, because the base file supplies it. The file now contains only what differs from the base.
 
 | Removed from Development (value identical to `appsettings.json`) | Effective Development value now comes from |
 |---|---|
@@ -67,10 +71,10 @@ The file layered over `appsettings.json` and repeated 80 of its 88 keys with ide
 | `CollectionsSource` (all keys incl. `PactReceivables` with the 50 `SpecialCaseUnitCodes`, `NextPayment`, `Provider`, `EdsmProvider`, deadlines) | `appsettings.json` |
 | `BackgroundJobs` (`Enabled: false`), `Genesys` (4 keys) | `appsettings.json` |
 | `CrmDocuments` (all keys except `Enabled`, `OtpSmsEnabled`) | `appsettings.json` |
-| `EmailNotifications` (all), `CustomerNotifications` (all except `PublicBaseUrl`) | `appsettings.json` |
-| `VerificationTesting:BlockRealCustomerDelivery` | `appsettings.json` |
+| `EmailNotifications` (all), `CustomerNotifications` (all except `PublicBaseUrl`), `Crm:DocumentFileHosts` | `appsettings.json` |
+| `VerificationTesting` (`Enabled`, `SmsOverride`, `EmailOverride`, `BlockRealCustomerDelivery` - all now identical to the base) | `appsettings.json` |
 
-**Kept (genuinely Development-specific):** `Sms:Provider=Fake`, `Sms:Fake:LogMessageText`, `CrmDocuments:Enabled` and `OtpSmsEnabled` (`true`), `CustomerNotifications:PublicBaseUrl`, `VerificationTesting:Enabled` (`true`), `SmsOverride`, `EmailOverride`.
+**Kept (genuinely Development-specific):** `Sms:Provider=Fake`, `Sms:Fake:LogMessageText`, `CrmDocuments:Enabled` and `OtpSmsEnabled` (`true`) and `CustomerNotifications:PublicBaseUrl` - five keys in total.
 
 ### `src/TigerCS.Web/appsettings.Development.json`
 
@@ -94,28 +98,30 @@ Two tests asserted the *text* of `appsettings.Development.json`, which no longer
 
 ## 19.5 Production template
 
-`src/TigerCS.Api/appsettings.Production.template.json` (new). It is **not** named `appsettings.Production.json`, so no environment loads it; an operator copies it deliberately. It lists the switches a Production deployment must decide (background jobs, startup refresh, CRM owners, provider values, customer test mode) with every value **equal to today's effective value**, marks the unverified ones `DECISION`, and lists - by name only - the secrets and per-environment endpoints that must come from the secret store. It contains no secret and no URL. It is published with the Api like any `*.json` content but is never read at runtime, and `CommittedSecretsGuardTests` scans it with the other settings files.
+`src/TigerCS.Api/appsettings.Production.template.json` (new). It is **not** named `appsettings.Production.json`, so no environment loads it; an operator copies it deliberately. It lists the switches a Production deployment must decide (background jobs, startup refresh, CRM owners, provider values, customer test mode) with every value **equal to the current effective Production value** (checked key by key; 33 keys), marks the ones to decide `DECISION`, and lists - by name only - the secrets and per-environment endpoints that must come from the secret store. It contains no secret and no URL. It is published with the Api like any `*.json` content but is never read at runtime, and `CommittedSecretsGuardTests` scans it with the other settings files.
 
 ## 19.6 `publish/` review
 
-`publish/` is committed build output (198 files, 149 DLLs). It was last touched on 2026-10-07; `src/` on 2026-10-23.
+`publish/` is committed build output (230 files). `main` regenerated it on 2026-10-22; `src/` has moved since (2026-10-23).
 
 | File | Finding |
 |---|---|
-| `publish/TigerCS.Api/appsettings.json` | 46 keys against 211 in `src/`; all 46 match. 165 keys are missing (`Collections:ReceivablesSnapshot`, `Campaigns`, `Review`, `GenesysOutbound`, `CrmOwners`, `PactReceivables`, ...), so code defaults would apply if this build were run. |
-| `publish/TigerCS.Api/appsettings.Development.json` | Diverged: has `Jwt:Issuer/Audience/ExpirationMinutes`, `Notifications:Email:*`, `Genesys:ScreenPopWebBaseUrl` and an empty `PactApi:ApiKey`; `EmailNotifications:Enabled=true` / `Provider=Recording` where `src/` has `false` / `Smtp`. |
-| `publish/TigerCS.Web/*` | Identical to `src/`. |
+| `publish/TigerCS.Api/appsettings.json` | 199 keys against 213 in `src/`. Nothing exists only in `publish/`. 14 keys exist only in `src/` (`Collections:Campaigns` reconciliation settings, `CustomerNotifications:*`), so code defaults would apply to them if this build were run. **Two values disagree: `Collections:Campaigns:LegalNoticeExportEnabled` and `LegalCaseDispatchApproved` are `true` in `publish/` and `false` in `src/`.** |
+| `publish/TigerCS.Api/appsettings.Development.json` | A full copy (128 keys) of the Development settings as they were before this cleanup; `src/` Development now holds 5 keys. Its effective values equal the base it ships with, so it is redundant, not different. |
+| `publish/TigerCS.Web/appsettings.json` | Identical to `src/`. |
+| `publish/TigerCS.Web/appsettings.Development.json` | Still carries the dead `Logging:Api:BaseUrl` and the duplicate `Logging:LogLevel`. |
 | Secrets | Every secret-named value in the committed files is empty (connection-string passwords, `EmailNotifications:Password`, `PactApi:ApiKey`, `Sms:Broadnet:Password`, `Collections:GenesysOutbound:ClientSecret`). Presence and emptiness only were inspected. |
 
-**Not changed.** The files belong to an older compiled build; editing them would create a hybrid artifact that matches neither the binaries nor `src/`. Recommendation (Phase 2 decision): stop committing `publish/`, or regenerate it from `src/` with `tools/build-release.sh` before any use, as `DEV-SETUP.md` already requires.
+**Not changed.** The files belong to a compiled build; editing them would create a hybrid artifact that matches neither the binaries nor `src/`. The legal-flag disagreement matters only if someone deploys `publish/` as it stands: regenerate it from `src/` with `tools/build-release.sh` first, as `DEV-SETUP.md` already requires, or stop committing it (Phase 2 decision).
 
 ## 19.7 Remaining risks and follow-ups
 
-1. **`BackgroundJobs:Enabled` is `false` in every committed file while the code default is `true`.** Production behaviour depends entirely on a server override that cannot be verified here. Confirm it on each server.
-2. **Startup refresh:** if background jobs are or become enabled, `RefreshOnStartup=true` triggers a PACT pull per company and a CRM-owners load on every start. The CRM-owners cron runs in server local time, and no overlap guard (SQL lock or Hangfire concurrency filter) was found in its service, store or job.
+1. **Background jobs are on in the committed base** (`BackgroundJobs:Enabled=true`) and `EmailNotifications:Enabled=true`, so any host without an override runs the SLA sweep, Outbox/e-mail dispatch, the snapshot refresh and the CRM-owners load. Confirm what each server actually sets. Note `SnapshotScheduleTests.TheShippedConfiguration_KeepsEveryBackgroundJobOff...` pins the opposite (see the test report on the pull request).
+2. **Startup refresh:** `RefreshOnStartup=true` triggers a PACT pull per company and a CRM-owners load on every start. The CRM-owners cron runs in server local time, and no overlap guard (SQL lock or Hangfire concurrency filter) was found in its service, store or job.
 3. **`Tasleeh:Provider` is unset everywhere**, so the code default `Mock` (fixture customer) applies unless a server overrides it. `docs/system/12` says to set `Unavailable`.
 4. **Production and the template** share the base file's non-secret environment values (internal URLs, SQL server and user name, localhost Web API URL). Production must override `TigerCsApi:BaseUrl` for the Web.
-5. **Personal data in committed files:** `VerificationTesting:SmsOverride` / `EmailOverride` (Development, UAT) and the UAT `AdminNotification:Recipients` hold a real phone number and staff e-mail addresses. Moving them to user-secrets / environment variables needs an agreed change so the overrides do not silently disappear.
+5. **Personal data in committed files:** `VerificationTesting:SmsOverride` / `EmailOverride`, `CustomerNotifications:TestEmail` / `TestPhone` and the `AdminNotification:Recipients` entries hold a real phone number and staff e-mail addresses, now in the **base** file as well. Moving them to user-secrets / environment variables needs an agreed change so the overrides do not silently disappear.
 6. **`CommittedSecretsGuardTests` covers only `Crm:SecretKey` and connection-string passwords**, not `PactApi:ApiKey`, `EmailNotifications:Password`, `Sms:Broadnet:Password`, `GenesysOutbound:ClientSecret`, `Jwt:SigningKey` or `CrmDocuments:OtpCodePepper`.
 7. **Documentation drift:** `DEV-SETUP.md` shows `BackgroundJobs:Enabled` as `true` "default", which is the code default but not the committed value; older documents may still describe both Api files as carrying connection strings.
 8. **Dormant exclusion list** (19.3) still sits in `appsettings.json`; hardcoded company IDs (4, 32) and unit-prefix exclusions in code remain until the SQL migration phase.
+9. **`VerificationTesting:Enabled=true` in the base** makes a Production-named host refuse to start unless overridden (see 19.2).
