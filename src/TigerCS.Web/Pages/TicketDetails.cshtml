@@ -46,6 +46,10 @@ else
     var hasLegacyReference = !hasCrmBuyer && !hasExternalVerification && !hasManualUnit
         && (t.UnitReferenceId is not null || t.ContactReferenceId is not null);
 
+    var guidance = Model.Guidance!;
+    // The header action the guidance recommends is ringed, so the right button is easy to find among the allowed ones.
+    string Rec(string key) => guidance.Primary is { IsTab: false } rp && rp.Key == key ? " is-recommended" : "";
+
     <div class="page">
         <nav class="breadcrumb" aria-label="Breadcrumb">
             <a href="/Tickets">Tickets</a>
@@ -76,15 +80,29 @@ else
                 <div>
                     <div class="ticket-header__id">@t.TicketNumber</div>
                     <h1 class="ticket-header__title">@t.RequestSummary</h1>
+                    <div class="ticket-header__customer">
+                        <span class="customer-card__avatar ticket-header__avatar" aria-hidden="true">@TicketDisplay.Initials(Model.CustomerDisplayName ?? Model.CustomerNameLabel)</span>
+                        @if (Model.CustomerProfileHref is { } headerProfileHref)
+                        {
+                            <a class="ticket-header__customer-name" href="@headerProfileHref">@Model.CustomerNameLabel</a>
+                        }
+                        else
+                        {
+                            <span class="ticket-header__customer-name">@Model.CustomerNameLabel</span>
+                        }
+                        @if (Model.CustomerPhone is { } headerPhone)
+                        {
+                            <span class="text-secondary text-mono">@headerPhone</span>
+                        }
+                        <span class="badge badge-verification-@t.VerificationStatus.ToLowerInvariant()">@Model.CustomerVerificationLabel</span>
+                    </div>
                     <div class="ticket-header__meta">
-                        <span><strong>Assigned Department:</strong> @TicketDisplay.AssignedDepartmentLabel(t.CurrentDepartmentId, Model.DepartmentName)</span>
                         <span><strong>Assigned To:</strong> @TicketDisplay.AssignedToLabel(t.CurrentOwnerEmployeeId, Model.OwnerName, t.CurrentDepartmentId, Model.DepartmentName)</span>
-                        <span><strong>Category:</strong> @(t.CategoryId is int hdrCat ? $"#{hdrCat}" : "Unclassified")</span>
+                        <span><strong>Assigned Department:</strong> @TicketDisplay.AssignedDepartmentLabel(t.CurrentDepartmentId, Model.DepartmentName)</span>
                     </div>
                     <div class="ticket-header__badges">
                         <span class="badge badge-status-@TicketDisplay.TicketStatusCssKey(t.TicketStatus)"><span class="badge-dot"></span>@TicketDisplay.TicketStatusLabel(t.TicketStatus)</span>
                         <span class="badge badge-priority-@TicketDisplay.PriorityCssKey(t.PriorityId)">@TicketDisplay.PriorityLabel(t.PriorityId)</span>
-                        <span class="badge badge-verification-@t.VerificationStatus.ToLowerInvariant()">@TicketDisplay.VerificationStatusLabel(t.VerificationStatus)</span>
                         @if (slaBadge is not null)
                         {
                             <span class="badge badge-sla-@slaBadge.Value.CssKey" title="@(Model.Sla?.Explanation?.NotStartedReason)">SLA: @slaBadge.Value.Label</span>
@@ -92,7 +110,7 @@ else
                     </div>
                 </div>
 
-                <div class="ticket-header__actions">
+                <div class="ticket-header__actions" role="group" aria-label="Ticket actions">
                     @if (!isClosed)
                     {
                         @* Every control in this block is gated on the SAME rule its
@@ -102,8 +120,8 @@ else
                            stays as the outer condition. *@
                         @if (Model.CanAssign)
                         {
-                        <details class="disclosure" open="@(Model.OpenSection == "assign" ? "open" : null)">
-                            <summary class="btn btn-sm">Assign</summary>
+                        <details class="disclosure" id="action-assign" data-action="assign" open="@(Model.OpenSection == "assign" ? "open" : null)">
+                            <summary class="btn btn-sm@(Rec("assign"))">Assign</summary>
                             <div class="disclosure__panel">
                                 <form method="post" asp-page-handler="Assign" class="action-form">
                                     <input type="hidden" asp-for="Assign.RowVersionBase64" />
@@ -190,8 +208,8 @@ else
                         {
                             @* Classify an Unclassified ticket: category, priority and request type for the ticket's own department.
                                This only classifies — it never requests a human handoff. *@
-                            <details class="disclosure" open="@(Model.OpenSection == "classify" ? "open" : null)">
-                                <summary class="btn btn-gold btn-sm">Classify</summary>
+                            <details class="disclosure" id="action-classify" data-action="classify" open="@(Model.OpenSection == "classify" ? "open" : null)">
+                                <summary class="btn btn-gold btn-sm@(Rec("classify"))">Classify</summary>
                                 <div class="disclosure__panel">
                                     <form method="post" asp-page-handler="Classify" class="action-form">
                                         <input type="hidden" asp-for="Classify.RowVersionBase64" />
@@ -250,8 +268,8 @@ else
 
                         @if (Model.CanTransfer)
                         {
-                            <details class="disclosure" open="@(Model.OpenSection == "transfer" ? "open" : null)">
-                                <summary class="btn btn-sm">Transfer</summary>
+                            <details class="disclosure" id="action-transfer" data-action="transfer" open="@(Model.OpenSection == "transfer" ? "open" : null)">
+                                <summary class="btn btn-sm@(Rec("transfer"))">Transfer</summary>
                                 <div class="disclosure__panel">
                                     <form method="post" asp-page-handler="Transfer" class="action-form">
                                         <input type="hidden" asp-for="Transfer.RowVersionBase64" />
@@ -284,8 +302,8 @@ else
 
                         @if (Model.CanChangeStatus)
                         {
-                        <details class="disclosure" open="@(Model.OpenSection == "status" ? "open" : null)">
-                            <summary class="btn @(isResolved ? "btn-sm" : "btn-gold btn-sm")">Change Status</summary>
+                        <details class="disclosure" id="action-status" data-action="status" open="@(Model.OpenSection == "status" ? "open" : null)">
+                            <summary class="btn @(isResolved ? "btn-sm" : "btn-gold btn-sm")@(Rec("status"))">Change Status</summary>
                             <div class="disclosure__panel">
                                 <form method="post" asp-page-handler="ChangeStatus" class="action-form">
                                     <input type="hidden" asp-for="Status.RowVersionBase64" />
@@ -314,8 +332,8 @@ else
 
                         @if (Model.CanResolve)
                         {
-                        <details class="disclosure" open="@(Model.OpenSection == "resolve" ? "open" : null)">
-                            <summary class="btn btn-sm">Resolve</summary>
+                        <details class="disclosure" id="action-resolve" data-action="resolve" open="@(Model.OpenSection == "resolve" ? "open" : null)">
+                            <summary class="btn btn-sm@(Rec("resolve"))">Resolve</summary>
                             <div class="disclosure__panel">
                                 <form method="post" asp-page-handler="Resolve" class="action-form">
                                     <input type="hidden" asp-for="Resolve.RowVersionBase64" />
@@ -345,8 +363,8 @@ else
 
                         @if (Model.CanEscalate)
                         {
-                        <details class="disclosure" open="@(Model.OpenSection == "escalate" ? "open" : null)">
-                            <summary class="btn btn-sm">Escalate</summary>
+                        <details class="disclosure" id="action-escalate" data-action="escalate" open="@(Model.OpenSection == "escalate" ? "open" : null)">
+                            <summary class="btn btn-sm@(Rec("escalate"))">Escalate</summary>
                             <div class="disclosure__panel">
                                 <form method="post" asp-page-handler="Escalate" class="action-form">
                                     <input type="hidden" asp-for="Escalate.RowVersionBase64" />
@@ -379,7 +397,7 @@ else
                            SLA period moves. Only lower priorities are offered. *@
                         @if (Model.CanRequestDowngrade)
                         {
-                        <details class="disclosure" open="@(Model.OpenSection == "downgrade" ? "open" : null)">
+                        <details class="disclosure" id="action-downgrade" data-action="downgrade" open="@(Model.OpenSection == "downgrade" ? "open" : null)">
                             <summary class="btn btn-sm">Request priority downgrade</summary>
                             <div class="disclosure__panel">
                                 <form method="post" asp-page-handler="RequestDowngrade" class="action-form">
@@ -408,9 +426,9 @@ else
                        half (the CS layer, per ISSUE-022's Resolve/Close split). *@
                     @if (isResolved && Model.CanClose)
                     {
-                        <form method="post" asp-page-handler="Close">
+                        <form method="post" asp-page-handler="Close" id="action-close" data-action="close">
                             <input type="hidden" asp-for="Close.RowVersionBase64" />
-                            <button type="submit" class="btn btn-gold btn-sm">Close ticket</button>
+                            <button type="submit" class="btn btn-gold btn-sm@(Rec("close"))">Close ticket</button>
                         </form>
                     }
 
@@ -423,8 +441,8 @@ else
                        caller's access to this ticket, which the UI cannot see. *@
                     @if (t.IsReopenEligible && Model.CanReopen)
                     {
-                        <details class="disclosure" open="@(Model.OpenSection == "reopen" ? "open" : null)">
-                            <summary class="btn @(isClosed ? "btn-gold btn-sm" : "btn-sm")">Reopen</summary>
+                        <details class="disclosure" id="action-reopen" data-action="reopen" open="@(Model.OpenSection == "reopen" ? "open" : null)">
+                            <summary class="btn @(isClosed ? "btn-gold btn-sm" : "btn-sm")@(Rec("reopen"))">Reopen</summary>
                             <div class="disclosure__panel">
                                 @if (Model.ReopenTargetsUnavailable)
                                 {
@@ -454,31 +472,9 @@ else
                 </div>
             </div>
 
-            @if (isClosed)
-            {
-                <div class="status-banner status-banner--closed">
-                    <svg viewBox="0 0 24 24" fill="none"><rect x="4" y="10" width="16" height="10" rx="1.6" stroke="currentColor" stroke-width="1.6" /><path d="M8 10V7a4 4 0 0 1 8 0v3" stroke="currentColor" stroke-width="1.6" /></svg>
-                    This ticket is closed and read-only. Resolution: @TicketDisplay.ResolutionOutcomeLabel(t.ResolutionOutcome).@(t.IsReopenEligible ? " It is still within the reopen window." : "")
-                </div>
-            }
-            else if (slaBadge?.CssKey == "breached")
-            {
-                <div class="status-banner status-banner--critical">
-                    <svg viewBox="0 0 24 24" fill="none"><path d="M12 9v4M12 17h.01M10.3 3.9 2.5 18a1.6 1.6 0 0 0 1.4 2.4h16.2a1.6 1.6 0 0 0 1.4-2.4L13.7 3.9a1.6 1.6 0 0 0-2.8 0Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" /></svg>
-                    SLA @slaBadge.Value.Label.ToLowerInvariant() — escalation level @TicketDisplay.EscalationLevelLabel(t.EscalationLevel).
-                </div>
-            }
-            else if (t.VerificationStatus == "PendingCrmVerification")
-            {
-                <div class="status-banner status-banner--pending">
-                    <svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.6" /><path d="M12 8v4l3 2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" /></svg>
-                    Pending CRM verification — awaiting reconciliation.
-                </div>
-            }
-
             @if (Model.PendingDowngrade is { } pendingDowngrade)
             {
-                <div class="status-banner status-banner--pending" id="pending-downgrade">
+                <div class="status-banner status-banner--pending" id="pending-downgrade" data-action="pending-downgrade">
                     <svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.6" /><path d="M12 8v4l3 2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" /></svg>
                     <div>
                         Priority downgrade pending approval: @TicketDisplay.PriorityLabel(pendingDowngrade.CurrentPriorityId) &rarr; @TicketDisplay.PriorityLabel(pendingDowngrade.RequestedPriorityId).
@@ -531,10 +527,98 @@ else
                 <div class="tab-panel" id="panel-details">
                     <div class="detail-layout">
                         <div class="detail-main">
-@await Html.PartialAsync("_TicketCustomerCard", Model)
+                            @* ---- 1. What needs my attention? — the next step, in the order a CS employee works ---- *@
+                            @{
+                                var attentionCss = guidance.Level switch
+                                {
+                                    AttentionLevel.Urgent => "critical",
+                                    AttentionLevel.Attention => "warning",
+                                    AttentionLevel.Done => "neutral",
+                                    _ => "info"
+                                };
+                            }
+                            <section class="attention attention--@attentionCss" aria-labelledby="attention-title">
+                                <div class="attention__label" id="attention-title">What needs your attention?</div>
+                                <div class="attention__main">
+                                    <div class="attention__text">
+                                        <p class="attention__headline">@guidance.Headline</p>
+                                        <p class="attention__reason">@guidance.Reason</p>
+                                    </div>
+                                    @if (guidance.Primary is { } primary)
+                                    {
+                                        @if (primary.IsTab)
+                                        {
+                                            <label class="btn btn-gold btn-sm tab-jump attention__cta" for="@primary.Key">@primary.Label</label>
+                                        }
+                                        else
+                                        {
+                                            <a class="btn btn-gold btn-sm attention__cta" href="#action-@primary.Key" data-guidance-target="@primary.Key">@primary.Label</a>
+                                        }
+                                    }
+                                </div>
+                                @if (guidance.Alerts.Count > 0)
+                                {
+                                    <ul class="attention__alerts">
+                                        @foreach (var alert in guidance.Alerts)
+                                        {
+                                            <li class="attention__alert attention__alert--@alert.Level.ToString().ToLowerInvariant()">@alert.Text</li>
+                                        }
+                                    </ul>
+                                }
+                                @if (Model.CanRecordFirstResponse)
+                                {
+                                    @* First Response SLA stops only on a HUMAN response. Staff who answer the customer outside the
+                                       Genesys transcript (phone, e-mail, walk-in) record it here; AI/automated replies never do. *@
+                                    <form method="post" asp-page-handler="RecordFirstResponse" class="attention__inline-form">
+                                        <input type="hidden" asp-for="Escalate.RowVersionBase64" />
+                                        <span class="field-hint">No person has replied yet. Answered outside the system?</span>
+                                        <button type="submit" class="btn btn-sm">Record first response</button>
+                                    </form>
+                                }
+                                @if (guidance.Unavailable.Count > 0)
+                                {
+                                    <details class="attention__unavailable">
+                                        <summary>Not available to you right now (@guidance.Unavailable.Count)</summary>
+                                        <ul>
+                                            @foreach (var blocked in guidance.Unavailable)
+                                            {
+                                                <li><strong>@blocked.Label</strong> &mdash; @blocked.Reason</li>
+                                            }
+                                        </ul>
+                                    </details>
+                                }
+                            </section>
 
+                            @* ---- 2. Who is the customer ---- *@
+@await Html.PartialAsync("_TicketCustomerCard", Model, new ViewDataDictionary(ViewData) { ["Compact"] = true })
+
+                            @* ---- 3. What is the request ---- *@
+                            <section class="facts-panel" aria-label="About this request">
+                                <div class="facts-section__title">About this request</div>
+                                @{
+                                    var handedOff = Model.Interactions.LastOrDefault(i => i.Handoff is not null)?.Handoff;
+                                    var handlingNow = Model.Interactions.LastOrDefault(i => i.HandlingState is not null);
+                                }
+                                <dl class="request-facts">
+                                    <div class="facts-row"><dt>Request type</dt><dd>@(t.RequestTypeName ?? "Not yet classified")</dd></div>
+                                    @if (t.OriginatingChannelId is not null)
+                                    {
+                                        <div class="facts-row"><dt>Came in through</dt><dd>@(t.OriginatingChannelName ?? "Unknown channel")</dd></div>
+                                    }
+                                    @if (handlingNow is not null)
+                                    {
+                                        <div class="facts-row"><dt>Being handled by</dt><dd>@TicketDisplay.HandlingStateLabel(handlingNow.HandlingState, handlingNow.AgentName)</dd></div>
+                                    }
+                                    @if (handedOff is not null)
+                                    {
+                                        <div class="facts-row"><dt>A person was asked for because</dt><dd>@(string.IsNullOrWhiteSpace(handedOff.RequestReason) ? TicketDisplay.HandoffInitiatorLabel(handedOff.Trigger) : handedOff.RequestReason) <span class="text-secondary">(@TicketDisplay.HandoffStatusLabel(handedOff.Status).ToLowerInvariant())</span></dd></div>
+                                    }
+                                </dl>
+                            </section>
+
+                            @* ---- 4. What has happened ---- *@
                             <section class="facts-panel" aria-label="Recent activity">
-                                <div class="facts-section__title">Latest activity</div>
+                                <div class="facts-section__title">What has happened</div>
                                 @if (Model.ActivityFeed.Count == 0)
                                 {
                                     <div class="empty-state empty-state--compact"><p>No activity recorded yet.</p></div>
@@ -548,7 +632,7 @@ else
                                             <li class="timeline-item">
                                                 <span class="timeline-icon @iconCss"><svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="4" fill="currentColor" /></svg></span>
                                                 <div class="timeline-row">
-                                                    <span class="timeline-text"><strong>@entry.Actor</strong> — @entry.Description</span>
+                                                    <span class="timeline-text"><strong>@entry.Actor</strong> &mdash; @entry.Description</span>
                                                     <span class="timeline-time">@entry.TimestampUtc.ToLocalTime().ToString("MMM d, HH:mm")</span>
                                                 </div>
                                             </li>
@@ -557,9 +641,11 @@ else
                                     <label class="link-muted tab-jump" for="tab-activity">Open the full activity timeline</label>
                                 }
                             </section>
-                        </div>
 
-                        <aside class="facts-panel">
+                            @* ---- 5. Reference detail, out of the way until needed ---- *@
+                            <details class="more-details">
+                                <summary>All ticket details, verification, SLA and customer review</summary>
+                                <div class="more-details__body">
                 <div class="facts-section">
                     <div class="facts-section__title">Ticket Information</div>
                     <dl>
@@ -746,15 +832,6 @@ else
                                 <div class="facts-row"><dt>Request-type SLA</dt><dd>@requestTypeSlaNote</dd></div>
                             }
                         </dl>
-                        @if (sla.FirstHumanResponseAtUtc is null && why is not { HasActivePeriod: false } && (Model.CanResolve || Model.CanEscalate))
-                        {
-                            @* First Response SLA stops only on a HUMAN response. Staff who answer the customer outside the
-                               Genesys transcript (phone, e-mail, walk-in) record it here; AI/automated replies never do. *@
-                            <form method="post" asp-page-handler="RecordFirstResponse" class="action-form">
-                                <input type="hidden" asp-for="Escalate.RowVersionBase64" />
-                                <button type="submit" class="btn btn-sm">Record first response</button>
-                            </form>
-                        }
                         @if (why is not null)
                         {
                             <details class="sla-explain">
@@ -775,6 +852,49 @@ else
                         }
                     }
                 </div>
+
+                                </div>
+                            </details>
+                        </div>
+
+                        @* Operational quick facts only: nothing here needs scrolling to find. *@
+                        <aside class="facts-panel quick-facts" aria-label="Quick facts">
+                            <div class="facts-section__title">Quick facts</div>
+                            <dl>
+                                <div class="facts-row"><dt>Status</dt><dd><span class="badge badge-status-@TicketDisplay.TicketStatusCssKey(t.TicketStatus)"><span class="badge-dot"></span>@TicketDisplay.TicketStatusLabel(t.TicketStatus)</span></dd></div>
+                                <div class="facts-row"><dt>Priority</dt><dd><span class="badge badge-priority-@TicketDisplay.PriorityCssKey(t.PriorityId)">@TicketDisplay.PriorityLabel(t.PriorityId)</span></dd></div>
+                                <div class="facts-row"><dt>Assigned To</dt><dd>@TicketDisplay.AssignedToLabel(t.CurrentOwnerEmployeeId, Model.OwnerName, t.CurrentDepartmentId, Model.DepartmentName)</dd></div>
+                                <div class="facts-row"><dt>Assigned Department</dt><dd>@TicketDisplay.AssignedDepartmentLabel(t.CurrentDepartmentId, Model.DepartmentName)</dd></div>
+                                @if (slaBadge is not null)
+                                {
+                                    <div class="facts-row"><dt>SLA</dt><dd><span class="badge badge-sla-@slaBadge.Value.CssKey">@slaBadge.Value.Label</span></dd></div>
+                                    @if (Model.Sla is { IsCurrentlyPaused: true } pausedSla)
+                                    {
+                                        <div class="facts-row"><dt>Resolution clock</dt><dd>Paused&nbsp;&mdash; @pausedSla.CurrentPauseReason</dd></div>
+                                    }
+                                    else if (Model.Sla?.ResolutionDueAtUtc is { } resolutionDue && !isResolved && !isClosed)
+                                    {
+                                        <div class="facts-row"><dt>Resolution due</dt><dd>@resolutionDue.ToLocalTime().ToString("MMM d, HH:mm")</dd></div>
+                                    }
+                                }
+                                else
+                                {
+                                    <div class="facts-row"><dt>SLA</dt><dd>Not available</dd></div>
+                                }
+                                @if (t.EscalationLevel != "None")
+                                {
+                                    <div class="facts-row"><dt>Escalation level</dt><dd class="is-critical">@TicketDisplay.EscalationLevelLabel(t.EscalationLevel)</dd></div>
+                                }
+                                @if (t.ReopenCount > 0)
+                                {
+                                    <div class="facts-row"><dt>Reopened</dt><dd>@(t.ReopenCount == 1 ? "Once" : $"{t.ReopenCount} times")</dd></div>
+                                }
+                                @if (t.ResolutionOutcome is not null)
+                                {
+                                    <div class="facts-row"><dt>Resolution</dt><dd>@TicketDisplay.ResolutionOutcomeLabel(t.ResolutionOutcome)</dd></div>
+                                }
+                                <div class="facts-row"><dt>Opened</dt><dd>@TicketDisplay.AgoLabel(t.CreatedAtUtc, DateTime.UtcNow)</dd></div>
+                            </dl>
                         </aside>
                     </div>
                 </div>

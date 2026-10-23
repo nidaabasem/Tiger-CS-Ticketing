@@ -2117,3 +2117,50 @@ a.badge:hover { text-decoration: underline; }
 
 /* Customer Satisfaction: the Tiger gold used for rating stars (matches the email). */
 .review-stars { color: #C1A562; letter-spacing: 1px; }
+
+
+/* ---- Ticket Details: action-oriented overview ---- */
+
+.ticket-header__customer { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); margin-bottom: var(--space-2); font-size: 14px; }
+.ticket-header__avatar { width: 28px; height: 28px; font-size: 12px; }
+.ticket-header__customer-name { font-weight: 700; color: var(--color-text); }
+a.ticket-header__customer-name { color: var(--color-info); }
+a.ticket-header__customer-name:hover { text-decoration: underline; }
+
+/* The recommended header action stands out among the allowed ones. */
+.btn.is-recommended { box-shadow: 0 0 0 3px var(--color-gold-tint); outline: 2px solid var(--color-gold-dark); outline-offset: 1px; }
+
+.attention { border: 1px solid var(--color-border); border-left-width: 4px; border-radius: var(--radius-md); background: var(--color-surface); padding: var(--space-3) var(--space-4); }
+.attention--critical { border-color: var(--color-critical-line); border-left-color: var(--color-critical); background: var(--color-critical-pale); }
+.attention--warning { border-color: var(--color-warning-line); border-left-color: var(--color-warning); background: var(--color-warning-tint); }
+.attention--info { border-color: var(--color-info-line); border-left-color: var(--color-info); background: var(--color-info-tint); }
+.attention--neutral { border-left-color: var(--color-border-strong); background: var(--color-neutral-tint); }
+.attention__label { font-size: var(--text-2xs); font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: var(--color-text-secondary); margin-bottom: var(--space-1); }
+.attention__main { display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); flex-wrap: wrap; }
+.attention__text { min-width: 0; flex: 1 1 320px; }
+.attention__headline { font-size: 16px; font-weight: 700; line-height: 1.3; margin: 0; }
+.attention__reason { margin: 2px 0 0; font-size: 14px; color: var(--color-text-secondary); }
+.attention--critical .attention__headline { color: var(--color-critical); }
+.attention__cta { flex: none; }
+.attention__alerts { list-style: none; margin: var(--space-2) 0 0; padding: var(--space-2) 0 0; border-top: 1px solid var(--color-border); display: flex; flex-direction: column; gap: 2px; font-size: 13.5px; }
+.attention__alert { position: relative; padding-left: 14px; }
+.attention__alert::before { content: ""; position: absolute; left: 0; top: 0.55em; width: 6px; height: 6px; border-radius: 50%; background: var(--color-text-secondary); }
+.attention__alert--urgent { color: var(--color-critical); font-weight: 600; }
+.attention__alert--urgent::before { background: var(--color-critical); }
+.attention__alert--attention::before { background: var(--color-warning); }
+.attention__inline-form { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; margin-top: var(--space-2); }
+.attention__unavailable { margin-top: var(--space-2); font-size: 13.5px; }
+.attention__unavailable summary { cursor: pointer; color: var(--color-text-secondary); }
+.attention__unavailable ul { margin: var(--space-1) 0 0; padding-left: 18px; color: var(--color-text-secondary); }
+.attention__unavailable strong { color: var(--color-text); }
+
+.request-facts .facts-row dd { text-align: right; max-width: 70%; }
+.more-details { border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-surface); }
+.more-details > summary { cursor: pointer; padding: var(--space-3) var(--space-4); font-size: 14px; font-weight: 600; color: var(--color-text-secondary); }
+.more-details[open] > summary { border-bottom: 1px solid var(--color-border); color: var(--color-text); }
+.more-details__body { padding: var(--space-4); }
+.quick-facts .facts-row dd { max-width: 60%; }
+
+@media (max-width: 1100px) {
+  .attention__main { align-items: flex-start; }
+}

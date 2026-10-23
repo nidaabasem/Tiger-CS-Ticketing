@@ -289,6 +289,24 @@
     }, 0);
   });
 
+  // Ticket Details "What needs your attention?": the recommended step opens the matching header
+  // action (or scrolls to the banner that holds it). Without JS the link still jumps to the page top
+  // where the actions are; stopPropagation keeps the outside-click handler above from closing it.
+  document.querySelectorAll("[data-guidance-target]").forEach(function (link) {
+    link.addEventListener("click", function (event) {
+      var target = document.querySelector('[data-action="' + link.getAttribute("data-guidance-target") + '"]');
+      if (!target) return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (target.tagName === "DETAILS") {
+        target.setAttribute("open", "");
+      }
+      target.scrollIntoView({ behavior: "smooth", block: "center" });
+      var focusable = target.querySelector("summary, select, textarea, input:not([type=hidden]), button");
+      if (focusable) focusable.focus({ preventScroll: true });
+    });
+  });
+
   // Back/forward can restore this page from the browser's cache exactly as
   // it was left — mid-submit, with the guard set and the buttons disabled.
   // Release it, or the agent returns to a filter bar that refuses to apply.
