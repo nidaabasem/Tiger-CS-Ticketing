@@ -142,7 +142,12 @@ public sealed class TicketRepository(TigerCsDbContext dbContext) : ITicketReposi
 
         if (query.ClosureCategory is { } closureCategory)
         {
-            filtered = filtered.InClosureCategory(dbContext, closureCategory);
+            filtered = filtered.InClosureCategory(dbContext, closureCategory, query.ReviewsAreTest);
+        }
+
+        if (query.ClosedFromUtc is not null || query.ClosedToUtc is not null)
+        {
+            filtered = filtered.LatestClosureBetween(dbContext, query.ClosedFromUtc, query.ClosedToUtc);
         }
 
         if (query.CreatedFromUtc is { } createdFrom)

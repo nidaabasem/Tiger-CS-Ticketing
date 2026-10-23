@@ -153,18 +153,20 @@ public sealed class DashboardModel(DashboardApiClient dashboardApiClient) : Page
 
     /// <summary>
     /// The four closure KPI cards. Unlike the six above they are not
-    /// current-state: they count Closed tickets created within the dashboard's
-    /// date range, honouring every other dashboard filter, and each links to
+    /// current-state: they always count Closed tickets, by latest closure date within the
+    /// dashboard's date range, honouring every other dashboard filter except status, and each links to
     /// the Tickets list filtered to the same category.
     /// </summary>
     public static IReadOnlyList<KpiCard> BuildClosureCards(DashboardOverviewDto o)
     {
         var f = o.Filters;
         var k = o.Kpis;
+        // In test mode the review cards evaluate Test-mode reviews (UAT); say so.
+        var kind = k.ReviewsAreTestMode ? " (test-mode reviews)" : "";
         return
         [
-            new KpiCard("Reviewed Tickets", k.ReviewedTickets, null, DashboardLinks.Reviewed(f), "Closed tickets with customer feedback submitted"),
-            new KpiCard("Not Reviewed", k.NotReviewedTickets, null, DashboardLinks.NotReviewed(f), "Closed tickets without customer feedback"),
+            new KpiCard("Reviewed Tickets", k.ReviewedTickets, null, DashboardLinks.Reviewed(f), "Closed tickets with customer feedback submitted" + kind),
+            new KpiCard("Not Reviewed", k.NotReviewedTickets, null, DashboardLinks.NotReviewed(f), "Closed tickets without customer feedback" + kind),
             new KpiCard("Closed by AI", k.ClosedByAiTickets, null, DashboardLinks.ClosedByAi(f), "Closed tickets whose closure was recorded as AI"),
             new KpiCard("Closed by Agent", k.ClosedByAgentTickets, null, DashboardLinks.ClosedByAgent(f), "Closed tickets closed by a person")
         ];

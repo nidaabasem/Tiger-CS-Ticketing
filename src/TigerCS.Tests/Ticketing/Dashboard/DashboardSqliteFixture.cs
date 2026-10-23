@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using TigerCS.Application.Modules.Notifications;
 using TigerCS.Application.Modules.Ticketing.Services;
 using TigerCS.Domain.Audit;
 using TigerCS.Domain.Modules.ClassificationAndRouting;
@@ -87,20 +88,20 @@ public sealed class DashboardSqliteFixture : IDisposable
             .Options);
 
     /// <summary>The real application service over the real repositories — scope resolved from the real membership table.</summary>
-    public DashboardAppService CreateService(TigerCsDbContext context, DateTime? nowUtc = null)
+    public DashboardAppService CreateService(TigerCsDbContext context, DateTime? nowUtc = null, CustomerNotificationModePolicy? mode = null)
     {
         var time = new FixedTimeProvider(nowUtc ?? Now);
         var assignments = new UserDepartmentAssignmentRepository(context);
         var tickets = new TicketRepository(context);
         var queries = new TicketQueryAppService(tickets, assignments, new FakeTicketResolutionRepository(), new FakeTicketStatusHistoryRepository(), ReopenPolicy.Default, time);
-        return new DashboardAppService(tickets, queries, time, new DashboardQueryRepository(context), assignments);
+        return new DashboardAppService(tickets, queries, time, new DashboardQueryRepository(context), assignments, notificationMode: mode);
     }
 
-    public TicketQueryAppService CreateQueryService(TigerCsDbContext context, DateTime? nowUtc = null)
+    public TicketQueryAppService CreateQueryService(TigerCsDbContext context, DateTime? nowUtc = null, CustomerNotificationModePolicy? mode = null)
     {
         var time = new FixedTimeProvider(nowUtc ?? Now);
         var assignments = new UserDepartmentAssignmentRepository(context);
-        return new TicketQueryAppService(new TicketRepository(context), assignments, new FakeTicketResolutionRepository(), new FakeTicketStatusHistoryRepository(), ReopenPolicy.Default, time);
+        return new TicketQueryAppService(new TicketRepository(context), assignments, new FakeTicketResolutionRepository(), new FakeTicketStatusHistoryRepository(), ReopenPolicy.Default, time, notificationMode: mode);
     }
 
     private void SeedReferenceData(TigerCsDbContext context)
@@ -190,7 +191,8 @@ public sealed class DashboardSqliteFixture : IDisposable
         bool slaBreached = false,
         DateTime? resolutionDueAtUtc = null,
         int? transferToDepartmentId = null,
-        string? customerName = null)
+        string? customerName = null,
+        DateTime? closedAtUtc = null)
     {
         var sequence = Interlocked.Increment(ref _ticketSequence);
         var created = createdAtUtc ?? Now.AddHours(-1);
@@ -271,6 +273,12 @@ public sealed class DashboardSqliteFixture : IDisposable
         context.Tickets.Add(ticket);
         context.SaveChanges();
 
+        if (status == TicketStatus.Closed)
+        {
+            // Every real closure path appends this row; it is what dates the closure.
+            AddClosedHistory(context, ticket, closedAtUtc ?? created.AddMinutes(30));
+        }
+
         if (channelId is { } channel)
         {
             context.TicketInteractions.Add(TicketInteraction.CreateLocal(ticket.TicketId, channel, "+971500000000", created, isOriginatingInteraction: true));
@@ -301,6 +309,15 @@ public sealed class DashboardSqliteFixture : IDisposable
         context.TicketApprovals.Add(approval);
         context.SaveChanges();
         return approval;
+    }
+
+    /// <summary>The append-only status-history row written when a ticket enters Closed — the ticket's closure date.</summary>
+    public void AddClosedHistory(TigerCsDbContext context, Ticket ticket, DateTime closedAtUtc)
+    {
+        context.TicketStatusHistoryEntries.Add(new TicketStatusHistory(
+            ticket.TicketId, TicketStatusDimension.TicketStatus, (byte)TicketStatus.Resolved, (byte)TicketStatus.Closed,
+            actorEmployeeId: null, actorIsSystem: true, note: null, Guid.NewGuid(), closedAtUtc));
+        context.SaveChanges();
     }
 
     /// <summary>The closing audit row the lifecycle writes (<c>EntityType</c> Ticket, <c>EntityId</c> the ticket id) — same shape as <c>AuditEntryWriter</c>'s.</summary>

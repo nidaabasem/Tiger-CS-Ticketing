@@ -41,14 +41,18 @@ public sealed class DashboardQueryRepository(TigerCsDbContext dbContext) : IDash
             scoped = scoped.Where(t => t.RequestTypeId == requestTypeId);
         }
 
-        if (query.TicketStatus is { } ticketStatus)
-        {
-            scoped = scoped.Where(t => t.TicketStatus == ticketStatus);
-        }
-
         if (query.PriorityId is { } priorityId)
         {
             scoped = scoped.Where(t => t.PriorityId == priorityId);
+        }
+
+        // The four closure KPIs always represent Closed tickets, so they take
+        // every filter except the status one.
+        var closureBase = scoped;
+
+        if (query.TicketStatus is { } ticketStatus)
+        {
+            scoped = scoped.Where(t => t.TicketStatus == ticketStatus);
         }
 
         var backlog = scoped.Active();
@@ -62,16 +66,17 @@ public sealed class DashboardQueryRepository(TigerCsDbContext dbContext) : IDash
         var dueToday = await backlog.DueOnUtcDay(dbContext, query.TodayStartUtc).CountAsync(cancellationToken);
         var pendingApproval = await scoped.WithPendingApprovalActionableBy(dbContext, query.ApproverScope).CountAsync(cancellationToken);
 
-        // ---- Closure KPIs (date range: Closed tickets are not backlog) ----
+        // ---- Closure KPIs (date range applies to the latest closure date) ----
         // Each is a COUNT over the shared InClosureCategory predicate — the
         // one the ticket queue's closureCategory drill-down uses — so a card
         // and its list always agree. Four narrow COUNTs, not a row load.
-        var closureScope = volume.Where(t => t.TicketStatus == TicketStatus.Closed);
+        var closureScope = closureBase.LatestClosureBetween(dbContext, query.RangeStartUtc, query.RangeEndUtc);
+        var testReviews = query.ReviewsAreTest;
         var closure = new DashboardClosureCounts(
-            await closureScope.InClosureCategory(dbContext, TicketClosureCategory.Reviewed).CountAsync(cancellationToken),
-            await closureScope.InClosureCategory(dbContext, TicketClosureCategory.NotReviewed).CountAsync(cancellationToken),
-            await closureScope.InClosureCategory(dbContext, TicketClosureCategory.ClosedByAi).CountAsync(cancellationToken),
-            await closureScope.InClosureCategory(dbContext, TicketClosureCategory.ClosedByAgent).CountAsync(cancellationToken));
+            await closureScope.InClosureCategory(dbContext, TicketClosureCategory.Reviewed, testReviews).CountAsync(cancellationToken),
+            await closureScope.InClosureCategory(dbContext, TicketClosureCategory.NotReviewed, testReviews).CountAsync(cancellationToken),
+            await closureScope.InClosureCategory(dbContext, TicketClosureCategory.ClosedByAi, testReviews).CountAsync(cancellationToken),
+            await closureScope.InClosureCategory(dbContext, TicketClosureCategory.ClosedByAgent, testReviews).CountAsync(cancellationToken));
 
         // ---- Volume breakdowns (date range) ----
         var statusCounts = await volume

@@ -543,7 +543,7 @@ public sealed class DashboardUiTests
     }
 
     [Fact]
-    public void ClosureCardDrilldowns_OpenTheClosedTicketsList_FilteredToTheirCategory_WithDatesAndDimensionFilters()
+    public void ClosureCardDrilldowns_OpenTheClosedTab_WithTheCategory_TheClosureDateRange_AndDimensionFilters()
     {
         var f = DefaultFilters with { DepartmentId = 2, ChannelId = 6 };
 
@@ -561,22 +561,44 @@ public sealed class DashboardUiTests
             var q = Query(href);
             Assert.Equal(category, q["closureCategory"]);
             Assert.Equal("Closed", q["ticketStatus"]);
-            // Closed tickets follow the dashboard's date range and every dimension filter.
-            Assert.Equal("2026-08-12", q["createdFrom"]);
-            Assert.Equal("2026-09-10", q["createdTo"]);
+            Assert.Equal("closed", q["view"]);
+            // The range travels as the latest CLOSURE date, never the creation date.
+            Assert.Equal("2026-08-12", q["closedFrom"]);
+            Assert.Equal("2026-09-10", q["closedTo"]);
+            Assert.False(q.ContainsKey("createdFrom"));
+            Assert.False(q.ContainsKey("createdTo"));
             Assert.Equal("2", q["departmentId"]);
             Assert.Equal("6", q["channelId"]);
         }
     }
 
-    [Fact]
-    public void ClosureCardDrilldown_KeepsTheDashboardsOwnStatusFilter_SoANumberAndItsListAgree()
+    [Theory]
+    [InlineData("Open")]
+    [InlineData("InProgress")]
+    [InlineData("Resolved")]
+    [InlineData("Closed")]
+    public void ClosureCardDrilldown_AlwaysOpensTheClosedTab_WhateverTheDashboardsStatusFilter(string statusFilter)
     {
-        // With the status filter on Open the card counts 0 closed tickets; the list must not switch to Closed and show some.
-        var q = Query(DashboardLinks.ClosedByAi(DefaultFilters with { TicketStatus = "Open" }));
+        var q = Query(DashboardLinks.ClosedByAi(DefaultFilters with { TicketStatus = statusFilter, DepartmentId = 3 }));
 
-        Assert.Equal("Open", q["ticketStatus"]);
+        Assert.Equal("Closed", q["ticketStatus"]);
+        Assert.Equal("closed", q["view"]);
         Assert.Equal("ClosedByAi", q["closureCategory"]);
+        Assert.Equal("3", q["departmentId"]);
+        Assert.Equal("2026-08-12", q["closedFrom"]);
+    }
+
+    [Fact]
+    public async Task TheReviewCards_SayWhenTheyEvaluateTestModeReviews()
+    {
+        var overview = Overview(kpis: new DashboardKpisDto(0, 0, 0, 0, 0, 0, ReviewsAreTestMode: true));
+        var (model, _) = CreateModel((_, _) => FakeApiHandler.JsonResponse(HttpStatusCode.OK, overview));
+
+        await model.OnGetAsync(null, null, null, null, null, null, null, null, CancellationToken.None);
+
+        Assert.Contains("test-mode reviews", model.ClosureCards.Single(c => c.Label == "Reviewed Tickets").Hint);
+        Assert.Contains("test-mode reviews", model.ClosureCards.Single(c => c.Label == "Not Reviewed").Hint);
+        Assert.DoesNotContain("test-mode", model.ClosureCards.Single(c => c.Label == "Closed by AI").Hint);
     }
 
     [Fact]
@@ -598,8 +620,11 @@ public sealed class DashboardUiTests
         var views = File.ReadAllText(SourceFile(Path.Combine("TigerCS.Web", "Models", "TicketsView.cs")));
 
         Assert.Contains("string? closureCategory = null", page);
-        Assert.Contains("CreatedFrom, CreatedTo, Unclassified ? true : null, ClosureCategory", page);
+        Assert.Contains("Unclassified ? true : null, ClosureCategory, ClosedFrom, ClosedTo", page);
         Assert.Contains("closureCategory = Model.ClosureCategory", list);
+        Assert.Contains("closedFrom = Model.ClosedFrom", list);
+        Assert.Contains("name=\"closedTo\"", list);
+        Assert.Contains("query[\"closedFrom\"]", client);
         Assert.Contains("name=\"closureCategory\"", list);
         Assert.Contains("query[\"closureCategory\"]", client);
         Assert.Contains("\"closureCategory\"", views);

@@ -28,8 +28,10 @@ namespace TigerCS.Application.Modules.Ticketing.Abstractions;
 /// The four closure KPIs (Reviewed, Not Reviewed, Closed by AI, Closed by
 /// Agent) are the exception to "KPIs are current-state": they count Closed
 /// tickets, which are by definition not part of the active backlog, so they
-/// follow the same date range as the volume breakdowns (tickets created
-/// within the range) and the same dimension filters.
+/// follow the date range applied to the ticket's <b>latest closure date</b>
+/// ([<see cref="RangeStartUtc"/>, <see cref="RangeEndUtc"/>)) and the same
+/// dimension filters — except the status filter: they always represent
+/// Closed tickets, whatever status the Dashboard has selected.
 /// </para>
 /// </summary>
 /// <param name="ScopeDepartmentIds">Null = no restriction; otherwise the departments the counts may cover.</param>
@@ -46,6 +48,7 @@ namespace TigerCS.Application.Modules.Ticketing.Abstractions;
 /// <param name="TodayStartUtc">Start of "today" (UTC calendar day) for Due Today.</param>
 /// <param name="AtRiskWindow">How far ahead of a pending SLA deadline ranks as "due soon" in the Recent/Critical list.</param>
 /// <param name="RecentLimit">Maximum Recent/Critical rows.</param>
+/// <param name="ReviewsAreTest">Which reviews count as customer feedback for the Reviewed / Not Reviewed KPIs: Test-mode reviews while customer notifications run in test mode (UAT), real reviews otherwise. Production satisfaction statistics are unaffected.</param>
 public sealed record DashboardOverviewQuery(
     IReadOnlyCollection<int>? ScopeDepartmentIds,
     Guid CallerEmployeeId,
@@ -60,7 +63,8 @@ public sealed record DashboardOverviewQuery(
     DateTime NowUtc,
     DateTime TodayStartUtc,
     TimeSpan AtRiskWindow,
-    int RecentLimit);
+    int RecentLimit,
+    bool ReviewsAreTest = false);
 
 /// <summary>One aggregated row: a dimension value (null key = the value is not recorded on the ticket, e.g. no originating channel, no request type, Unclassified priority) with its display label and count.</summary>
 public sealed record DashboardCountRow<TKey>(TKey? Key, string Label, int Count) where TKey : struct;
@@ -110,7 +114,7 @@ public sealed record DashboardOverviewSnapshot(
 
 /// <summary>
 /// The four closure KPIs (see <see cref="TicketClosureCategory"/>): distinct
-/// Closed tickets in scope that were created within the query's date range.
+/// Closed tickets in scope whose latest closure falls within the query's date range.
 /// Reviewed + NotReviewed is every such closed ticket; ClosedByAi +
 /// ClosedByAgent is at most that, because inactivity and document-delivery
 /// closures are neither.

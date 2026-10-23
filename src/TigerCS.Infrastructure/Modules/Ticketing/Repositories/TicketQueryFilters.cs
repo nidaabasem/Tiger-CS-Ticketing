@@ -67,21 +67,52 @@ internal static class TicketQueryFilters
     /// multiply rows.
     /// </summary>
     public static IQueryable<Ticket> InClosureCategory(
-        this IQueryable<Ticket> tickets, TigerCsDbContext dbContext, TicketClosureCategory category)
+        this IQueryable<Ticket> tickets, TigerCsDbContext dbContext, TicketClosureCategory category, bool reviewsAreTest = false)
     {
         var closed = tickets.Where(t => t.TicketStatus == TicketStatus.Closed);
         return category switch
         {
-            // A submitted, non-test review for the ticket's current cycle (a
-            // reopen starts a new cycle that needs its own review).
+            // A submitted review for the ticket's current cycle (a reopen starts
+            // a new cycle that needs its own review). Which kind counts follows
+            // the notification mode: real reviews in production, Test-mode ones
+            // in UAT — so UAT can validate the cards while production
+            // satisfaction statistics (which only read IsTest = false) are
+            // untouched either way.
             TicketClosureCategory.Reviewed => closed.Where(t => dbContext.TicketReviews.Any(r =>
-                r.TicketId == t.TicketId && r.ReopenCycle == t.ReopenCount && !r.IsTest)),
+                r.TicketId == t.TicketId && r.ReopenCycle == t.ReopenCount && r.IsTest == reviewsAreTest)),
             TicketClosureCategory.NotReviewed => closed.Where(t => !dbContext.TicketReviews.Any(r =>
-                r.TicketId == t.TicketId && r.ReopenCycle == t.ReopenCount && !r.IsTest)),
+                r.TicketId == t.TicketId && r.ReopenCycle == t.ReopenCount && r.IsTest == reviewsAreTest)),
             TicketClosureCategory.ClosedByAi => closed.Where(LatestClosureIs(dbContext, TicketClosureAuditActions.ClosedByAi)),
             TicketClosureCategory.ClosedByAgent => closed.Where(LatestClosureIs(dbContext, TicketClosureAuditActions.ClosedByAgent)),
             _ => closed.Where(_ => false)
         };
+    }
+
+    /// <summary>
+    /// Closed tickets whose <b>latest closure</b> — the most recent time the
+    /// ticket entered Closed, per the append-only status history — falls in
+    /// [<paramref name="fromUtc"/>, <paramref name="toUtc"/>). A reopened ticket
+    /// closed again is dated by its last closure.
+    /// </summary>
+    public static IQueryable<Ticket> LatestClosureBetween(
+        this IQueryable<Ticket> tickets, TigerCsDbContext dbContext, DateTime? fromUtc, DateTime? toUtc)
+    {
+        tickets = tickets.Where(t => t.TicketStatus == TicketStatus.Closed);
+        if (fromUtc is { } from)
+        {
+            tickets = tickets.Where(t => dbContext.TicketStatusHistoryEntries
+                .Where(h => h.TicketId == t.TicketId && h.Dimension == TicketStatusDimension.TicketStatus && h.NewValue == (byte)TicketStatus.Closed)
+                .Max(h => (DateTime?)h.OccurredAtUtc) >= from);
+        }
+
+        if (toUtc is { } to)
+        {
+            tickets = tickets.Where(t => dbContext.TicketStatusHistoryEntries
+                .Where(h => h.TicketId == t.TicketId && h.Dimension == TicketStatusDimension.TicketStatus && h.NewValue == (byte)TicketStatus.Closed)
+                .Max(h => (DateTime?)h.OccurredAtUtc) < to);
+        }
+
+        return tickets;
     }
 
     /// <summary>

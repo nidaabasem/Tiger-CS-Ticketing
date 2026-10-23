@@ -1,4 +1,5 @@
 using TigerCS.Application.Modules.IdentityAndAccess.Abstractions;
+using TigerCS.Application.Modules.Notifications;
 using TigerCS.Application.Modules.Ticketing.Abstractions;
 using TigerCS.Application.Modules.Ticketing.Dto;
 using TigerCS.Domain.Modules.Ticketing;
@@ -28,7 +29,8 @@ public sealed class DashboardAppService(
     IDashboardQueryRepository dashboardQueryRepository,
     IUserDepartmentAssignmentRepository userDepartmentAssignmentRepository,
     ITicketAgentHandoffRepository? agentHandoffRepository = null,
-    DashboardOptions? dashboardOptions = null)
+    DashboardOptions? dashboardOptions = null,
+    CustomerNotificationModePolicy? notificationMode = null)
 {
     /// <summary>The default volume period when no date range is requested: the last 30 UTC calendar days, today included.</summary>
     public const int DefaultPeriodDays = 30;
@@ -131,7 +133,8 @@ public sealed class DashboardAppService(
             // convention; no separate timezone strategy is introduced here.
             nowUtc.Date,
             AtRiskWindow,
-            RecentLimit);
+            RecentLimit,
+            ReviewsAreTest: notificationMode?.IsTest == true);
 
         var snapshot = await dashboardQueryRepository.GetOverviewAsync(query, cancellationToken);
 
@@ -173,7 +176,8 @@ public sealed class DashboardAppService(
                 snapshot.Closure?.Reviewed ?? 0,
                 snapshot.Closure?.NotReviewed ?? 0,
                 snapshot.Closure?.ClosedByAi ?? 0,
-                snapshot.Closure?.ClosedByAgent ?? 0),
+                snapshot.Closure?.ClosedByAgent ?? 0,
+                notificationMode?.IsTest == true),
             snapshot.VolumeTotal,
             ToBreakdown(snapshot.VolumeByChannel, snapshot.VolumeTotal, k => k.ToString()),
             ToBreakdown(snapshot.VolumeByRequestType, snapshot.VolumeTotal, k => k.ToString()),
