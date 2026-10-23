@@ -2,6 +2,8 @@
 
 > Part of the [documentation set](README.md). Source: `src/TigerCS.Api/appsettings.json` and the `*Options` classes. Secrets are **never** committed: set them as environment variables (`Section__Key`), user‑secrets or the host's secret store. `<…>` marks a placeholder.
 
+> `appsettings.Development.json` carries only its differences from `appsettings.json` (the base is loaded first), and a non-loaded `appsettings.Production.template.json` lists the Production decisions - see [19](19-configuration-cleanup-phase-1.md).
+
 ## 12.1 Secrets and connection strings
 
 | Key (env var) | Purpose | Placeholder |
