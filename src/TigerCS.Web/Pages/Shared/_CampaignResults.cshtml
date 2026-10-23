@@ -14,25 +14,59 @@ else if (Model.Report is { } report)
     <div hidden data-effective-filters data-from="@Model.DateFrom?.ToString("yyyy-MM-dd")" data-to="@report.DateTo?.ToString("yyyy-MM-dd")"></div>
     if (report.Snapshot is { NothingLoaded: true }) { <div class="panel"><p class="receivables-meta" data-nothing-loaded>No customers can be shown until the financial data has loaded. See the snapshot status above.</p></div> return; }
     <div class="panel" data-customer-results data-preview-current>
-        <ul class="campaign-totals" data-campaign-totals>
-            @{ var eligible = report.TotalCount - report.NotEligibleCount; var blockedCount = Math.Max(0, eligible - report.ReadyCount); }
-            <li>Financially eligible customers: <strong data-eligible-count>@eligible.ToString("N0")</strong> of @report.TotalCount.ToString("N0") listed <span class="receivables-meta">(the stage rule found an amount to collect)</span></li>
-            <li>Ready to send: <strong data-ready-count>@report.ReadyCount.ToString("N0")</strong> <span class="receivables-meta">(eligible and passing every send check)</span></li>
-            <li>Needs review / blocked: <strong data-blocked-count>@blockedCount.ToString("N0")</strong> <span class="receivables-meta">(eligible, but not yet safe to send)</span></li>
-            @if (report.EligibleTotalAmount is { } qualifying) { <li>Total qualifying amount: <strong data-eligible-total>@(report.Items.FirstOrDefault()?.Currency ?? "AED") @qualifying.ToString("N2", System.Globalization.CultureInfo.InvariantCulture)</strong> <span class="receivables-meta">(stage amount of the eligible customers, as sent to Genesys)</span></li> }
-            @if (report.EligibleOutstandingAmount is { } outstanding) { <li>Outstanding balance of the eligible customers: <strong data-eligible-outstanding>@(report.Items.FirstOrDefault()?.Currency ?? "AED") @outstanding.ToString("N2", System.Globalization.CultureInfo.InvariantCulture)</strong></li> }
+        @{ var eligible = report.TotalCount - report.NotEligibleCount; var blockedCount = Math.Max(0, eligible - report.ReadyCount); var currency = report.Items.FirstOrDefault()?.Currency ?? "AED"; }
+        <section class="campaign-section" aria-labelledby="campaign-overview-title">
+            <h2 class="campaign-section__title" id="campaign-overview-title">Campaign overview</h2>
+            <ul class="campaign-totals" data-campaign-totals>
+                <li class="campaign-card">
+                    <span class="campaign-card__label">Financially eligible customers</span>
+                    <strong class="campaign-card__value" data-eligible-count>@eligible.ToString("N0")</strong>
+                    <span class="campaign-card__hint">of @report.TotalCount.ToString("N0") listed. The stage rule found an amount to collect.</span>
+                </li>
+                <li class="campaign-card campaign-card--ready">
+                    <span class="campaign-card__label">Ready to send</span>
+                    <strong class="campaign-card__value" data-ready-count>@report.ReadyCount.ToString("N0")</strong>
+                    <span class="campaign-card__hint">Eligible and passing every send check.</span>
+                </li>
+                <li class="campaign-card @(blockedCount > 0 ? "campaign-card--blocked" : "")">
+                    <span class="campaign-card__label">Needs review / blocked</span>
+                    <strong class="campaign-card__value" data-blocked-count>@blockedCount.ToString("N0")</strong>
+                    <span class="campaign-card__hint">Eligible, but not yet safe to send.</span>
+                </li>
+                @if (report.EligibleTotalAmount is { } qualifying)
+                {
+                    <li class="campaign-card">
+                        <span class="campaign-card__label">Total qualifying amount</span>
+                        <strong class="campaign-card__value" data-eligible-total>@currency @qualifying.ToString("N2", System.Globalization.CultureInfo.InvariantCulture)</strong>
+                        <span class="campaign-card__hint">Stage amount of the eligible customers, as sent to Genesys.</span>
+                    </li>
+                }
+                @if (report.EligibleOutstandingAmount is { } outstanding)
+                {
+                    <li class="campaign-card">
+                        <span class="campaign-card__label">Outstanding balance of the eligible customers</span>
+                        <strong class="campaign-card__value" data-eligible-outstanding>@currency @outstanding.ToString("N2", System.Globalization.CultureInfo.InvariantCulture)</strong>
+                    </li>
+                }
+            </ul>
             @if (report.EligibleTotalAmount is { } q && report.EligibleOutstandingAmount is { } o)
             {
-                <li class="receivables-meta" data-amount-explanation>Why the two amounts differ: the outstanding balance is everything these customers owe that is Due or Overdue; the qualifying amount is only the part this stage's rule collects@(o - q > 0 ? $" (AED {(o - q).ToString("N2", System.Globalization.CultureInfo.InvariantCulture)} of the balance is not part of this stage)" : ""). Neither is the customers' full contract balance.</li>
+                <p class="campaign-helper receivables-meta" data-amount-explanation>The outstanding balance is everything these customers owe that is Due or Overdue. The qualifying amount is only the part this stage's rule collects@(o - q > 0 ? $" (AED {(o - q).ToString("N2", System.Globalization.CultureInfo.InvariantCulture)} of the balance is not part of this stage)" : ""). Neither is the customers' full contract balance.</p>
             }
-            <li>Payment status: <strong>@(report.PaymentStatus == "Both" ? "Due and Overdue" : report.PaymentStatus)</strong></li>
-            @if (Model.CampaignName is { } campaignName) { <li>Genesys campaign name when sent: <strong data-campaign-name>@campaignName</strong></li> }
-        </ul>
+        </section>
+        <section class="campaign-section" aria-labelledby="campaign-details-title">
+            <h3 class="campaign-section__title" id="campaign-details-title">Campaign details</h3>
+            <dl class="campaign-details">
+                @if (Model.CampaignName is { } campaignName) { <div><dt>Stage / Genesys campaign name when sent</dt><dd><strong data-campaign-name>@campaignName</strong></dd></div> }
+                <div><dt>Payment status</dt><dd><strong>@(report.PaymentStatus == "Both" ? "Due and Overdue" : report.PaymentStatus)</strong></dd></div>
+            </dl>
+        </section>
         @if (blockedCount > 0)
         {
-            <div class="receivables-notice" role="status" data-not-ready-reasons>
-                <strong>Why @(report.ReadyCount == 0 ? "no customer is" : "some customers are not") Ready to send</strong>
-                <ul>
+            <div class="campaign-blockers" role="status" data-not-ready-reasons>
+                <h3 class="campaign-blockers__title">Why sending is blocked</h3>
+                <p class="receivables-meta">@(report.ReadyCount == 0 ? "No customer is" : "Some customers are not") Ready to send:</p>
+                <ul class="campaign-blockers__list">
                     @foreach (var reason in Model.NotReadyReasons()) { <li data-not-ready-reason>@reason</li> }
                 </ul>
             </div>
@@ -41,6 +75,8 @@ else if (Model.Report is { } report)
         @* Review export is independent of Approve & Send. The safeguards are unchanged: it needs the export permission and fresh, fully covered data (the API refuses otherwise);
            when it cannot run the button stays visible but disabled and says why, so nobody has to guess where it went. Genesys export keeps its stricter rule. *@
         @{ var exportProblem = Model.ExportReviewProblem; }
+        <section class="campaign-section campaign-section--actions" aria-labelledby="campaign-actions-title">
+        <h3 class="campaign-section__title" id="campaign-actions-title">Actions</h3>
         <div class="campaign-actions">
             @if (exportProblem is null) { <a class="btn" href="@Model.PageUrl(export: "review")" data-export-review>Export review CSV</a> }
             else { <button class="btn" type="button" disabled aria-disabled="true" title="@exportProblem" data-export-review-unavailable>Export review CSV</button><span class="receivables-meta" data-export-review-reason>@exportProblem</span> }
@@ -64,7 +100,9 @@ else if (Model.Report is { } report)
             <button class="btn btn-primary" type="submit" data-approve-button disabled="@(blocked is not null)" data-blocked="@(blocked is not null ? "true" : "false")">Approve &amp; Send to Genesys</button>
             @if (report.ReadyCount > 0) { <button class="btn" type="button" data-clear-selection>Clear ticks</button> }
             <span class="receivables-meta" data-approve-reason role="status">@(blocked ?? "Only Ready customers can be sent. Nothing is sent until you confirm the exact count, amount and Genesys contact list.")</span>
+            @if (blocked is not null) { <span class="campaign-approve__hint" data-approve-blocked-hint>Sending is disabled until reconciliation and schedule checks pass.</span> }
         </form>
+        </section>
         <div class="table-scroll">
             <table class="table receivables-table campaigns-table">
                 <thead><tr><th><input type="checkbox" data-select-page aria-label="Select all eligible customers on this page" /></th><th>Customer</th><th>Mobile</th><th>Email</th><th>Project / Tower</th><th>Unit</th><th class="num">Due</th><th class="num">Overdue</th><th class="num">Total</th></tr></thead>
