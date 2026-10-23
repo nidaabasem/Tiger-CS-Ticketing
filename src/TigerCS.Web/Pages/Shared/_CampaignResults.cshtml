@@ -15,75 +15,99 @@ else if (Model.Report is { } report)
     if (report.Snapshot is { NothingLoaded: true }) { <div class="panel"><p class="receivables-meta" data-nothing-loaded>No customers can be shown until the financial data has loaded. See the snapshot status above.</p></div> return; }
     <div class="panel" data-customer-results data-preview-current>
         @{ var eligible = report.TotalCount - report.NotEligibleCount; var blockedCount = Math.Max(0, eligible - report.ReadyCount); var currency = report.Items.FirstOrDefault()?.Currency ?? "AED"; }
+        @{
+            // Every explanation lives behind the Info icon next to its label; nothing is printed under the figures. The amount comparison is kept whole on both amount cards.
+            var amountNote = report.EligibleTotalAmount is { } q && report.EligibleOutstandingAmount is { } o
+                ? $"The outstanding balance is everything these customers owe that is Due or Overdue. The qualifying amount is only the part this stage's rule collects{(o - q > 0 ? $" (AED {(o - q).ToString("N2", System.Globalization.CultureInfo.InvariantCulture)} of the balance is not part of this stage)" : "")}. Neither is the customers' full contract balance."
+                : "The outstanding balance is everything these customers owe that is Due or Overdue. It is not the customers' full contract balance.";
+        }
         <section class="campaign-section" aria-labelledby="campaign-overview-title">
             <h2 class="campaign-section__title" id="campaign-overview-title">Campaign overview</h2>
             <ul class="campaign-totals" data-campaign-totals>
                 <li class="campaign-card">
-                    <span class="campaign-card__label">Financially eligible customers</span>
+                    <span class="campaign-card__label">Financially eligible customers<partial name="_InfoTip" model="@(new InfoTipModel("tip-eligible", "Financially eligible customers", $"of {report.TotalCount:N0} listed. The stage rule found an amount to collect."))" /></span>
                     <strong class="campaign-card__value" data-eligible-count>@eligible.ToString("N0")</strong>
-                    <span class="campaign-card__hint">of @report.TotalCount.ToString("N0") listed. The stage rule found an amount to collect.</span>
                 </li>
                 <li class="campaign-card campaign-card--ready">
-                    <span class="campaign-card__label">Ready to send</span>
+                    <span class="campaign-card__label">Ready to send<partial name="_InfoTip" model="@(new InfoTipModel("tip-ready", "Ready to send", "Eligible and passing every send check."))" /></span>
                     <strong class="campaign-card__value" data-ready-count>@report.ReadyCount.ToString("N0")</strong>
-                    <span class="campaign-card__hint">Eligible and passing every send check.</span>
                 </li>
                 <li class="campaign-card @(blockedCount > 0 ? "campaign-card--blocked" : "")">
-                    <span class="campaign-card__label">Needs review / blocked</span>
+                    <span class="campaign-card__label">Needs review / blocked<partial name="_InfoTip" model="@(new InfoTipModel("tip-blocked", "Needs review / blocked", "Eligible, but not yet safe to send."))" /></span>
                     <strong class="campaign-card__value" data-blocked-count>@blockedCount.ToString("N0")</strong>
-                    <span class="campaign-card__hint">Eligible, but not yet safe to send.</span>
                 </li>
                 @if (report.EligibleTotalAmount is { } qualifying)
                 {
                     <li class="campaign-card">
-                        <span class="campaign-card__label">Total qualifying amount</span>
+                        <span class="campaign-card__label">Total qualifying amount<partial name="_InfoTip" model="@(new InfoTipModel("tip-qualifying", "Total qualifying amount", $"Stage amount of the eligible customers, as sent to Genesys. {amountNote}", "data-amount-explanation"))" /></span>
                         <strong class="campaign-card__value" data-eligible-total>@currency @qualifying.ToString("N2", System.Globalization.CultureInfo.InvariantCulture)</strong>
-                        <span class="campaign-card__hint">Stage amount of the eligible customers, as sent to Genesys.</span>
                     </li>
                 }
                 @if (report.EligibleOutstandingAmount is { } outstanding)
                 {
                     <li class="campaign-card">
-                        <span class="campaign-card__label">Outstanding balance of the eligible customers</span>
+                        <span class="campaign-card__label">Outstanding balance of the eligible customers<partial name="_InfoTip" model="@(new InfoTipModel("tip-outstanding", "Outstanding balance of the eligible customers", amountNote))" /></span>
                         <strong class="campaign-card__value" data-eligible-outstanding>@currency @outstanding.ToString("N2", System.Globalization.CultureInfo.InvariantCulture)</strong>
                     </li>
                 }
             </ul>
-            @if (report.EligibleTotalAmount is { } q && report.EligibleOutstandingAmount is { } o)
-            {
-                <p class="campaign-helper receivables-meta" data-amount-explanation>The outstanding balance is everything these customers owe that is Due or Overdue. The qualifying amount is only the part this stage's rule collects@(o - q > 0 ? $" (AED {(o - q).ToString("N2", System.Globalization.CultureInfo.InvariantCulture)} of the balance is not part of this stage)" : ""). Neither is the customers' full contract balance.</p>
-            }
         </section>
         <section class="campaign-section" aria-labelledby="campaign-details-title">
             <h3 class="campaign-section__title" id="campaign-details-title">Campaign details</h3>
             <dl class="campaign-details">
-                @if (Model.CampaignName is { } campaignName) { <div><dt>Stage / Genesys campaign name when sent</dt><dd><strong data-campaign-name>@campaignName</strong></dd></div> }
+                @if (Model.CampaignName is { } campaignName) { <div><dt>Campaign name<partial name="_InfoTip" model="@(new InfoTipModel("tip-campaign-name", "Campaign name", "Stage / Genesys campaign name when sent"))" /></dt><dd><strong data-campaign-name>@campaignName</strong></dd></div> }
                 <div><dt>Payment status</dt><dd><strong>@(report.PaymentStatus == "Both" ? "Due and Overdue" : report.PaymentStatus)</strong></dd></div>
             </dl>
         </section>
         @if (blockedCount > 0)
         {
+            @* The blockers are safety information, not hints: the report-wide gates (financial data, reconciliation, CRM, schedule) are always listed in full. Only the long tail of
+               per-customer reasons folds into an expandable list, and nothing here lives only inside an Info tooltip. *@
+            var gateReasons = Model.NotReadyGateReasons();
+            var customerReasons = Model.NotReadyCustomerReasons();
+            const int shownCustomerReasons = 3;
             <div class="campaign-blockers" role="status" data-not-ready-reasons>
                 <h3 class="campaign-blockers__title">Why sending is blocked</h3>
                 <p class="receivables-meta">@(report.ReadyCount == 0 ? "No customer is" : "Some customers are not") Ready to send:</p>
                 <ul class="campaign-blockers__list">
-                    @foreach (var reason in Model.NotReadyReasons()) { <li data-not-ready-reason>@reason</li> }
+                    @foreach (var reason in gateReasons.Concat(customerReasons.Take(shownCustomerReasons))) { <li data-not-ready-reason>@reason</li> }
                 </ul>
+                @if (customerReasons.Count > shownCustomerReasons)
+                {
+                    <details class="campaign-blockers__more" data-not-ready-more>
+                        <summary>Show @(customerReasons.Count - shownCustomerReasons) more @(customerReasons.Count - shownCustomerReasons == 1 ? "reason" : "reasons")</summary>
+                        <ul class="campaign-blockers__list">
+                            @foreach (var reason in customerReasons.Skip(shownCustomerReasons)) { <li data-not-ready-reason>@reason</li> }
+                        </ul>
+                    </details>
+                }
             </div>
         }
         @if (report.PaymentStatusNote is { } statusNote) { <p class="receivables-notice" role="status" data-payment-status-note>@statusNote</p> }
         @* Review export is independent of Approve & Send. The safeguards are unchanged: it needs the export permission and fresh, fully covered data (the API refuses otherwise);
-           when it cannot run the button stays visible but disabled and says why, so nobody has to guess where it went. Genesys export keeps its stricter rule. *@
+           when it cannot run the button stays visible but disabled, and the Info icon beside it gives the exact reason, so nobody has to guess where it went. Genesys export keeps its stricter rule. *@
         @{ var exportProblem = Model.ExportReviewProblem; }
         <section class="campaign-section campaign-section--actions" aria-labelledby="campaign-actions-title">
         <h3 class="campaign-section__title" id="campaign-actions-title">Actions</h3>
         <div class="campaign-actions">
             @if (exportProblem is null) { <a class="btn" href="@Model.PageUrl(export: "review")" data-export-review>Export review CSV</a> }
-            else { <button class="btn" type="button" disabled aria-disabled="true" title="@exportProblem" data-export-review-unavailable>Export review CSV</button><span class="receivables-meta" data-export-review-reason>@exportProblem</span> }
+            else
+            {
+                <span class="campaign-action">
+                    <button class="btn" type="button" disabled aria-disabled="true" aria-describedby="tip-export-review-reason" data-export-review-unavailable>Export review CSV</button>
+                    <partial name="_InfoTip" model="@(new InfoTipModel("tip-export-review-reason", "Why Export review CSV is unavailable", exportProblem, "data-export-review-reason"))" />
+                </span>
+            }
             @if (exportProblem is null && report.ReadyCount > 0 && report.ReadyCount + report.NotEligibleCount == report.TotalCount)
             { <a class="btn btn-primary" href="@Model.PageUrl(export: "genesys")">Export Genesys CSV</a> }
         </div>
-        @{ var blocked = Model.ApproveBlockedReason; }
+        @{
+            var blocked = Model.ApproveBlockedReason;
+            // The always-available explanation of the button and, when it is disabled, the exact reason (collections-campaign-approve.js swaps in "tick at least one customer" while nothing is ticked).
+            var approveReason = blocked is null
+                ? "Only Ready customers can be sent. Nothing is sent until you confirm the exact count, amount and Genesys contact list."
+                : $"{blocked} Sending is disabled until reconciliation and schedule checks pass.";
+        }
         <form method="post" class="campaign-approve" data-approve-form asp-page-handler="Approve">
             @foreach (var name in CampaignsModel.FilterFieldNames)
             {
@@ -94,13 +118,18 @@ else if (Model.Report is { } report)
             <input type="hidden" name="unitKeys" value="" data-selected-units />
             @if (report.ReadyCount > 0)
             {
-                <label><input type="radio" name="selectionMode" value="SelectedUnits" checked /> Only the customers I ticked (<span data-selected-count>0</span>, kept across pages)</label>
-                <label><input type="radio" name="selectionMode" value="AllMatching" data-all-matching /> All eligible customers matching the filters (<span data-all-count>@report.ReadyCount.ToString("N0")</span>, on every page)</label>
+                <div class="campaign-approve__modes">
+                    <label><input type="radio" name="selectionMode" value="SelectedUnits" checked /> Only the customers I ticked (<span data-selected-count>0</span>, kept across pages)</label>
+                    <label><input type="radio" name="selectionMode" value="AllMatching" data-all-matching /> All eligible customers matching the filters (<span data-all-count>@report.ReadyCount.ToString("N0")</span>, on every page)</label>
+                </div>
             }
-            <button class="btn btn-primary" type="submit" data-approve-button disabled="@(blocked is not null)" data-blocked="@(blocked is not null ? "true" : "false")">Approve &amp; Send to Genesys</button>
-            @if (report.ReadyCount > 0) { <button class="btn" type="button" data-clear-selection>Clear ticks</button> }
-            <span class="receivables-meta" data-approve-reason role="status">@(blocked ?? "Only Ready customers can be sent. Nothing is sent until you confirm the exact count, amount and Genesys contact list.")</span>
-            @if (blocked is not null) { <span class="campaign-approve__hint" data-approve-blocked-hint>Sending is disabled until reconciliation and schedule checks pass.</span> }
+            <div class="campaign-approve__actions">
+                <span class="campaign-action">
+                    <button class="btn btn-primary" type="submit" aria-describedby="tip-approve-reason" data-approve-button disabled="@(blocked is not null)" data-blocked="@(blocked is not null ? "true" : "false")">Approve &amp; Send to Genesys</button>
+                    <partial name="_InfoTip" model="@(new InfoTipModel("tip-approve-reason", "Approve & Send to Genesys", approveReason, "data-approve-reason"))" />
+                </span>
+                @if (report.ReadyCount > 0) { <button class="btn" type="button" data-clear-selection>Clear ticks</button> }
+            </div>
         </form>
         </section>
         <div class="table-scroll">

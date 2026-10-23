@@ -166,7 +166,10 @@ public sealed class CampaignsModel(CollectionsApiClient api, Microsoft.Extension
         : snapshot.IsFresh ? problem : $"{problem} Reload the data, then export.";
 
     /// <summary>Plain-language reasons the eligible customers are not Ready: the report-wide gates first, then the per-customer reasons found on the page shown.</summary>
-    public IReadOnlyList<string> NotReadyReasons()
+    public IReadOnlyList<string> NotReadyReasons() => [.. NotReadyGateReasons(), .. NotReadyCustomerReasons()];
+
+    /// <summary>The report-wide gates (financial data, reconciliation, CRM, schedule). They are mandatory safety information and are always shown in full.</summary>
+    public IReadOnlyList<string> NotReadyGateReasons()
     {
         var reasons = new List<string>();
         if (Report is not { } report) return reasons;
@@ -174,6 +177,14 @@ public sealed class CampaignsModel(CollectionsApiClient api, Microsoft.Extension
         if (!report.FinancialSourceValidated) reasons.Add("The financial source has not been reconciled against PACT.");
         if (report.Crm is { Blocks: true } crm) reasons.Add(crm.Message ?? "CRM contacts are unavailable, so contacts are unconfirmed.");
         if (ScheduleRestriction(StageName(report.Stage), report.ScheduledDates, report.BusinessDate, report.LiveBusinessDate, report.IsScheduledDate) is { } schedule) reasons.Add(schedule);
+        return reasons;
+    }
+
+    /// <summary>The per-customer reasons found on the page shown, most frequent first. The page may fold the long tail into an expandable list.</summary>
+    public IReadOnlyList<string> NotReadyCustomerReasons()
+    {
+        var reasons = new List<string>();
+        if (Report is not { } report) return reasons;
         var counts = report.Items.Where(i => i.Status is not ("Ready" or "NotEligible"))
             .SelectMany(i => i.Reason.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)).Where(r => r != "Qualifies")
             .GroupBy(r => r).OrderByDescending(g => g.Count()).ThenBy(g => g.Key, StringComparer.Ordinal);
