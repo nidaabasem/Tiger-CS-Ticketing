@@ -125,8 +125,9 @@ public sealed class TicketNextActionTests
 
         Assert.Equal(AttentionLevel.Info, g.Level);
         Assert.Equal("AI is handling this customer", g.Headline);
-        Assert.Equal("tab-conversations", g.Primary!.Key);
-        Assert.True(g.Primary.IsTab);
+        // The conversation is part of the Overview, so the card scrolls to it rather than switching tab.
+        Assert.Equal("conversation", g.Primary!.Key);
+        Assert.False(g.Primary.IsTab);
     }
 
     [Fact]

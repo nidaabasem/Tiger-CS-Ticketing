@@ -1,0 +1,12 @@
+@using TigerCS.Web.Pages.Collections
+@model InfoTipModel
+@* A compact Info icon with its explanation. The text is always in the markup (never injected by script), so it can be read, searched and announced without JavaScript:
+   the button is described by it (aria-describedby), hover and keyboard focus show it by CSS, and info-tip.js adds tap/click toggling, Escape, outside-click dismissal and
+   viewport-safe placement. A disabled button is not focusable, so the reason for it lives behind its own icon, which is. *@
+<span class="info-tip" data-info-tip>
+    <button type="button" class="info-tip__button" aria-label="More information: @Model.Label" aria-describedby="@Model.Id" aria-expanded="false" data-info-tip-button>
+        <svg class="info-tip__icon" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" focusable="false"><circle cx="8" cy="8" r="7" fill="none" stroke="currentColor" stroke-width="1.5" /><path d="M8 7.2v4.1" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" fill="none" /><circle cx="8" cy="4.9" r="1" fill="currentColor" /></svg>
+    </button>
+    @if (Model.SafeHook is { } hook) { <span class="info-tip__content" id="@Model.Id" role="tooltip" data-info-tip-content @Html.Raw(hook)>@(Model.Html ?? (object)Model.Text)</span> }
+    else { <span class="info-tip__content" id="@Model.Id" role="tooltip" data-info-tip-content>@(Model.Html ?? (object)Model.Text)</span> }
+</span>

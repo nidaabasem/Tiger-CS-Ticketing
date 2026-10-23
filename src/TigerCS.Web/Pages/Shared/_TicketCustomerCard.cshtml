@@ -19,8 +19,8 @@
 {
     @* Overview: the header already names the customer, their phone and how they were verified, so this
        repeats none of it — only what the header lacks, and the way into the profile. *@
-    <section class="customer-card customer-card--compact" aria-label="Customer">
-        <div class="facts-section__title">Customer</div>
+    <section class="customer-card customer-card--compact" aria-label="Customer information">
+        <div class="facts-section__title">Customer Information</div>
         <dl class="customer-card__facts">
             <div class="facts-row"><dt>Project / Unit</dt><dd>@(customerUnit is null && customerProject is null ? "Not yet provided" : $"{customerUnit ?? "Unit not provided"}{(customerProject is null ? "" : $" · {customerProject}")}")</dd></div>
             @if (Model.CustomerHistory is { } compactHistory)

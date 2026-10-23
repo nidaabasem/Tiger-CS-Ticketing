@@ -16,6 +16,18 @@ public static class TicketDisplay
     public static string UaeTime(DateTime utc) =>
         DateTime.SpecifyKind(utc, DateTimeKind.Utc).AddHours(4).ToString("d MMM yyyy HH:mm", System.Globalization.CultureInfo.InvariantCulture) + " (UAE)";
 
+    /// <summary>UAE (UTC+4, no daylight saving) "HH:mm" for a chat line.</summary>
+    public static string UaeClock(DateTime utc) =>
+        DateTime.SpecifyKind(utc, DateTimeKind.Utc).AddHours(4).ToString("HH:mm", System.Globalization.CultureInfo.InvariantCulture);
+
+    /// <summary>UAE "d MMM yyyy" — the calendar day a chat line falls on.</summary>
+    public static string UaeDate(DateTime utc) =>
+        DateTime.SpecifyKind(utc, DateTimeKind.Utc).AddHours(4).ToString("ddd d MMM yyyy", System.Globalization.CultureInfo.InvariantCulture);
+
+    /// <summary>UAE "d MMM yyyy HH:mm", without a zone suffix (the caller labels the zone once).</summary>
+    public static string UaeDateTime(DateTime utc) =>
+        DateTime.SpecifyKind(utc, DateTimeKind.Utc).AddHours(4).ToString("d MMM yyyy HH:mm", System.Globalization.CultureInfo.InvariantCulture);
+
     /// <summary>Gold filled stars then grey empty ones for a 1–5 rating, as plain text characters.</summary>
     public static string StarsFor(int rating) => new string('★', Math.Clamp(rating, 0, 5)) + new string('☆', 5 - Math.Clamp(rating, 0, 5));
 

@@ -1,0 +1,115 @@
+@model TigerCS.Web.Pages.TicketDetailsModel
+@{
+    // Conversation History inside the Overview: the calls and chats this ticket came from, read from the same interactions
+    // endpoint the Interactions tab used (nothing is re-queried or re-sorted). A chat window, not an activity log: customer on
+    // the right, bot and people on the left, system events set apart. Times are UAE time.
+    var interactions = Model.Interactions;
+}
+<section class="facts-panel conversation" id="action-conversation" data-action="conversation" aria-labelledby="conversation-title">
+    <div class="facts-section__title" id="conversation-title">Conversation History@(interactions.Count > 1 ? $" ({interactions.Count} interactions)" : "")</div>
+    @if (Model.InteractionsUnavailable)
+    {
+        <div class="empty-state empty-state--compact"><p>Conversation history is unavailable right now.</p></div>
+    }
+    else if (interactions.Count == 0)
+    {
+        <div class="empty-state empty-state--compact"><p>No calls or chats are recorded against this ticket.</p></div>
+    }
+    else
+    {
+        @* The Api already orders interactions oldest first; the view never re-sorts them. *@
+        for (var index = 0; index < interactions.Count; index++)
+        {
+            var interaction = interactions[index];
+            var handledBy = ConversationHistoryView.HandledBy(interaction);
+            var handoffStatus = ConversationHistoryView.HandoffStatus(interaction);
+            var lines = ConversationHistoryView.Lines(interaction);
+            <details class="convo-group" open="@(ConversationHistoryView.OpensByDefault(interactions, index) ? "open" : null)">
+                <summary class="convo-group__summary">
+                    <span class="convo-group__head">
+                        <span class="convo-group__channel">@(interaction.ChannelName ?? "Unknown channel")</span>
+                        @if (interaction.IsOriginatingInteraction)
+                        {
+                            <span class="badge badge-status-open"><span class="badge-dot"></span>Originating</span>
+                        }
+                        @if (handledBy is not null)
+                        {
+                            <span class="convo-chip convo-chip--@ConversationHistoryView.HandledByCss(interaction)">@handledBy</span>
+                        }
+                        @if (handoffStatus is not null)
+                        {
+                            <span class="convo-chip convo-chip--handoff@(interaction.Handoff is null ? " convo-chip--quiet" : "")">@handoffStatus</span>
+                        }
+                    </span>
+                    <span class="convo-group__when">@ConversationHistoryView.TimeWindow(interaction) · @ConversationHistoryView.MessageCount(interaction)</span>
+                </summary>
+
+                <div class="convo-group__body">
+                    @* The interaction's own lifecycle — deliberately separate from the ticket's status: a conversation that ended never closes the ticket. *@
+                    <dl class="convo-meta">
+                        <div class="convo-meta__item"><dt>Interaction</dt><dd>@(interaction.Status == "Ended"
+                            ? $"Ended{(string.IsNullOrWhiteSpace(interaction.EndReason) ? "" : $" ({interaction.EndReason})")}"
+                            : "Active")</dd></div>
+                        @if (!string.IsNullOrWhiteSpace(interaction.CustomerName))
+                        {
+                            <div class="convo-meta__item"><dt>Customer</dt><dd>@interaction.CustomerName</dd></div>
+                        }
+                        @if (!string.IsNullOrWhiteSpace(interaction.CustomerPhone))
+                        {
+                            <div class="convo-meta__item"><dt>Phone</dt><dd class="text-mono">@interaction.CustomerPhone</dd></div>
+                        }
+                        @if (interaction.Handoff is { } handoff)
+                        {
+                            <div class="convo-meta__item"><dt>Handoff requested</dt><dd>@TicketDisplay.UaeTime(handoff.RequestedAtUtc) · @TicketDisplay.HandoffInitiatorLabel(handoff.Trigger)</dd></div>
+                            <div class="convo-meta__item"><dt>Follow-up</dt><dd>@TicketDisplay.HandoffModeLabel(handoff.Mode)</dd></div>
+                            @if (!string.IsNullOrWhiteSpace(handoff.RequestReason))
+                            {
+                                <div class="convo-meta__item convo-meta__item--wide"><dt>Reason</dt><dd>@handoff.RequestReason</dd></div>
+                            }
+                            @if (!string.IsNullOrWhiteSpace(handoff.ResolutionNote))
+                            {
+                                <div class="convo-meta__item convo-meta__item--wide"><dt>Outcome</dt><dd>@handoff.ResolutionNote</dd></div>
+                            }
+                        }
+                    </dl>
+
+                    @if (lines.Count == 0)
+                    {
+                        <p class="text-secondary convo-empty">
+                            @(interaction.Status == "Ended"
+                                ? "No transcript was recorded for this interaction."
+                                : "No messages have been recorded for this conversation yet.")
+                        </p>
+                    }
+                    else
+                    {
+                        <div class="chat-scroll" tabindex="0" role="log" aria-label="Conversation, oldest message first">
+                            <ol class="chat">
+                                @foreach (var line in lines)
+                                {
+                                    @if (line.DateHeading is { } heading)
+                                    {
+                                        <li class="chat-day" aria-hidden="true"><span>@heading</span></li>
+                                    }
+                                    @if (line.Kind == ChatBubbleKind.System)
+                                    {
+                                        <li class="chat-event"><span class="chat-event__label">@line.Who</span> <span class="chat-event__text">@line.Body</span> <span class="chat-event__time">@line.Time</span></li>
+                                    }
+                                    else
+                                    {
+                                        <li class="chat-msg chat-msg--@line.Kind.ToString().ToLowerInvariant()">
+                                            <div class="chat-bubble">
+                                                <div class="chat-bubble__meta"><span class="chat-bubble__who">@line.Who</span><span class="chat-bubble__time">@line.Time</span></div>
+                                                <div class="chat-bubble__text">@line.Body</div>
+                                            </div>
+                                        </li>
+                                    }
+                                }
+                            </ol>
+                        </div>
+                    }
+                </div>
+            </details>
+        }
+    }
+</section>

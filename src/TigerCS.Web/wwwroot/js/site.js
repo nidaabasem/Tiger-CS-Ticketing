@@ -307,6 +307,58 @@
     });
   });
 
+  // Ticket Details "Classify": the request type list follows the chosen category. Each request type option carries the
+  // category it belongs under; only those are shown. A category with none classifies on its own (no request type).
+  document.querySelectorAll("[data-classify-form]").forEach(function (form) {
+    var category = form.querySelector("[data-classify-category]");
+    var requestType = form.querySelector("[data-classify-request-type]");
+    if (!category || !requestType) return;
+    var hint = form.querySelector("[data-classify-request-type-hint]");
+    var options = Array.prototype.slice.call(requestType.options);
+    function apply() {
+      var categoryId = category.value;
+      var visible = 0;
+      options.forEach(function (option) {
+        var belongs = option.value === "0" ? false : option.getAttribute("data-category-ids") === categoryId;
+        option.hidden = option.value === "0" ? true : !belongs;
+        option.disabled = option.value === "0" ? true : !belongs;
+        if (belongs) visible++;
+      });
+      var none = requestType.querySelector('option[value="0"]');
+      if (visible === 0) {
+        none.hidden = false;
+        none.disabled = false;
+        requestType.value = "0";
+        requestType.disabled = true;
+        if (hint) hint.textContent = "This category has no request types; it is classified on its own.";
+      } else {
+        requestType.disabled = false;
+        var current = requestType.options[requestType.selectedIndex];
+        if (!current || current.disabled) {
+          var first = options.filter(function (o) { return !o.disabled; })[0];
+          if (first) requestType.value = first.value;
+        }
+        if (hint) hint.textContent = "Choose the request type that belongs under the selected category.";
+      }
+    }
+    category.addEventListener("change", apply);
+    apply();
+    // A disabled select is not posted; the server reads a missing request type as "none".
+  });
+
+  // Ticket Details "Conversation History": a chat reads from the newest message, so an open conversation starts scrolled to
+  // its end (a long one stays in its own scroll box); a group opened later scrolls once when it first shows.
+  function scrollChatToEnd(group) {
+    var box = group.querySelector(".chat-scroll");
+    if (box) box.scrollTop = box.scrollHeight;
+  }
+  document.querySelectorAll(".convo-group").forEach(function (group) {
+    if (group.open) scrollChatToEnd(group);
+    group.addEventListener("toggle", function () {
+      if (group.open) scrollChatToEnd(group);
+    });
+  });
+
   // Back/forward can restore this page from the browser's cache exactly as
   // it was left — mid-submit, with the guard set and the buttons disabled.
   // Release it, or the agent returns to a filter bar that refuses to apply.

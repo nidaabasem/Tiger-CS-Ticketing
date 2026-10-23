@@ -41,7 +41,11 @@ public sealed class TicketDetailsClassifyControlTests
         categoryId, 3, status, "Unverified", "None", "Running", null, null, "Website chat started via Genesys", 0,
         DateTime.UtcNow, Convert.ToBase64String([1, 2, 3, 4]), RequestTypeId: requestTypeId);
 
-    private static (TicketDetailsModel Model, List<string> Calls) Build(TicketDetailDto ticket, params string[] roles)
+    private static (TicketDetailsModel Model, List<string> Calls) Build(TicketDetailDto ticket, params string[] roles) =>
+        Build(ticket, null, null, roles);
+
+    private static (TicketDetailsModel Model, List<string> Calls) Build(
+        TicketDetailDto ticket, CategoryDto[]? categories, RequestTypeOptionDto[]? requestTypes, params string[] roles)
     {
         var calls = new List<string>();
         var handler = new FakeApiHandler((request, _) =>
@@ -53,17 +57,18 @@ public sealed class TicketDetailsClassifyControlTests
                 "/api/users/me" => FakeApiHandler.JsonResponse(HttpStatusCode.OK, new CurrentUserResponseDto(
                     Viewer, "Test Viewer", roles, [new DepartmentMembershipDto(DepartmentId, "Leasing", IsPrimary: true)], IsGeynessStaff: false)),
                 "/api/tickets/1" when request.Method == HttpMethod.Get => FakeApiHandler.JsonResponse(HttpStatusCode.OK, ticket),
-                "/api/categories" => FakeApiHandler.JsonResponse(HttpStatusCode.OK, new[]
-                {
+                "/api/categories" => FakeApiHandler.JsonResponse(HttpStatusCode.OK, categories ??
+                [
                     new CategoryDto(11, "Handover", DepartmentId, "Leasing"),
                     new CategoryDto(12, "Other department", 99, "Elsewhere")
-                }),
-                "/api/request-types" => FakeApiHandler.JsonResponse(HttpStatusCode.OK, new[]
-                {
+                ]),
+                "/api/request-types" => FakeApiHandler.JsonResponse(HttpStatusCode.OK, requestTypes ??
+                [
                     new RequestTypeOptionDto(17, "Coordinate Handover", DepartmentId, 3, true),
                     new RequestTypeOptionDto(18, "Unpublished", DepartmentId, 3, false),
                     new RequestTypeOptionDto(19, "Other department", 99, 3, true)
-                }),
+                ]),
+                "/api/tickets/1/classification" when request.Method == HttpMethod.Post => FakeApiHandler.JsonResponse(HttpStatusCode.OK, ticket),
                 _ => new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)
             };
         });
@@ -130,5 +135,63 @@ public sealed class TicketDetailsClassifyControlTests
 
         Assert.True(model.CanClassify);
         Assert.True(model.Classify.RequestTypeAlreadySet);
+    }
+
+    [Fact]
+    public async Task ADepartmentWithNothingConfigured_HasClassifyOfferedButExplained_AndTheGuidanceDoesNotRecommendIt()
+    {
+        var (model, _) = Build(Ticket(categoryId: null), [], [], Roles.DepartmentEmployee);
+        await model.OnGetAsync(1, null, CancellationToken.None);
+
+        Assert.True(model.CanClassify);
+        Assert.NotNull(model.ClassifyNotice);
+        Assert.True(model.ClassifyNotice!.IsConfiguration);
+        Assert.False(model.ClassifyOptions.IsAvailable);
+        Assert.NotEqual("classify", model.Guidance!.Primary?.Key);
+    }
+
+    private static readonly CategoryDto[] TwoCategories =
+        [new(11, "Handover", DepartmentId, "Leasing"), new(12, "General Inquiry", DepartmentId, "Leasing")];
+
+    private static readonly RequestTypeOptionDto[] OneType = [new(17, "Handover", DepartmentId, 3, true)];
+
+    private static async Task<(TicketDetailsModel Model, List<string> Calls)> Post(int categoryId, int requestTypeId, bool alreadySet = false)
+    {
+        var (model, calls) = Build(Ticket(categoryId: null), TwoCategories, OneType, Roles.DepartmentEmployee);
+        model.Classify = new TicketDetailsModel.ClassifyInput
+        {
+            RowVersionBase64 = Convert.ToBase64String([1, 2, 3, 4]), CategoryId = categoryId, PriorityId = 3,
+            RequestTypeId = requestTypeId, RequestTypeAlreadySet = alreadySet
+        };
+        await model.OnPostClassifyAsync(1, CancellationToken.None);
+        return (model, calls);
+    }
+
+    [Fact]
+    public async Task ARequestTypeUnderTheWrongCategory_IsRefused_AndNothingIsSent()
+    {
+        var (model, calls) = await Post(categoryId: 12, requestTypeId: 17);
+
+        Assert.Contains("does not belong under the chosen category", model.ActionError);
+        Assert.DoesNotContain(calls, c => c.StartsWith("POST", StringComparison.Ordinal) && c.Contains("classification"));
+    }
+
+    [Fact]
+    public async Task ACategoryThatHasRequestTypes_RequiresOne()
+    {
+        var (model, calls) = await Post(categoryId: 11, requestTypeId: 0);
+
+        Assert.Contains("Choose a request type", model.ActionError);
+        Assert.DoesNotContain(calls, c => c.StartsWith("POST", StringComparison.Ordinal) && c.Contains("classification"));
+    }
+
+    [Fact]
+    public async Task ACategoryWithoutRequestTypes_ClassifiesOnItsOwn_AndAMatchingPairIsAccepted()
+    {
+        var (_, own) = await Post(categoryId: 12, requestTypeId: 0);
+        var (_, pair) = await Post(categoryId: 11, requestTypeId: 17);
+
+        Assert.Contains(own, c => c == "POST /api/tickets/1/classification");
+        Assert.Contains(pair, c => c == "POST /api/tickets/1/classification");
     }
 }
