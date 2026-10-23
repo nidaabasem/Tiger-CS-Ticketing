@@ -523,4 +523,85 @@ public sealed class DashboardUiTests
 
         Assert.Contains("Filtered from Dashboard", view);
     }
+
+    // ---------------------------------------------------------------
+    // Closure KPI cards (Reviewed, Not Reviewed, Closed by AI, Closed by Agent)
+    // ---------------------------------------------------------------
+
+    [Fact]
+    public async Task ClosureCards_ShowTheApiCounts_InOrder_BeneathTheSixOriginalCards()
+    {
+        var overview = Overview(kpis: new DashboardKpisDto(12, 3, 4, 1, 2, 5, ReviewedTickets: 7, NotReviewedTickets: 9, ClosedByAiTickets: 6, ClosedByAgentTickets: 10));
+        var (model, _) = CreateModel((_, _) => FakeApiHandler.JsonResponse(HttpStatusCode.OK, overview));
+
+        await model.OnGetAsync(null, null, null, null, null, null, null, null, CancellationToken.None);
+
+        Assert.Equal(["Reviewed Tickets", "Not Reviewed", "Closed by AI", "Closed by Agent"], model.ClosureCards.Select(c => c.Label).ToArray());
+        Assert.Equal([7, 9, 6, 10], model.ClosureCards.Select(c => c.Value).ToArray());
+        // The original six are untouched.
+        Assert.Equal(6, model.Cards.Count);
+    }
+
+    [Fact]
+    public void ClosureCardDrilldowns_OpenTheClosedTicketsList_FilteredToTheirCategory_WithDatesAndDimensionFilters()
+    {
+        var f = DefaultFilters with { DepartmentId = 2, ChannelId = 6 };
+
+        var links = new Dictionary<string, string>
+        {
+            ["Reviewed"] = DashboardLinks.Reviewed(f),
+            ["NotReviewed"] = DashboardLinks.NotReviewed(f),
+            ["ClosedByAi"] = DashboardLinks.ClosedByAi(f),
+            ["ClosedByAgent"] = DashboardLinks.ClosedByAgent(f),
+        };
+
+        foreach (var (category, href) in links)
+        {
+            Assert.StartsWith(DashboardLinks.TicketsPath + "?", href);
+            var q = Query(href);
+            Assert.Equal(category, q["closureCategory"]);
+            Assert.Equal("Closed", q["ticketStatus"]);
+            // Closed tickets follow the dashboard's date range and every dimension filter.
+            Assert.Equal("2026-08-12", q["createdFrom"]);
+            Assert.Equal("2026-09-10", q["createdTo"]);
+            Assert.Equal("2", q["departmentId"]);
+            Assert.Equal("6", q["channelId"]);
+        }
+    }
+
+    [Fact]
+    public void ClosureCardDrilldown_KeepsTheDashboardsOwnStatusFilter_SoANumberAndItsListAgree()
+    {
+        // With the status filter on Open the card counts 0 closed tickets; the list must not switch to Closed and show some.
+        var q = Query(DashboardLinks.ClosedByAi(DefaultFilters with { TicketStatus = "Open" }));
+
+        Assert.Equal("Open", q["ticketStatus"]);
+        Assert.Equal("ClosedByAi", q["closureCategory"]);
+    }
+
+    [Fact]
+    public void TheDashboardView_RendersTheClosureCards_AsClickableCards_InTheSameCardMarkup()
+    {
+        var view = View("Dashboard.cshtml");
+
+        Assert.Contains("Model.ClosureCards", view);
+        Assert.Contains("kpi-grid--four", view);
+        Assert.Contains("class=\"kpi-card kpi-card--icon tone-@KpiTone(card.Label)\" href=\"@card.Href\"", view);
+    }
+
+    [Fact]
+    public void TheTicketsPage_CarriesTheClosureCategoryThroughToTheQueueEndpoint_AndEveryRefilter()
+    {
+        var page = File.ReadAllText(SourceFile(Path.Combine("TigerCS.Web", "Pages", "Tickets.cshtml.cs")));
+        var list = View("Shared", "_TicketListView.cshtml");
+        var client = File.ReadAllText(SourceFile(Path.Combine("TigerCS.Web", "Services", "Api", "TicketsApiClient.cs")));
+        var views = File.ReadAllText(SourceFile(Path.Combine("TigerCS.Web", "Models", "TicketsView.cs")));
+
+        Assert.Contains("string? closureCategory = null", page);
+        Assert.Contains("CreatedFrom, CreatedTo, Unclassified ? true : null, ClosureCategory", page);
+        Assert.Contains("closureCategory = Model.ClosureCategory", list);
+        Assert.Contains("name=\"closureCategory\"", list);
+        Assert.Contains("query[\"closureCategory\"]", client);
+        Assert.Contains("\"closureCategory\"", views);
+    }
 }

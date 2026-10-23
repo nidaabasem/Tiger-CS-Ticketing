@@ -60,6 +60,50 @@ internal static class TicketQueryFilters
         return tickets;
     }
 
+    /// <summary>
+    /// Closed tickets in one Dashboard closure KPI. Written as correlated
+    /// <c>EXISTS</c> predicates, so each ticket is counted once however many
+    /// reviews, invitations or audit rows it has — never a join that could
+    /// multiply rows.
+    /// </summary>
+    public static IQueryable<Ticket> InClosureCategory(
+        this IQueryable<Ticket> tickets, TigerCsDbContext dbContext, TicketClosureCategory category)
+    {
+        var closed = tickets.Where(t => t.TicketStatus == TicketStatus.Closed);
+        return category switch
+        {
+            // A submitted, non-test review for the ticket's current cycle (a
+            // reopen starts a new cycle that needs its own review).
+            TicketClosureCategory.Reviewed => closed.Where(t => dbContext.TicketReviews.Any(r =>
+                r.TicketId == t.TicketId && r.ReopenCycle == t.ReopenCount && !r.IsTest)),
+            TicketClosureCategory.NotReviewed => closed.Where(t => !dbContext.TicketReviews.Any(r =>
+                r.TicketId == t.TicketId && r.ReopenCycle == t.ReopenCount && !r.IsTest)),
+            TicketClosureCategory.ClosedByAi => closed.Where(LatestClosureIs(dbContext, TicketClosureAuditActions.ClosedByAi)),
+            TicketClosureCategory.ClosedByAgent => closed.Where(LatestClosureIs(dbContext, TicketClosureAuditActions.ClosedByAgent)),
+            _ => closed.Where(_ => false)
+        };
+    }
+
+    /// <summary>
+    /// The ticket's most recent closing audit entry (highest id — the audit
+    /// trail is append-only) has this action. A reopened ticket closed again
+    /// is judged by its last closure; an inactivity or document-delivery
+    /// closure is the latest closure of its own, matching neither AI nor agent.
+    /// </summary>
+    private static Expression<Func<Ticket, bool>> LatestClosureIs(TigerCsDbContext dbContext, string action)
+    {
+        var closingActions = TicketClosureAuditActions.AllClosures.ToList();
+        return t => dbContext.AuditEntries.Any(a =>
+            a.EntityType == TicketClosureAuditActions.EntityType
+            && a.EntityId == t.TicketId.ToString()
+            && a.Action == action
+            && !dbContext.AuditEntries.Any(later =>
+                later.EntityType == TicketClosureAuditActions.EntityType
+                && later.EntityId == a.EntityId
+                && later.AuditEntryId > a.AuditEntryId
+                && closingActions.Contains(later.Action)));
+    }
+
     /// <summary>The current SLA period of every ticket — the one row per ticket with no period end.</summary>
     public static IQueryable<Domain.Modules.SlaAndEscalation.TicketSlaInstance> CurrentSlaPeriods(TigerCsDbContext dbContext) =>
         dbContext.TicketSlaInstances.Where(s => s.PeriodEndAtUtc == null);

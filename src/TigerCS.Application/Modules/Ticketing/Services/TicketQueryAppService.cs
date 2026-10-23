@@ -76,7 +76,8 @@ public sealed class TicketQueryAppService(
             CreatedFromUtc: request.CreatedFrom?.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc),
             CreatedToUtc: request.CreatedTo?.AddDays(1).ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc),
             NowUtc: timeProvider.GetUtcNow().UtcDateTime,
-            Unclassified: request.Unclassified == true);
+            Unclassified: request.Unclassified == true,
+            ClosureCategory: ParseEnum<TicketClosureCategory>(request.ClosureCategory));
 
         var result = await ticketRepository.SearchAsync(query, cancellationToken);
 

@@ -23,6 +23,14 @@ namespace TigerCS.Application.Modules.Ticketing.Abstractions;
 /// filters (department, agent, channel, request type, status, priority)
 /// apply to both.
 /// </para>
+///
+/// <para>
+/// The four closure KPIs (Reviewed, Not Reviewed, Closed by AI, Closed by
+/// Agent) are the exception to "KPIs are current-state": they count Closed
+/// tickets, which are by definition not part of the active backlog, so they
+/// follow the same date range as the volume breakdowns (tickets created
+/// within the range) and the same dimension filters.
+/// </para>
 /// </summary>
 /// <param name="ScopeDepartmentIds">Null = no restriction; otherwise the departments the counts may cover.</param>
 /// <param name="CallerEmployeeId">For the My Tickets count.</param>
@@ -97,7 +105,17 @@ public sealed record DashboardOverviewSnapshot(
     IReadOnlyList<DashboardCountRow<TicketStatus>> StatusBreakdown,
     IReadOnlyList<DashboardCountRow<byte>> PriorityBreakdown,
     IReadOnlyList<DashboardCountRow<BacklogAgeBucket>> BacklogAgeing,
-    IReadOnlyList<DashboardRecentTicketRow> RecentTickets);
+    IReadOnlyList<DashboardRecentTicketRow> RecentTickets,
+    DashboardClosureCounts? Closure = null);
+
+/// <summary>
+/// The four closure KPIs (see <see cref="TicketClosureCategory"/>): distinct
+/// Closed tickets in scope that were created within the query's date range.
+/// Reviewed + NotReviewed is every such closed ticket; ClosedByAi +
+/// ClosedByAgent is at most that, because inactivity and document-delivery
+/// closures are neither.
+/// </summary>
+public sealed record DashboardClosureCounts(int Reviewed, int NotReviewed, int ClosedByAi, int ClosedByAgent);
 
 /// <summary>A filter option: the id the filter sends back and the label the picker shows. <see cref="GroupId"/> groups request types under their department.</summary>
 public sealed record DashboardOptionRow<TKey>(TKey Id, string Label, int? GroupId = null, bool IsActive = true);

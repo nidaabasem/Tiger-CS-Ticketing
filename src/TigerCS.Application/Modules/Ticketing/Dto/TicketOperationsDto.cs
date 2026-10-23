@@ -27,6 +27,7 @@ namespace TigerCS.Application.Modules.Ticketing.Dto;
 /// <param name="CreatedFrom">Only tickets created on or after this UTC calendar day.</param>
 /// <param name="CreatedTo">Only tickets created on or before this UTC calendar day.</param>
 /// <param name="Unclassified">True: only tickets with no request type (nobody — human or Genesys AI — has classified them yet). A filter on the ticket queue only: it never implies, requests or creates a human handoff, and department visibility applies exactly as for every other filter.</param>
+/// <param name="ClosureCategory">Only Closed tickets in one Dashboard closure KPI: Reviewed (customer feedback submitted), NotReviewed, ClosedByAi (latest closure audited as AutoCloseByAi) or ClosedByAgent (latest closure audited as Close).</param>
 public sealed record TicketListRequestDto(
     int? DepartmentId,
     int? CategoryId,
@@ -49,7 +50,8 @@ public sealed record TicketListRequestDto(
     bool? PendingApproval = null,
     DateOnly? CreatedFrom = null,
     DateOnly? CreatedTo = null,
-    bool? Unclassified = null);
+    bool? Unclassified = null,
+    string? ClosureCategory = null);
 
 /// <summary>One row of the ticket queue (MVP-API-Contracts.md §3.2).</summary>
 /// <param name="TicketId">The ticket.</param>

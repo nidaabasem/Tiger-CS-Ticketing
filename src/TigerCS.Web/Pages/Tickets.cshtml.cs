@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc.RazorPages;
 using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.Extensions.Primitives;
 using TigerCS.Application.Modules.IdentityAndAccess.Dto;
+using TigerCS.Application.Modules.Ticketing.Abstractions;
 using TigerCS.Application.Modules.Ticketing.Dto;
 using TigerCS.Web.Models;
 using TigerCS.Web.Services;
@@ -69,6 +70,9 @@ public sealed class TicketsModel(
     public string? BacklogAge { get; set; }
     public bool PendingApproval { get; set; }
 
+    /// <summary>One Dashboard closure KPI (Reviewed, NotReviewed, ClosedByAi, ClosedByAgent) — passed straight to the queue endpoint's <c>closureCategory</c> filter.</summary>
+    public string? ClosureCategory { get; set; }
+
     /// <summary>Only tickets with no request type — the work queue for classifying them from Ticket Details. Raises no handoff.</summary>
     public bool Unclassified { get; set; }
     public DateOnly? CreatedFrom { get; set; }
@@ -89,7 +93,7 @@ public sealed class TicketsModel(
     /// <summary>True when any dashboard drill-down criterion is active — the page then shows what it is filtering by, with a way to clear it.</summary>
     public bool HasDrilldown =>
         ChannelId is not null || RequestTypeId is not null || ActiveOnly || InDepartmentQueue || SlaBreached
-        || DueToday || BacklogAge is not null || PendingApproval || Unclassified || CreatedFrom is not null || CreatedTo is not null;
+        || DueToday || BacklogAge is not null || PendingApproval || Unclassified || ClosureCategory is not null || CreatedFrom is not null || CreatedTo is not null;
 
     /// <summary>The channel/request-type names behind the drill-down ids, resolved from the same directories the New Ticket wizard reads — never a raw id on screen.</summary>
     public string? ChannelName { get; private set; }
@@ -107,6 +111,7 @@ public sealed class TicketsModel(
             if (DueToday) labels.Add("Due today");
             if (PendingApproval) labels.Add("Pending my approval");
             if (Unclassified) labels.Add("Unclassified (no request type)");
+            if (ClosureCategory is { } closure) labels.Add(TicketDisplay.ClosureCategoryLabel(closure));
             if (BacklogAge is { } age) labels.Add($"Backlog age: {TicketDisplay.BacklogAgeLabel(age)}");
             if (ChannelId is not null) labels.Add(ChannelName is null ? "Channel filter" : $"Channel: {ChannelName}");
             if (RequestTypeId is not null) labels.Add(RequestTypeName is null ? "Request type filter" : $"Request type: {RequestTypeName}");
@@ -192,7 +197,7 @@ public sealed class TicketsModel(
         CancellationToken cancellationToken,
         byte? channelId = null, int? requestTypeId = null, bool activeOnly = false, bool inDepartmentQueue = false,
         bool slaBreached = false, bool dueToday = false, string? backlogAge = null, bool pendingApproval = false,
-        DateOnly? createdFrom = null, DateOnly? createdTo = null, bool unclassified = false,
+        DateOnly? createdFrom = null, DateOnly? createdTo = null, bool unclassified = false, string? closureCategory = null,
         string? view = null, string? sla = null, string? assignee = null,
         bool mineOnly = false, bool unassignedOnly = false, bool includeResolved = false)
     {
@@ -250,6 +255,9 @@ public sealed class TicketsModel(
         BacklogAge = backlogAge;
         PendingApproval = pendingApproval;
         Unclassified = unclassified;
+        ClosureCategory = Enum.TryParse<TicketClosureCategory>(closureCategory, ignoreCase: true, out var parsedClosure) && Enum.IsDefined(parsedClosure)
+            ? parsedClosure.ToString()
+            : null;
         CreatedFrom = createdFrom;
         CreatedTo = createdTo;
         MineOnly = mineOnly;
@@ -356,7 +364,7 @@ public sealed class TicketsModel(
             Search, SortBy, SortDir, PageNumber, PageSize,
             ChannelId, RequestTypeId,
             ActiveOnly ? true : null, InDepartmentQueue ? true : null, SlaBreached ? true : null, DueToday ? true : null,
-            BacklogAge, PendingApproval ? true : null, CreatedFrom, CreatedTo, Unclassified ? true : null);
+            BacklogAge, PendingApproval ? true : null, CreatedFrom, CreatedTo, Unclassified ? true : null, ClosureCategory);
 
         var result = await ticketsApiClient.GetQueueAsync(request, cancellationToken);
         Outcome = result.Outcome;

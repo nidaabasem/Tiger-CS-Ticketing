@@ -158,6 +158,10 @@ public sealed record DashboardAppliedFiltersDto(
 /// <b>Not an SLA.</b> Human Wait is an operational KPI: it raises no breach
 /// row, no escalation and no <c>SlaDeadlineType</c>.
 /// </param>
+/// <param name="ReviewedTickets">Distinct Closed tickets whose current cycle has a customer review submitted (Test-mode reviews excluded). Within the dashboard date range (tickets created in it).</param>
+/// <param name="NotReviewedTickets">Distinct Closed tickets with no customer review for their current cycle. Same range.</param>
+/// <param name="ClosedByAiTickets">Distinct Closed tickets whose latest closure was audited as <c>AutoCloseByAi</c>. Same range.</param>
+/// <param name="ClosedByAgentTickets">Distinct Closed tickets whose latest closure was audited as <c>Close</c> (a person). Same range.</param>
 public sealed record DashboardKpisDto(
     int OpenTickets,
     int MyTickets,
@@ -167,7 +171,11 @@ public sealed record DashboardKpisDto(
     int PendingApproval,
     int AwaitingHumanAgent = 0,
     int OldestHumanWaitSeconds = 0,
-    int HumanWaitRiskThresholdSeconds = 900);
+    int HumanWaitRiskThresholdSeconds = 900,
+    int ReviewedTickets = 0,
+    int NotReviewedTickets = 0,
+    int ClosedByAiTickets = 0,
+    int ClosedByAgentTickets = 0);
 
 /// <summary>One bar row of a breakdown widget.</summary>
 /// <param name="Key">The dimension value the drill-down filters on (a channel/request type/department/priority id, a status name, or an age bucket name); null when the value is not recorded on the ticket, in which case the row is informational and not a drill-down.</param>

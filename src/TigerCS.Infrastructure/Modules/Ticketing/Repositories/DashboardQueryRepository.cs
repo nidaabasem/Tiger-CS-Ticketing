@@ -62,6 +62,17 @@ public sealed class DashboardQueryRepository(TigerCsDbContext dbContext) : IDash
         var dueToday = await backlog.DueOnUtcDay(dbContext, query.TodayStartUtc).CountAsync(cancellationToken);
         var pendingApproval = await scoped.WithPendingApprovalActionableBy(dbContext, query.ApproverScope).CountAsync(cancellationToken);
 
+        // ---- Closure KPIs (date range: Closed tickets are not backlog) ----
+        // Each is a COUNT over the shared InClosureCategory predicate — the
+        // one the ticket queue's closureCategory drill-down uses — so a card
+        // and its list always agree. Four narrow COUNTs, not a row load.
+        var closureScope = volume.Where(t => t.TicketStatus == TicketStatus.Closed);
+        var closure = new DashboardClosureCounts(
+            await closureScope.InClosureCategory(dbContext, TicketClosureCategory.Reviewed).CountAsync(cancellationToken),
+            await closureScope.InClosureCategory(dbContext, TicketClosureCategory.NotReviewed).CountAsync(cancellationToken),
+            await closureScope.InClosureCategory(dbContext, TicketClosureCategory.ClosedByAi).CountAsync(cancellationToken),
+            await closureScope.InClosureCategory(dbContext, TicketClosureCategory.ClosedByAgent).CountAsync(cancellationToken));
+
         // ---- Volume breakdowns (date range) ----
         var statusCounts = await volume
             .GroupBy(t => t.TicketStatus)
@@ -204,7 +215,8 @@ public sealed class DashboardQueryRepository(TigerCsDbContext dbContext) : IDash
             Enum.GetValues<BacklogAgeBucket>()
                 .Select(b => new DashboardCountRow<BacklogAgeBucket>(b, b.ToString(), ageingByBucket.GetValueOrDefault(b)))
                 .ToList(),
-            recentRows);
+            recentRows,
+            closure);
     }
 
     public async Task<DashboardFilterOptionsSnapshot> GetFilterOptionsAsync(

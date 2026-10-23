@@ -30,6 +30,7 @@ public enum TicketSortBy
 /// <item><see cref="PendingApprovalFor"/> — carries a current Pending approval this caller is authorized to action.</item>
 /// <item><see cref="CreatedFromUtc"/>/<see cref="CreatedToUtc"/> — created within [from, to).</item>
 /// <item><see cref="Unclassified"/> — no request type has been set on the ticket.</item>
+/// <item><see cref="ClosureCategory"/> — Closed tickets in one Dashboard closure KPI (Reviewed, NotReviewed, ClosedByAi, ClosedByAgent).</item>
 /// </list>
 /// <see cref="NowUtc"/> is the evaluation instant for the time-relative filters — supplied by the application service, never read from the clock inside the repository.
 /// </remarks>
@@ -57,7 +58,8 @@ public sealed record TicketQuery(
     DateTime? CreatedFromUtc = null,
     DateTime? CreatedToUtc = null,
     DateTime? NowUtc = null,
-    bool Unclassified = false);
+    bool Unclassified = false,
+    TicketClosureCategory? ClosureCategory = null);
 
 public sealed record TicketQueryResult(IReadOnlyList<Ticket> Items, int TotalCount);
 

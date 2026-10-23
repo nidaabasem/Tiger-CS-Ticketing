@@ -31,6 +31,7 @@
         backlogAge = Model.BacklogAge,
         pendingApproval = Model.PendingApproval ? "true" : null,
         unclassified = Model.Unclassified ? "true" : null,
+        closureCategory = Model.ClosureCategory,
         createdFrom = Model.CreatedFrom?.ToString("yyyy-MM-dd"),
         createdTo = Model.CreatedTo?.ToString("yyyy-MM-dd")
     }) ?? Model.View.Href();
@@ -161,6 +162,7 @@
     @if (Model.ActiveOnly) { <input type="hidden" name="activeOnly" value="true" /> }
     @if (Model.BacklogAge is { } backlogAge) { <input type="hidden" name="backlogAge" value="@backlogAge" /> }
     @if (Model.PendingApproval) { <input type="hidden" name="pendingApproval" value="true" /> }
+    @if (Model.ClosureCategory is { } closureCategory) { <input type="hidden" name="closureCategory" value="@closureCategory" /> }
     <div class="filter-bar__submit">
         <button type="submit" class="btn btn-sm">Apply</button>
         <a class="btn btn-ghost btn-sm" href="@Model.View.Href()">Clear</a>

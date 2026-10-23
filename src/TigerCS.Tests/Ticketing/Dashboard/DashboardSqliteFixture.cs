@@ -1,8 +1,11 @@
+using System.Security.Cryptography;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using TigerCS.Application.Modules.Ticketing.Services;
+using TigerCS.Domain.Audit;
 using TigerCS.Domain.Modules.ClassificationAndRouting;
+using TigerCS.Domain.Modules.CustomerReviews;
 using TigerCS.Domain.Modules.IdentityAndAccess;
 using TigerCS.Domain.Modules.SlaAndEscalation;
 using TigerCS.Domain.Modules.Ticketing;
@@ -298,6 +301,33 @@ public sealed class DashboardSqliteFixture : IDisposable
         context.TicketApprovals.Add(approval);
         context.SaveChanges();
         return approval;
+    }
+
+    /// <summary>The closing audit row the lifecycle writes (<c>EntityType</c> Ticket, <c>EntityId</c> the ticket id) — same shape as <c>AuditEntryWriter</c>'s.</summary>
+    public void AddClosureAudit(TigerCsDbContext context, Ticket ticket, string action, Guid? actor = null)
+    {
+        context.AuditEntries.Add(new AuditEntry(
+            actor, action, "Ticket", ticket.TicketId.ToString(), "Resolved", "Closed", Guid.NewGuid(), Now.AddMinutes(-30)));
+        context.SaveChanges();
+    }
+
+    /// <summary>A customer review for a ticket cycle (defaults to the ticket's current one), through the real invitation → review path.</summary>
+    public TicketReview AddReview(TigerCsDbContext context, Ticket ticket, bool isTest = false, int? reopenCycle = null, bool submit = true)
+    {
+        var invitation = new TicketReviewInvitation(
+            ticket.TicketId, reopenCycle ?? ticket.ReopenCount, RandomNumberGenerator.GetBytes(TicketReviewInvitation.TokenHashLength),
+            isTest, Now.AddDays(-1), Now.AddDays(13));
+        context.TicketReviewInvitations.Add(invitation);
+        context.SaveChanges();
+
+        var review = new TicketReview(invitation, 5, "Great", Now.AddHours(-1));
+        if (submit)
+        {
+            context.TicketReviews.Add(review);
+            context.SaveChanges();
+        }
+
+        return review;
     }
 
     public void Dispose() => _connection.Dispose();

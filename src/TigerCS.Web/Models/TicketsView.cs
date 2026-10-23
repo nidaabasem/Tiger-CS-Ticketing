@@ -112,7 +112,7 @@ public sealed record TicketsContext(TicketsView View, string Href)
         TicketsViews.QueryKey,
         "departmentId", "priorityId", "ticketStatus", "verificationStatus", "ownerEmployeeId", "search",
         "sortBy", "sortDir", "page", "pageSize", "channelId", "requestTypeId", "activeOnly", "inDepartmentQueue",
-        "slaBreached", "dueToday", "backlogAge", "pendingApproval", "unclassified", "createdFrom", "createdTo", "sla",
+        "slaBreached", "dueToday", "backlogAge", "pendingApproval", "unclassified", "closureCategory", "createdFrom", "createdTo", "sla",
         "mineOnly", "unassignedOnly", "includeResolved",
     };
 

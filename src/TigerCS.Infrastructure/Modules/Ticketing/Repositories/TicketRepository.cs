@@ -140,6 +140,11 @@ public sealed class TicketRepository(TigerCsDbContext dbContext) : ITicketReposi
             filtered = filtered.WithPendingApprovalActionableBy(dbContext, approverScope);
         }
 
+        if (query.ClosureCategory is { } closureCategory)
+        {
+            filtered = filtered.InClosureCategory(dbContext, closureCategory);
+        }
+
         if (query.CreatedFromUtc is { } createdFrom)
         {
             filtered = filtered.Where(t => t.CreatedAtUtc >= createdFrom);

@@ -1,8 +1,8 @@
 # Operational Dashboard — Phase 1
 
 The Dashboard (`/Dashboard`) is the operational landing page: the existing
-customer phone search as the quick action, a filter bar, six KPI cards, six
-breakdown cards and the Recent / Critical ticket list. Every number comes
+customer phone search as the quick action, a filter bar, six KPI cards plus
+four closure KPI cards, six breakdown cards and the Recent / Critical ticket list. Every number comes
 from one read — `GET /api/dashboard/overview` — computed in the database by
 `DashboardQueryRepository` over the caller's own visible-department scope.
 
@@ -28,8 +28,8 @@ from one read — `GET /api/dashboard/overview` — computed in the database by
 
 | Widgets | Context |
 | --- | --- |
-| KPI cards, Open Backlog Ageing, Recent / Critical | **Current state** — every active ticket in scope, whatever its age. The date range does not apply, so an old open ticket is never hidden. |
-| Volume by Channel / Request Type / Department, Status, Priority | **Date range** — tickets created within `dateFrom`..`dateTo` (UTC calendar days, inclusive). Default: the last 30 days, today included. |
+| Six KPI cards, Open Backlog Ageing, Recent / Critical | **Current state** — every active ticket in scope, whatever its age. The date range does not apply, so an old open ticket is never hidden. |
+| Closure KPI cards, Volume by Channel / Request Type / Department, Status, Priority | **Date range** — tickets created within `dateFrom`..`dateTo` (UTC calendar days, inclusive). Default: the last 30 days, today included. |
 
 The dimension filters (department, agent, channel, request type, status,
 priority) apply to both contexts.
@@ -47,6 +47,40 @@ priority) apply to both contexts.
 
 "Today" is the UTC calendar day — the convention the previous dashboard
 already used; no separate timezone strategy was introduced.
+
+## Closure KPIs
+
+A second row of four cards counts **currently Closed** tickets. They use the
+date range (tickets created within it — the same meaning the range has for the
+volume breakdowns) and every dimension filter, and each links to `/Tickets`
+with `ticketStatus=Closed`, `closureCategory=<category>`, the dates and the
+dashboard's dimension filters. The ticket queue evaluates `closureCategory`
+with the same predicate (`TicketQueryFilters.InClosureCategory`) the card was
+counted with. Each ticket is counted once: the predicates are `EXISTS`, not
+joins.
+
+| KPI | `closureCategory` | Definition |
+| --- | --- | --- |
+| Reviewed Tickets | `Reviewed` | Closed, with a submitted `TicketReviews` row for the ticket's current cycle (`ReopenCycle = Ticket.ReopenCount`) and `IsTest = false`. |
+| Not Reviewed | `NotReviewed` | Closed, with no such review. An invitation without a submission is not a review. |
+| Closed by AI | `ClosedByAi` | Closed, and the ticket's latest closing audit entry is `AutoCloseByAi` (Genesys `closedByAi`). |
+| Closed by Agent | `ClosedByAgent` | Closed, and the ticket's latest closing audit entry is `Close` (a person, via the Close action). |
+
+- No new status or column: feedback is the existing `TicketReviews` table, the
+  closer is the existing `AuditEntries` row written by `TicketLifecycleAppService`.
+- "Latest closing audit entry" = the highest `AuditEntryId` among `Close`,
+  `AutoCloseByAi`, `AutoCloseCustomerInactivity`, `AutoCloseDocumentDelivery`
+  for the ticket. A reopened ticket is therefore judged by how it was closed
+  last. Inactivity and document-delivery closures are system closures that are
+  **neither** AI nor agent — AI is never inferred from them — so
+  Closed by AI + Closed by Agent can be less than the closed total (also for
+  tickets with no closing audit row).
+- Test-mode reviews (`IsTest`) are not customer feedback, as in production
+  satisfaction reporting. While `CustomerNotifications:IsTestMode` is on, every
+  review is a test review, so Reviewed Tickets reads 0 and Not Reviewed counts
+  every closed ticket.
+- If the Dashboard status filter names a status other than Closed, these cards
+  are 0, and their links keep that status so the list agrees.
 
 ## Open Backlog Ageing
 
@@ -66,7 +100,7 @@ Exactly 24h → `1–3 days`; exactly 72h → `3–7 days`; exactly 168h → `> 
 Every KPI and bar row links into the existing ticket queue (`/Tickets`) with
 query-string filters. The queue's filters added for this were: `channelId`,
 `requestTypeId`, `activeOnly`, `inDepartmentQueue`, `slaBreached`,
-`dueToday`, `backlogAge`, `pendingApproval`, `createdFrom`, `createdTo`.
+`dueToday`, `backlogAge`, `pendingApproval`, `createdFrom`, `createdTo`, `closureCategory`.
 The queue evaluates them with the same shared predicates
 (`TicketQueryFilters`) the dashboard aggregates use, so a number and its list
 always agree.
