@@ -394,7 +394,14 @@ a.menu-item { color: inherit; text-decoration: none; }
 
 /* ---------- Panels / tables ---------- */
 
-.panel { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-md); margin-bottom: var(--space-4); box-shadow: var(--shadow-sm); }
+.panel {
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    padding: 30px;
+    border-radius: var(--radius-md);
+    margin-bottom: var(--space-4);
+    box-shadow: var(--shadow-sm);
+}
 .panel__header { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: var(--space-4) var(--space-4) var(--space-3); border-bottom: 1px solid var(--color-border); }
 /* A section title reads as a title, not as an uppercase micro-label. */
 .panel__title { font-size: var(--text-lg); font-weight: var(--weight-section); letter-spacing: -0.018em; color: var(--color-text); }
