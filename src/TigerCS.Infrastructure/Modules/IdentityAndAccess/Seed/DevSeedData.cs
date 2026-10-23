@@ -129,6 +129,9 @@ public static class DevSeedData
         {
             logger.LogInformation("New request type {RequestCode}: {Outcome}.", row.RequestCode, row.Outcome);
         }
+
+        var leasingInquiry = await LeasingInquiryRequestTypeImporter.ImportAsync(dbContext, DateTime.UtcNow, cancellationToken);
+        logger.LogInformation("Leasing Inquiry request type: {Outcome}.", leasingInquiry.Outcome);
     }
 
     /// <summary>

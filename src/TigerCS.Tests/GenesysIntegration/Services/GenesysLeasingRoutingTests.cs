@@ -107,12 +107,18 @@ public class GenesysLeasingRoutingTests
     public async Task TheDedicatedLeasingInquiryType_RoutesFromGenesysByName_AtNormalPriority_AutoAssigned_AndOpenForHumanFollowUp()
     {
         var w = Build(requestTypeName: "Leasing Inquiry");
-        var request = UatRequest() with { RequestType = new GenesysRequestTypeDto(Name: "Leasing Inquiry") };
+        var request = UatRequest() with { ServiceRequestId = "leasing-inquiry-001", RequestType = new GenesysRequestTypeDto(Name: "Leasing Inquiry") };
+        var documents = await w.F.Ingestion.IngestAsync(ServiceAccount, UatRequest() with
+        {
+            ServiceRequestId = "documents", RequestType = null, HumanFollowUpRequired = null
+        });
 
         var result = await w.F.Ingestion.IngestAsync(ServiceAccount, request);
 
         Assert.Equal(GenesysIngestionOutcome.TicketCreated, result.Outcome);
+        Assert.NotEqual(documents.Ticket!.TicketId, result.Ticket!.TicketId);        // a separate ticket in the same conversation
         var ticket = w.F.Tickets.All.Single(t => t.TicketId == result.Ticket!.TicketId);
+        Assert.Equal(TicketStatus.Open, ticket.TicketStatus);
         Assert.Equal(w.Leasing.DepartmentId, ticket.CurrentDepartmentId);
         Assert.Equal(w.LeasingType.RequestTypeId, ticket.RequestTypeId);
         Assert.Equal((byte)PriorityLevel.Medium, ticket.PriorityId);             // "Normal" is the Medium tier
