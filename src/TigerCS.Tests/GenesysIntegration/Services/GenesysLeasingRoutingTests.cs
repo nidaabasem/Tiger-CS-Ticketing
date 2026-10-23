@@ -58,7 +58,7 @@ public class GenesysLeasingRoutingTests
 
     private sealed record World(GenesysServiceFixture F, Department Bot, Department Leasing, RequestType LeasingType, Guid Employee);
 
-    private static World Build(bool withRule = true)
+    private static World Build(bool withRule = true, string requestTypeName = "Leasing")
     {
         var f = new GenesysServiceFixture();
         var (bot, _) = f.SeedGenesysDepartment("Customer Service", "CS");
@@ -66,7 +66,7 @@ public class GenesysLeasingRoutingTests
         f.QueueMappings.Map("queue-bot", bot.DepartmentId);
         var template = f.WorkflowTemplates.Add(TestWorkflows.PublishedStandard(workflowId: 300));
         var type = f.RequestTypes.Add(new RequestType(
-            leasing.DepartmentId, "Leasing", template.WorkflowId, (byte)PriorityLevel.Medium, false, true, true, true));
+            leasing.DepartmentId, requestTypeName, template.WorkflowId, (byte)PriorityLevel.Medium, false, true, true, true));
         var employee = Guid.NewGuid();
         f.DepartmentAssignments.Assignments.Add(new UserDepartmentAssignment(employee, leasing.DepartmentId, true, DateTime.UtcNow, null));
         if (withRule)
@@ -101,6 +101,29 @@ public class GenesysLeasingRoutingTests
         Assert.Equal(w.Employee, ticket.CurrentOwnerEmployeeId);                 // the existing assignment rule
         Assert.Equal(TicketStatus.Open, ticket.TicketStatus);
         Assert.True(w.F.Interactions.All.Single(i => i.TicketId == ticket.TicketId).RequiresHumanFollowUp);
+    }
+
+    [Fact]
+    public async Task TheDedicatedLeasingInquiryType_RoutesFromGenesysByName_AtNormalPriority_AutoAssigned_AndOpenForHumanFollowUp()
+    {
+        var w = Build(requestTypeName: "Leasing Inquiry");
+        var request = UatRequest() with { RequestType = new GenesysRequestTypeDto(Name: "Leasing Inquiry") };
+
+        var result = await w.F.Ingestion.IngestAsync(ServiceAccount, request);
+
+        Assert.Equal(GenesysIngestionOutcome.TicketCreated, result.Outcome);
+        var ticket = w.F.Tickets.All.Single(t => t.TicketId == result.Ticket!.TicketId);
+        Assert.Equal(w.Leasing.DepartmentId, ticket.CurrentDepartmentId);
+        Assert.Equal(w.LeasingType.RequestTypeId, ticket.RequestTypeId);
+        Assert.Equal((byte)PriorityLevel.Medium, ticket.PriorityId);             // "Normal" is the Medium tier
+        Assert.Equal(w.Employee, ticket.CurrentOwnerEmployeeId);
+        Assert.True(w.F.Interactions.All.Single(i => i.TicketId == ticket.TicketId).RequiresHumanFollowUp);
+
+        // a retry of the same (conversation, serviceRequestId) returns the same ticket; the old name no longer resolves
+        var retry = await w.F.Ingestion.IngestAsync(ServiceAccount, request);
+        Assert.Equal(result.Ticket!.TicketId, retry.Ticket!.TicketId);
+        var oldName = await w.F.Ingestion.IngestAsync(ServiceAccount, UatRequest() with { ConversationId = "OTHER-CONVERSATION" });
+        Assert.NotEqual(GenesysIngestionOutcome.TicketCreated, oldName.Outcome);
     }
 
     [Fact]
