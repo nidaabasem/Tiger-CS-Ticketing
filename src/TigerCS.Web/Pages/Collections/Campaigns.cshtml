@@ -11,6 +11,7 @@
 <link rel="stylesheet" href="~/css/collections-campaigns.css" asp-append-version="true" />
 <link rel="stylesheet" href="~/css/collections-snapshot.css" asp-append-version="true" />
 <link rel="stylesheet" href="~/css/collections-review.css" asp-append-version="true" />
+<link rel="stylesheet" href="~/css/info-tip.css" asp-append-version="true" />
 <div class="page receivables-workspace">
     <div class="page-header">
         <div>
@@ -85,7 +86,13 @@
     <section class="campaign-snapshot panel" data-snapshot-box aria-label="Financial snapshot status" aria-live="polite">
         <h2 class="campaign-snapshot__title">Financial snapshot</h2>
         @if (Model.RenderFull) { <partial name="_CampaignSnapshotStatus" model="Model" /> }
-        else { <p class="receivables-meta" data-snapshot-idle>Its status appears here once customers are previewed, and stays visible while you change filters.</p> }
+        else
+        {
+            <p class="campaign-snapshot__idle" data-snapshot-idle>
+                <span class="campaign-pill campaign-pill--idle">Not loaded yet</span>
+                <partial name="_InfoTip" model="@(new InfoTipModel("tip-snapshot-idle", "Financial snapshot status", "Its status appears here once customers are previewed, and stays visible while you change filters."))" />
+            </p>
+        }
     </section>
     <div class="campaign-search">
         @* Part of the filter form (form attribute) but placed with the results it narrows. *@
@@ -103,6 +110,7 @@
         }
     </div>
 </div>
+<script src="~/js/info-tip.js" asp-append-version="true"></script>
 <script src="~/js/receivables-load-monitor.js" asp-append-version="true"></script>
 <script src="~/js/receivables.js" asp-append-version="true"></script>
 <script src="~/js/collections-towers.js" asp-append-version="true"></script>

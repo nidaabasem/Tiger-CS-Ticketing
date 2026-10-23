@@ -132,6 +132,16 @@ public sealed class TigerCsApiFactory : WebApplicationFactory<Program>
                 // which adapter the deployed config names.
                 ["Crm:Provider"] = CrmProvider,
                 ["Pact:Provider"] = "Mock",
+                // Isolation from any deployable or developer appsettings: the verification-test redirection, the customer test mailbox/phone and the SMTP
+                // credentials are blank here, so a mailbox or number committed to a config file can never become the recipient a test observes (CRM documents,
+                // OTP and notification mail go to the CRM / fixture address the test set up, and only into RecordingEmailSender). The tests that cover the
+                // redirection itself switch it on through ExtraConfiguration, which is applied after and wins.
+                ["VerificationTesting:Enabled"] = "false",
+                ["VerificationTesting:EmailOverride"] = "",
+                ["VerificationTesting:SmsOverride"] = "",
+                ["CustomerNotifications:TestEmail"] = "",
+                ["CustomerNotifications:TestPhone"] = "",
+                ["EmailNotifications:Password"] = "",
                 ["PactApi:BaseUrl"] = "",
                 ["PactApi:ApiKey"] = "",
                 // The Genesys integration ships switched OFF (appsettings.json)
