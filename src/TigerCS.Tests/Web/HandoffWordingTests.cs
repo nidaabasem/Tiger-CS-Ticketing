@@ -33,25 +33,29 @@ public sealed class HandoffWordingTests
     }
 
     [Fact]
-    public void TheInteractionsTab_ShowsHandlingHandoffRequestedInitiatorAndStartEnd_AndAnAgentOnlyWhenAHumanHasTheConversation()
+    public void TheConversationHistory_ShowsHandlingHandoffRequestedInitiatorAndStartEnd_AndAnAgentOnlyWhenAHumanHasTheConversation()
     {
-        var view = Read("TigerCS.Web/Pages/TicketDetails.cshtml");
+        var view = Read("TigerCS.Web/Pages/Shared/_TicketConversationHistory.cshtml");
+        var helper = Read("TigerCS.Web/Models/ConversationHistoryView.cs");
 
-        Assert.Contains("interaction.HandlingState is \"Human\" && !string.IsNullOrWhiteSpace(interaction.AgentName)", view);
-        Assert.Contains("<dt>Handled by</dt>", view);
+        // A named agent appears only for a Human-handled interaction; an AI-only conversation never shows one.
+        Assert.Contains("\"Human\" => string.IsNullOrWhiteSpace(interaction.AgentName) ? \"Human agent\" : $\"Human agent · {interaction.AgentName.Trim()}\"", helper);
+        Assert.Contains("ConversationHistoryView.HandledBy(interaction)", view);
+        Assert.Contains("ConversationHistoryView.HandoffStatus(interaction)", view);
         Assert.Contains("<dt>Handoff requested</dt>", view);
-        Assert.Contains("<dt>Initiated by</dt>", view);
-        Assert.Contains("<dt>Handoff reason</dt>", view);
-        Assert.Contains("<dt>Started</dt>", view);
-        Assert.Contains("<dt>Ended</dt>", view);
+        Assert.Contains("TicketDisplay.HandoffInitiatorLabel(handoff.Trigger)", view);
+        Assert.Contains("<dt>Reason</dt>", view);
+        Assert.Contains("ConversationHistoryView.TimeWindow(interaction)", view);
     }
 
     [Fact]
-    public void TheOverview_AlwaysShowsTheRequestType_AndWhoIsHandlingTheConversation()
+    public void TheOverview_AlwaysShowsTheRequestType_AndLeavesWhoIsHandlingToTheConversationHistory()
     {
         var view = Read("TigerCS.Web/Pages/TicketDetails.cshtml");
 
-        Assert.Contains("t.RequestTypeName ?? \"Unclassified\"", view);
-        Assert.Contains("TicketDisplay.HandlingStateLabel(handlingInteraction.HandlingState, handlingInteraction.AgentName)", view);
+        Assert.Contains("t.RequestTypeName ?? \"Not yet classified\"", view);
+        Assert.Contains("_TicketConversationHistory", view);
+        // Who handled it is said once, per interaction, in Conversation History — not repeated in the request facts.
+        Assert.DoesNotContain("Being handled by", view);
     }
 }

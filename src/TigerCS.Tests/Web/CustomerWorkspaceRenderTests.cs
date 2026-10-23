@@ -270,11 +270,15 @@ public sealed class CustomerWorkspaceRenderTests : IDisposable
         Assert.Contains("<dt>Verification Source</dt><dd>Verified via Tiger CRM</dd>", html, StringComparison.Ordinal);
         Assert.Contains("<dt>Project / Unit</dt><dd>T-1204 &#xB7; Tiger Tower</dd>", html, StringComparison.Ordinal);
 
-        // Overview | Activity | Customer | Interactions | Approvals | Attachments, Overview selected.
-        foreach (var label in new[] { ">Overview</label>", ">Activity <span", ">Customer", ">Interactions", ">Approvals", ">Attachments</label>" })
+        // Overview | Activity | Customer | Approvals | Attachments, Overview selected. The conversation lives in the Overview now,
+        // so there is no separate Interactions tab.
+        foreach (var label in new[] { ">Overview</label>", ">Activity <span", ">Customer", ">Approvals", ">Attachments</label>" })
         {
             Assert.Contains(label, html, StringComparison.Ordinal);
         }
+
+        Assert.DoesNotContain("id=\"tab-conversations\"", html, StringComparison.Ordinal);
+        Assert.Contains("id=\"conversation-title\">Conversation History", html, StringComparison.Ordinal);
 
         Assert.Contains("id=\"tab-details\" class=\"tab-input\" checked", html, StringComparison.Ordinal);
         Assert.Contains("No attachments on this ticket.", html, StringComparison.Ordinal);

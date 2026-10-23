@@ -45,8 +45,8 @@ public sealed class TicketDetailsCustomerHistoryTests
     public void View_HasSeparateOverviewAndCustomerTabs()
     {
         // The redesigned Ticket Details: Overview | Activity | Customer |
-        // Interactions | Approvals | Attachments — Previous Tickets live on
-        // the Customer tab, never competing with the primary ticket facts.
+        // Approvals | Attachments — Previous Tickets live on the Customer tab,
+        // never competing with the primary ticket facts. The conversation is part of the Overview.
         var html = TicketDetailsViewHtml();
 
         Assert.Contains("id=\"tab-details\"", html);
@@ -55,7 +55,7 @@ public sealed class TicketDetailsCustomerHistoryTests
         Assert.Contains("for=\"tab-customer\"", html);
         Assert.Contains("id=\"panel-details\"", html);
         Assert.Contains("id=\"panel-customer\"", html);
-        foreach (var tab in new[] { "tab-activity", "tab-conversations", "tab-approvals", "tab-attachments" })
+        foreach (var tab in new[] { "tab-activity", "tab-approvals", "tab-attachments" })
         {
             Assert.Contains($"id=\"{tab}\"", html);
         }

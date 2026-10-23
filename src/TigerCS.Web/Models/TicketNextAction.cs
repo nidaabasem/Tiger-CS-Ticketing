@@ -21,9 +21,10 @@ public enum AttentionLevel
 /// <see cref="Key"/> is either an action key (<c>assign</c>, <c>resolve</c> …,
 /// matching a header disclosure's <c>data-action</c>) or a tab key (<c>tab-approvals</c> …).
 /// </summary>
-public sealed record GuidanceTarget(string Key, string Label)
+/// <param name="Href">A page to open instead of an in-page action or tab — used where the next step lives elsewhere (an administration screen).</param>
+public sealed record GuidanceTarget(string Key, string Label, string? Href = null)
 {
-    public bool IsTab => Key.StartsWith("tab-", StringComparison.Ordinal);
+    public bool IsTab => Href is null && Key.StartsWith("tab-", StringComparison.Ordinal);
 }
 
 /// <param name="Level">Urgent conditions that are true alongside the headline.</param>
@@ -88,7 +89,8 @@ public sealed record TicketGuidanceFacts(
     IReadOnlyList<PendingApprovalFact> PendingApprovals,
     IReadOnlyList<RequiredApprovalFact> RequiredApprovals,
     bool ReopenApproved,
-    DateTime NowUtc);
+    DateTime NowUtc,
+    ClassifyNotice? ClassifyNotice = null);
 
 /// <summary>
 /// Chooses the single most useful "next step" for the person opening a ticket, plus any
@@ -161,6 +163,14 @@ public static class TicketNextAction
         }
 
         // ---- Things that block or wait on a person ----
+        if (!f.IsClassified && f.CanClassify && f.ClassifyNotice is { } noOptions)
+        {
+            // Classify is never recommended as something to do when it has nothing valid to choose from: the card says
+            // why, and points at the existing administrative path (when the viewer may use it) instead.
+            return (AttentionLevel.Urgent, noOptions.Headline, noOptions.Detail,
+                noOptions.AdminHref is { } adminHref ? new GuidanceTarget("admin", noOptions.AdminLabel ?? "Open Administration", adminHref) : null);
+        }
+
         if (!f.IsClassified)
         {
             return f.CanClassify
@@ -195,7 +205,7 @@ public static class TicketNextAction
                     new GuidanceTarget("assign", "Assign"))
                 : (AttentionLevel.Urgent, "The customer is waiting for a person",
                     $"A human agent was requested{waited} and nobody has taken it yet. Open the conversation to see why.",
-                    new GuidanceTarget("tab-conversations", "Read the conversation"));
+                    new GuidanceTarget("conversation", "Read the conversation"));
         }
 
         if (f.PendingApprovals.Count > 0)
@@ -232,7 +242,7 @@ public static class TicketNextAction
         {
             return (AttentionLevel.Info, "AI is handling this customer",
                 "No person is in the conversation. Step in only if the customer asks for one or the AI hands over.",
-                new GuidanceTarget("tab-conversations", "Read the conversation"));
+                new GuidanceTarget("conversation", "Read the conversation"));
         }
 
         if (!f.HasOwner)
@@ -275,7 +285,7 @@ public static class TicketNextAction
             {
                 return (AttentionLevel.Attention, "Contact the customer",
                     reopened + "No person has replied yet. If you already answered outside the system, record the first response.",
-                    new GuidanceTarget("tab-conversations", "Read the conversation"));
+                    new GuidanceTarget("conversation", "Read the conversation"));
             }
 
             return f.CanResolve
@@ -391,6 +401,10 @@ public static class TicketNextAction
         if (!f.IsClassified && !f.CanClassify)
         {
             list.Add(new UnavailableAction("Classify", "Classifying needs access to this department's categories and request types."));
+        }
+        else if (!f.IsClassified && f.ClassifyNotice is { } classifyNotice)
+        {
+            list.Add(new UnavailableAction("Classify", classifyNotice.Short));
         }
 
         if (!f.CanAssign)
