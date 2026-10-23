@@ -1,12 +1,28 @@
+@using TigerCS.Application.Modules.Collections.Dto
 @using TigerCS.Web.Pages.Collections
 @model CampaignsModel
 @* The financial snapshot status of the last preview: load problems (with Retry), CRM state, source reconciliation and age. It is independent of the customer table, so filters
    changing or the table being cleared never hide a refresh or reconciliation problem. *@
 @if (Model.Report is { } report)
 {
-    <div class="campaign-snapshot__body" data-snapshot-status>
-        @if (report.Snapshot is { } snapshot) { <partial name="_LoadProblem" model="snapshot" /> }
-        <partial name="_CrmContactNotice" model="report.Crm" />
+    var failed = report.Snapshot is { } snap ? CollectionsDisplay.FailedCompanies(snap) : null;
+    var gapIds = report.Snapshot?.Gaps.Select(g => g.CompanyId).ToHashSet() ?? [];
+    // Failed beats Warning beats Loading: a company that could not load (or whose refresh is stuck) is never summarised as merely "Loading".
+    var dataState = failed is null ? "Ready"
+        : failed.Any(c => c.State is SnapshotLoadStates.Stuck or SnapshotLoadStates.Failed or SnapshotLoadStates.NeverLoaded || gapIds.Contains(c.CompanyId)) ? "Failed"
+        : failed.Any(c => c.State != SnapshotLoadStates.Loading) ? "Warning"
+        : "Loading";
+    var crmShown = report.Crm is { Message: { Length: > 0 } };
+    var crmState = !crmShown ? "Ready" : report.Crm!.Blocks ? "Failed" : "Warning";
+    var sourceState = report.FinancialSourceValidated ? "Ready" : "Failed";
+    var detailsOpen = dataState is "Failed" or "Warning" || crmState == "Failed";
+    <div class="campaign-snapshot__body campaign-status" data-snapshot-status>
+        <ul class="campaign-status__row" data-status-row>
+            <li class="campaign-status__item"><span class="campaign-status__label">Financial reconciliation</span><span class="campaign-pill campaign-pill--@sourceState.ToLowerInvariant()" data-status-pill="reconciliation" data-state="@sourceState">@sourceState</span></li>
+            <li class="campaign-status__item"><span class="campaign-status__label">Snapshot data</span><span class="campaign-pill campaign-pill--@dataState.ToLowerInvariant()" data-status-pill="snapshot" data-state="@dataState">@dataState</span></li>
+            <li class="campaign-status__item"><span class="campaign-status__label">CRM contacts</span><span class="campaign-pill campaign-pill--@crmState.ToLowerInvariant()" data-status-pill="crm" data-state="@crmState">@crmState</span></li>
+        </ul>
+        @* A reconciliation blocker is never collapsed: it stays visible, with its action, whatever the other states are. *@
         @if (!report.FinancialSourceValidated)
         {
             var gate = report.SourceGate;
@@ -15,6 +31,14 @@
                 @if (gate is not null) { <span class="receivables-meta" data-source-gate-reason>@gate.Message</span> }
                 <a class="btn btn-sm" href="/Collections/Reconciliation" data-reconciliation-link>@(gate?.Code is "EvidenceNotRun" or "EvidenceExpired" or "EvidenceError" ? "Run the consistency check" : "Show the differences")</a>
             </div>
+        }
+        @if (failed is not null || crmShown)
+        {
+            <details class="campaign-status__details" data-status-details open="@detailsOpen">
+                <summary>Loading and CRM details</summary>
+                @if (report.Snapshot is { } snapshot) { <partial name="_LoadProblem" model="snapshot" /> }
+                <partial name="_CrmContactNotice" model="report.Crm" />
+            </details>
         }
         <p class="receivables-meta">
             <span data-source-state>Financial source: <strong>@(report.FinancialSourceValidated ? "Reconciled" : "Not reconciled")</strong></span>

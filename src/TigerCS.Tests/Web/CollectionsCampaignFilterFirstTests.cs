@@ -135,6 +135,26 @@ public sealed class CollectionsCampaignFilterFirstTests
     }
 
     [Fact]
+    public async Task SnapshotStatus_ShowsOneStateChipPerArea_KeepsTheReconciliationBlockerOutsideTheDetails_AndOpensDetailsForAFailure()
+    {
+        var api = new FakeCollectionsApi { IncludeNotEligible = true, SharjahFailed = true, SourceUnreconciled = true };
+        using var factory = CollectionsWebHost.Factory(api); using var client = factory.CreateClient();
+        var snapshot = Between(await Get(client, $"/Collections/Campaigns?{Applied}&render=full"), "data-snapshot-box", "campaign-search");
+        Assert.Matches("data-status-pill=\"reconciliation\" data-state=\"Failed\"", snapshot);
+        Assert.Matches("data-status-pill=\"snapshot\" data-state=\"Failed\"", snapshot);
+        var details = Regex.Match(snapshot, "<details[^>]*data-status-details[^>]*>.*?</details>", RegexOptions.Singleline).Value;
+        Assert.Contains(" open", Regex.Match(details, "<details[^>]*>").Value);                  // a failed load shows its Retry without a click
+        Assert.Contains("data-load-problem", details); Assert.Contains("data-load-button", details);
+        Assert.DoesNotContain("data-source-status", details);                                       // the reconciliation blocker is never collapsed
+        Assert.Contains("data-source-status=\"NotReconciled\"", snapshot);
+
+        using var healthy = CollectionsWebHost.Factory(new FakeCollectionsApi()); using var c2 = healthy.CreateClient();
+        var ok = Between(await Get(c2, $"/Collections/Campaigns?{Applied}&render=full"), "data-snapshot-box", "campaign-search");
+        Assert.Matches("data-status-pill=\"reconciliation\" data-state=\"Ready\"", ok);
+        Assert.DoesNotContain("data-status-details", ok);                                           // nothing to explain, so no details section
+    }
+
+    [Fact]
     public async Task AsynchronousResults_CarryTheSnapshotStatus_SoItCanBeLiftedIntoItsBox()
     {
         var api = new FakeCollectionsApi { IncludeNotEligible = true, SharjahFailed = true };
