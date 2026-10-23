@@ -248,6 +248,15 @@ public static class TicketDisplay
         _ => bucket
     };
 
+    /// <summary>The approval type as people say it ("Accounting Approval"); an unknown type is shown as stored.</summary>
+    public static string ApprovalTypeLabel(string type) => type switch
+    {
+        "AccountingApproval" => "Accounting Approval",
+        "CustomerServiceApproval" => "Customer Service Approval",
+        "ReopenApproval" => "Reopen Approval",
+        _ => type
+    };
+
     public static string TicketStatusLabel(string ticketStatus) => ticketStatus switch
     {
         "Open" => "Open",

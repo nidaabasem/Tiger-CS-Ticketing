@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Mvc.RazorPages;
 using TigerCS.Application.Modules.Administration.Dto;
 using TigerCS.Application.Modules.ClassificationAndRouting.Dto;
 using TigerCS.Application.Modules.IdentityAndAccess.Dto;
+using TigerCS.Application.Modules.Notifications.Services;
 using TigerCS.Application.Modules.SlaAndEscalation.Dto;
 using TigerCS.Application.Modules.Ticketing.Dto;
 using TigerCS.Application.Modules.Ticketing.Services;
@@ -229,6 +230,123 @@ public sealed class TicketDetailsModel(
 
     /// <summary>Priorities lower than the ticket's current one - the only valid downgrade targets.</summary>
     public IReadOnlyList<(byte PriorityId, string Label)> DowngradeTargets { get; private set; } = [];
+
+    /// <summary>The customer's name as people read it; a missing or placeholder name is stated, never printed.</summary>
+    public string CustomerNameLabel => CustomerDisplayName
+        ?? (CustomerKey is null ? "Customer not identified"
+            : CustomerKey.StartsWith("phone:", StringComparison.Ordinal) ? "Unnamed caller"
+            : $"{TicketDisplay.LookupSourceLabel(Ticket?.CustomerVerificationSource ?? "Crm")} customer");
+
+    /// <summary>How the customer's identity was established, in user-facing words.</summary>
+    public string CustomerVerificationLabel
+    {
+        get
+        {
+            if (Ticket is not { } t)
+            {
+                return "Customer not identified";
+            }
+
+            if (t.CrmBuyerUnitId is not null)
+            {
+                return "Verified via Tiger CRM";
+            }
+
+            if (!string.IsNullOrWhiteSpace(t.CustomerVerificationSource))
+            {
+                return $"Verified via {TicketDisplay.LookupSourceLabel(t.CustomerVerificationSource)}";
+            }
+
+            return !string.IsNullOrWhiteSpace(t.ManualProjectName) || !string.IsNullOrWhiteSpace(t.ManualUnitNumber)
+                ? "Manual entry / Not externally verified"
+                : TicketDisplay.VerificationStatusLabel(t.VerificationStatus);
+        }
+    }
+
+    private TicketGuidance? guidance;
+
+    /// <summary>
+    /// The "What needs your attention?" card: the next step for this viewer, urgent conditions
+    /// and the reasons an action is unavailable — all worded from state and permission flags
+    /// this page already derives (no new rule). Built once per render, after the page has loaded.
+    /// </summary>
+    public TicketGuidance? Guidance => Ticket is null ? null : guidance ??= BuildGuidance(Ticket);
+
+    private TicketGuidance BuildGuidance(TicketDetailDto t)
+    {
+        const string reopenApproval = "ReopenApproval";
+        var now = DateTime.UtcNow;
+        var closed = t.TicketStatus == TicketNextAction.Closed;
+        var approvals = Approvals;
+
+        var sla = Sla;
+        var slaBreached = sla is not null && TicketDisplay.SlaBadgeText(sla, now).CssKey == "breached";
+        string? slaText = null;
+        if (slaBreached && sla is not null)
+        {
+            var (kind, due) = sla.ResolutionBreached ? ("Resolution", sla.ResolutionDueAtUtc) : ("First-response", sla.FirstResponseDueAtUtc);
+            slaText = due is { } dueAt
+                ? $"{kind} SLA is overdue by {TicketDisplay.FormatDuration(now - dueAt)}."
+                : $"{kind} SLA has been breached.";
+        }
+
+        var clockRunning = sla?.Explanation is not { HasActivePeriod: false };
+        var firstResponsePending = sla is not null && sla.FirstHumanResponseAtUtc is null && clockRunning;
+
+        // Approval cycles of a closed ticket matter only for the reopen request; on an open
+        // ticket the reopen type is not part of day-to-day work.
+        bool Relevant(string type) => closed == (type == reopenApproval);
+        var pending = approvals?.Approvals
+            .Where(a => a.IsCurrent && a.Status == "Pending" && Relevant(a.ApprovalType))
+            .Select(a => new PendingApprovalFact(TicketDisplay.ApprovalTypeLabel(a.ApprovalType), a.TargetSummary, a.CallerCanDecide))
+            .ToList() ?? [];
+        var required = approvals?.RequestableApprovals
+            .Where(a => Relevant(a.ApprovalType))
+            .Select(a => new RequiredApprovalFact(TicketDisplay.ApprovalTypeLabel(a.ApprovalType), a.TargetSummary, a.BlocksWorkUntilApproved, a.CallerCanRequest))
+            .ToList() ?? [];
+        var reopenApproved = approvals?.Approvals.Any(a => a.ApprovalType == reopenApproval && a.IsCurrent && a.Status == "Approved") ?? false;
+
+        var handling = Interactions.LastOrDefault(i => i.HandlingState is not null)?.HandlingState;
+
+        return TicketNextAction.Build(new TicketGuidanceFacts(
+            TicketStatus: t.TicketStatus,
+            IsClassified: t.CategoryId is not null,
+            HasOwner: t.CurrentOwnerEmployeeId is not null,
+            ViewerIsOwner: ActionContext?.IsCurrentOwner ?? false,
+            OwnerName: OwnerName,
+            DepartmentName: TicketDisplay.AssignedDepartmentLabel(t.CurrentDepartmentId, DepartmentName),
+            ReopenCount: t.ReopenCount,
+            IsReopenEligible: t.IsReopenEligible,
+            PendingCrmVerification: t.VerificationStatus == "PendingCrmVerification",
+            HandoffState: t.HandoffState,
+            HandoffRequestedAtUtc: t.HandoffRequestedAtUtc,
+            HandlingState: handling,
+            SlaBreached: slaBreached,
+            SlaBreachText: slaText,
+            FirstResponsePending: firstResponsePending,
+            ResolutionClockPaused: sla?.IsCurrentlyPaused ?? false,
+            ViewerIsReadOnly: ActionContext?.IsReadOnlyViewer ?? false,
+            CanClassify: CanClassify,
+            CanAssign: CanAssign,
+            CanTransfer: CanTransfer,
+            CanChangeStatus: CanChangeStatus,
+            CanResolve: CanResolve,
+            CanClose: CanClose,
+            CanEscalate: CanEscalate,
+            CanReopen: CanReopen,
+            CanRequestDowngrade: CanRequestDowngrade,
+            CanRecordFirstResponse: CanRecordFirstResponse,
+            HasPendingDowngrade: PendingDowngrade is not null,
+            CanDecideDowngrade: CanDecideDowngrade,
+            PendingApprovals: pending,
+            RequiredApprovals: required,
+            ReopenApproved: reopenApproved,
+            NowUtc: now));
+    }
+
+    /// <summary>The existing condition for the "Record first response" button: the clock is running, no human has replied, and the viewer may resolve or escalate.</summary>
+    public bool CanRecordFirstResponse =>
+        Sla is { FirstHumanResponseAtUtc: null } sla && sla.Explanation is not { HasActivePeriod: false } && (CanResolve || CanEscalate);
 
     public CurrentUser? Viewer { get; private set; }
     public TicketNameResolver NameResolver => nameResolver;
@@ -844,7 +962,12 @@ public sealed class TicketDetailsModel(
 
         var originating = Interactions.FirstOrDefault(i => i.IsOriginatingInteraction) ?? Interactions.FirstOrDefault();
         CustomerPhone = FirstNonEmpty(CustomerHistory?.PhoneNumberSnapshot, originating?.CustomerPhone);
-        CustomerDisplayName = FirstNonEmpty(Ticket.CrmBuyerCustomerName, originating?.CustomerName, CustomerHistory?.CustomerDisplayName);
+        // A source system's placeholder ("NOT_REGISTERED", "UNKNOWN", "N/A") is not a name: it is treated as missing,
+        // so the page says "Customer not identified" instead of printing it.
+        CustomerDisplayName = FirstNonEmpty(
+            CustomerNameValidator.Sanitize(Ticket.CrmBuyerCustomerName),
+            CustomerNameValidator.Sanitize(originating?.CustomerName),
+            CustomerNameValidator.Sanitize(CustomerHistory?.CustomerDisplayName));
         CustomerKey = CustomerHistory?.CustomerKey
             ?? CustomerIdentity.FromTicketFacts(Ticket.CrmBuyerCustomerId, Ticket.CustomerVerificationSource, Ticket.ExternalCustomerId, CustomerPhone)?.Key;
 
