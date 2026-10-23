@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Configuration;
 using TigerCS.Application.Modules.Notifications.Abstractions;
 using TigerCS.Application.Modules.Notifications;
 using TigerCS.Application.Modules.Notifications.Services;
@@ -172,7 +173,7 @@ public class CustomerEmailRegressionTests
             var api = Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "TigerCS.Api");
             var json = File.ReadAllText(Path.Combine(api, file));
             // appsettings.Development.json carries only its differences from appsettings.json: assert the EFFECTIVE value.
-            var effective = new Microsoft.Extensions.Configuration.ConfigurationBuilder()
+            var effective = new ConfigurationBuilder()
                 .AddJsonFile(Path.Combine(api, "appsettings.json"), optional: false)
                 .AddJsonFile(Path.Combine(api, file), optional: false)
                 .Build();
