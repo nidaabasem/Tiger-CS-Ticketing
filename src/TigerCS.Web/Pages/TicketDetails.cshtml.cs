@@ -341,7 +341,8 @@ public sealed class TicketDetailsModel(
             PendingApprovals: pending,
             RequiredApprovals: required,
             ReopenApproved: reopenApproved,
-            NowUtc: now));
+            NowUtc: now,
+            ClassifyNotice: ClassifyNotice));
     }
 
     /// <summary>The existing condition for the "Record first response" button: the clock is running, no human has replied, and the viewer may resolve or escalate.</summary>
@@ -370,6 +371,15 @@ public sealed class TicketDetailsModel(
     public bool CanClassify { get; private set; }
     public IReadOnlyList<CategoryDto> ClassifyCategories { get; private set; } = [];
     public IReadOnlyList<RequestTypeOptionDto> ClassifyRequestTypes { get; private set; } = [];
+
+    /// <summary>The Classify form's choices with each category's own request types — the dependency the form follows.</summary>
+    public TicketClassifyOptions ClassifyOptions { get; private set; } = TicketClassifyOptions.Failed;
+
+    /// <summary>Set when Classify is offered but cannot be completed (nothing configured, or the lists failed to load); the form is then replaced by this explanation.</summary>
+    public ClassifyNotice? ClassifyNotice { get; private set; }
+
+    /// <summary>The ticket's category by name, for a classified ticket — never the raw id.</summary>
+    public string? CategoryName { get; private set; }
 
     /// <summary>The priorities the Classify form offers: the ticket's current one and anything more urgent — a lower urgency is a downgrade, which only an approved request may do.</summary>
     public IReadOnlyList<byte> ClassifyPriorities { get; private set; } = [];
@@ -494,14 +504,42 @@ public sealed class TicketDetailsModel(
             return await ReloadWithErrorAsync("classify", "Could not read the ticket's current version. Reloading.", cancellationToken);
         }
 
-        if (Classify.CategoryId < 1 || Classify.PriorityId < 1 || (!Classify.RequestTypeAlreadySet && Classify.RequestTypeId < 1))
+        if (Classify.CategoryId < 1 || Classify.PriorityId < 1)
         {
-            return await ReloadWithErrorAsync("classify", "Choose a category, a priority and a request type.", cancellationToken);
+            return await ReloadWithErrorAsync("classify", "Choose a category and a priority.", cancellationToken);
+        }
+
+        // The request type must belong under the chosen category (the dependency the form follows), and is required whenever that
+        // category has request types of its own. Re-read from configuration, never trusted from the posted form.
+        var ticketResult = await ticketsApiClient.GetByIdAsync(id, cancellationToken);
+        if (ticketResult.IsSuccess && ticketResult.Value is { } ticketToClassify
+            && categoriesApiClient is not null && requestTypesApiClient is not null)
+        {
+            var categoriesTask = categoriesApiClient.GetCategoriesAsync(ticketToClassify.CurrentDepartmentId, cancellationToken);
+            var requestTypesTask = requestTypesApiClient.GetOptionsAsync(ticketToClassify.CurrentDepartmentId, cancellationToken);
+            await Task.WhenAll(categoriesTask, requestTypesTask);
+            if (categoriesTask.Result.IsSuccess && requestTypesTask.Result.IsSuccess)
+            {
+                var options = TicketClassifyOptions.Build(
+                    ticketToClassify.CurrentDepartmentId, categoriesTask.Result.Value ?? [], requestTypesTask.Result.Value ?? []);
+                if (!Classify.RequestTypeAlreadySet)
+                {
+                    if (options.CategoryNeedsRequestType(Classify.CategoryId) && Classify.RequestTypeId < 1)
+                    {
+                        return await ReloadWithErrorAsync("classify", "Choose a request type for that category.", cancellationToken);
+                    }
+
+                    if (Classify.RequestTypeId > 0 && !options.Allows(Classify.CategoryId, Classify.RequestTypeId))
+                    {
+                        return await ReloadWithErrorAsync("classify", "That request type does not belong under the chosen category. Choose a request type from the list for that category.", cancellationToken);
+                    }
+                }
+            }
         }
 
         var result = await ticketsApiClient.ClassifyAsync(
             id, new ClassifyTicketRequestDto(
-                Classify.CategoryId, Classify.PriorityId, Classify.RequestTypeAlreadySet ? null : Classify.RequestTypeId, rowVersion), cancellationToken);
+                Classify.CategoryId, Classify.PriorityId, Classify.RequestTypeAlreadySet || Classify.RequestTypeId < 1 ? null : Classify.RequestTypeId, rowVersion), cancellationToken);
         return await HandleMutationAsync(result, "classify", "Ticket classified.", cancellationToken);
     }
 
@@ -876,17 +914,39 @@ public sealed class TicketDetailsModel(
         ClassifyOptionsUnavailable = !categoriesTask.Result.IsSuccess || !requestTypesTask.Result.IsSuccess;
         ClassifyCategories = categoriesTask.Result.Value?.Where(c => c.DepartmentId == ticket.CurrentDepartmentId).ToList() ?? [];
         ClassifyRequestTypes = requestTypesTask.Result.Value?.Where(r => r.DepartmentId == ticket.CurrentDepartmentId && r.HasPublishedWorkflow).ToList() ?? [];
+        ClassifyOptions = ClassifyOptionsUnavailable
+            ? TicketClassifyOptions.Failed
+            : TicketClassifyOptions.Build(ticket.CurrentDepartmentId, ClassifyCategories, ClassifyRequestTypes);
+        ClassifyNotice = ClassifyNotice.For(
+            ClassifyOptions,
+            TicketDisplay.AssignedDepartmentLabel(ticket.CurrentDepartmentId, nameResolver.TryGetDepartmentName(ticket.CurrentDepartmentId)),
+            Viewer, TicketActions.CanTransfer(Viewer?.Roles));
 
         var current = ticket.PriorityId ?? 4;
         ClassifyPriorities = Enumerable.Range(1, current).Select(p => (byte)p).ToList();
+
+        // Default to the category the AI's own request type belongs under, otherwise the first one; the request type follows the category.
+        var defaultCategory = ClassifyOptions.CategoryForRequestType(ticket.RequestTypeName) ?? ClassifyOptions.Categories.FirstOrDefault();
         Classify = new ClassifyInput
         {
             RowVersionBase64 = ticket.RowVersion,
-            CategoryId = ClassifyCategories.FirstOrDefault()?.CategoryId ?? 0,
+            CategoryId = defaultCategory?.CategoryId ?? 0,
             PriorityId = current,
-            RequestTypeId = ClassifyRequestTypes.FirstOrDefault()?.RequestTypeId ?? 0,
+            RequestTypeId = defaultCategory?.RequestTypes.FirstOrDefault()?.RequestTypeId ?? 0,
             RequestTypeAlreadySet = ticket.RequestTypeId is not null,
         };
+    }
+
+    /// <summary>The classified ticket's category name, from the active-category directory. Absent (null) rather than an id when it cannot be resolved.</summary>
+    private async Task LoadCategoryNameAsync(TicketDetailDto ticket, CancellationToken cancellationToken)
+    {
+        if (ticket.CategoryId is not { } categoryId || categoriesApiClient is null)
+        {
+            return;
+        }
+
+        var result = await categoriesApiClient.GetCategoriesAsync(null, cancellationToken);
+        CategoryName = result.IsSuccess ? result.Value?.FirstOrDefault(c => c.CategoryId == categoryId)?.Name : null;
     }
 
     private static string DescribeError(ApiOutcome outcome, string? detail) => outcome switch
@@ -979,6 +1039,7 @@ public sealed class TicketDetailsModel(
 
         LoadActionAffordances(Ticket);
         await LoadClassifyOptionsAsync(Ticket, cancellationToken);
+        await LoadCategoryNameAsync(Ticket, cancellationToken);
         await LoadTransferTargetsAsync(Ticket, cancellationToken);
         await LoadReopenTargetsAsync(Ticket, cancellationToken);
 
