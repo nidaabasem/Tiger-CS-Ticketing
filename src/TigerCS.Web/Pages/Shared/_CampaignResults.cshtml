@@ -15,8 +15,8 @@ else if (Model.Report is { } report)
     if (report.Snapshot is { NothingLoaded: true }) { <div class="panel"><p class="receivables-meta" data-nothing-loaded>No customers can be shown until the financial data has loaded. See the snapshot status above.</p></div> return; }
     <div class="panel" data-customer-results data-preview-current>
         @{ var eligible = report.TotalCount - report.NotEligibleCount; var blockedCount = Math.Max(0, eligible - report.ReadyCount); var currency = report.Items.FirstOrDefault()?.Currency ?? "AED"; }
-        <section class="campaign-section" aria-labelledby="campaign-summary-title">
-            <h2 class="campaign-section__title" id="campaign-summary-title">Review &amp; approve summary</h2>
+        <section class="campaign-section" aria-labelledby="campaign-overview-title">
+            <h2 class="campaign-section__title" id="campaign-overview-title">Campaign overview</h2>
             <ul class="campaign-totals" data-campaign-totals>
                 <li class="campaign-card">
                     <span class="campaign-card__label">Financially eligible customers</span>
