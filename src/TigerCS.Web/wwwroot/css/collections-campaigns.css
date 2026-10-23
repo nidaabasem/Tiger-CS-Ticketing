@@ -11,7 +11,7 @@
 .receivables-workspace .receivables-table td:last-child { max-width: 340px; }
 
 /* Campaigns preview totals and the Review & approve snapshot */
-.campaign-totals { display: flex; flex-wrap: wrap; gap: 0.25rem 1.5rem; margin: 0 0 0.75rem; padding: 0; list-style: none; }
+.campaign-totals { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: var(--space-3); margin: 0 0 var(--space-2); padding: 0; list-style: none; }
 .review-snapshot { display: grid; grid-template-columns: max-content 1fr; gap: 0.25rem 1rem; margin: 0.5rem 0 1rem; }
 .review-snapshot dt { font-weight: 600; }
 .review-snapshot dd { margin: 0; }
@@ -61,3 +61,23 @@
 .campaign-advanced > summary::-webkit-details-marker { display: none; }
 .campaign-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); margin: 0 0 var(--space-3); }
 .campaign-actions .receivables-meta { flex: 1 1 260px; min-width: 0; }
+
+/* Review & approve summary: cards, details, blockers and actions are separate blocks */
+.campaign-section { margin: 0 0 var(--space-4); }
+.campaign-section__title { margin: 0 0 var(--space-2); font-size: var(--text-sm); font-weight: 600; color: var(--color-text-secondary); }
+.campaign-card { padding: var(--space-3) var(--space-4); border: 1px solid var(--color-border); border-radius: 8px; gap: var(--space-1); }
+.campaign-card__label { font-size: var(--text-sm); color: var(--color-text-secondary); }
+.campaign-card__value { font-size: 1.5rem; line-height: 1.2; overflow-wrap: anywhere; }
+.campaign-card__hint { font-size: var(--text-xs, 0.75rem); color: var(--color-text-secondary); }
+.campaign-card--blocked { border-color: var(--color-warning, #b45309); }
+.campaign-helper { max-width: 70ch; margin: 0; }
+.campaign-details { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-6); margin: 0; padding: var(--space-3) var(--space-4); border: 1px solid var(--color-border); border-radius: 8px; }
+.campaign-details > div { min-width: 0; }
+.campaign-details dt { font-size: var(--text-sm); color: var(--color-text-secondary); }
+.campaign-details dd { margin: 0; overflow-wrap: anywhere; }
+.campaign-blockers { margin: 0 0 var(--space-4); padding: var(--space-3) var(--space-4); border: 1px solid var(--color-warning, #b45309); border-left-width: 4px; border-radius: 8px; }
+.campaign-blockers__title { margin: 0 0 var(--space-1); font-size: var(--text-base, 1rem); }
+.campaign-blockers p { margin: 0 0 var(--space-2); }
+.campaign-blockers__list { margin: 0; padding-left: 1.25rem; }
+.campaign-blockers__list li { margin: 0 0 var(--space-1); }
+.campaign-approve__hint { flex: 1 1 100%; font-size: var(--text-sm); color: var(--color-text-secondary); }
