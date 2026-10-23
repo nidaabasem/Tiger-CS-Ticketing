@@ -64,7 +64,7 @@ public sealed class CollectionsCampaignReadinessTests
     public async Task Counts_AreLabelledEligibleReadyAndNeedsReview_AndAddUp()
     {
         var needsReview = await Results(new FakeCollectionsApi());                          // 1 listed, eligible, not ready
-        Assert.Contains("Financially eligible customers:", needsReview); Assert.Contains("Ready to send:", needsReview); Assert.Contains("Needs review / blocked:", needsReview);
+        Assert.Contains("Financially eligible customers", needsReview); Assert.Contains("Ready to send", needsReview); Assert.Contains("Needs review / blocked", needsReview); Assert.Contains("Why sending is blocked", needsReview);
         Assert.Contains("data-eligible-count>1<", needsReview); Assert.Contains("data-ready-count>0<", needsReview); Assert.Contains("data-blocked-count>1<", needsReview);
 
         var mixed = await Results(new FakeCollectionsApi { IncludeNotEligible = true });    // 2 listed: 1 ready + 1 not eligible
