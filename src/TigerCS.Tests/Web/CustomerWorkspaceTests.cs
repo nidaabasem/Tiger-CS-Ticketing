@@ -433,7 +433,7 @@ public sealed class CustomerWorkspaceTests
         Assert.Contains("action=\"/Customers\"", html);
         Assert.Contains("name=\"phoneNumber\"", html);
         Assert.Contains("href=\"/NewTicket\"", html);
-        Assert.Contains("Recent / Critical Tickets", html);
+        Assert.Contains("Tickets Requiring Attention", html);
         // The recent list is compact: operational facts only, never the ticket description.
         Assert.DoesNotContain("RequestSummary", html);
     }

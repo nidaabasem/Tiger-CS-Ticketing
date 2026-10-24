@@ -21,6 +21,9 @@ public enum RequestTypeResolutionFailure
     /// <summary>The name matches active request types in more than one department; the id is required.</summary>
     Ambiguous,
 
+    /// <summary>An id and a name were both supplied and name different request types; neither is trusted, so nothing is routed on a guess.</summary>
+    Mismatch,
+
     /// <summary>The request type's responsible department is missing or inactive, so there is nowhere to route.</summary>
     DepartmentInactive,
 
@@ -123,6 +126,14 @@ public sealed class TicketRequestTypeRoutingService(
             if (requestType is null)
             {
                 return Fail(RequestTypeResolutionFailure.NotFound, $"Request type {id} does not exist.");
+            }
+
+            // Id wins, but a name sent alongside it must agree: a stale or mistyped pair would otherwise route to the wrong department.
+            if (!string.IsNullOrWhiteSpace(requestTypeName)
+                && !string.Equals(requestType.Name.Trim(), requestTypeName.Trim(), StringComparison.OrdinalIgnoreCase))
+            {
+                return Fail(RequestTypeResolutionFailure.Mismatch,
+                    $"Request type {id} is '{requestType.Name}', not '{requestTypeName.Trim()}'. Send the id alone, or an id and name that agree.");
             }
         }
         else if (!string.IsNullOrWhiteSpace(requestTypeName))

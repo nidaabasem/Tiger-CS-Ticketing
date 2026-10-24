@@ -147,8 +147,9 @@ public sealed class DashboardQueryRepository(TigerCsDbContext dbContext) : IDash
             .ToListAsync(cancellationToken);
         var ageingByBucket = ageingCounts.ToDictionary(a => (BacklogAgeBucket)a.Key, a => a.Count);
 
-        // ---- Recent / Critical (current state): breached, then overdue/due
-        // soon, then Critical, High, then newest — names joined in-query.
+        // ---- Tickets Requiring Attention (current state): the newest active
+        // tickets in scope, CreatedAt DESC applied before the limit — names
+        // joined in-query.
         var atRiskUntil = query.NowUtc + query.AtRiskWindow;
         var recentRows = await backlog
             .GroupJoin(TicketQueryFilters.CurrentSlaPeriods(dbContext), t => t.TicketId, s => s.TicketId, (t, slas) => new { t, slas })
@@ -158,26 +159,21 @@ public sealed class DashboardQueryRepository(TigerCsDbContext dbContext) : IDash
                 SlaDueAtUtc = s != null && !s.ResolutionBreached ? s.ResolutionDueAtUtc : (DateTime?)null
             })
             .GroupJoin(dbContext.Departments, x => x.Ticket.CurrentDepartmentId, d => d.DepartmentId, (x, departments) => new { x, departments })
-            .SelectMany(y => y.departments.DefaultIfEmpty(), (y, d) => new { y.x.Ticket, y.x.SlaDueAtUtc, DepartmentName = d != null ? d.Name : null })
+            .SelectMany(y => y.departments.DefaultIfEmpty(), (y, d) => new { y.x.Ticket, y.x.SlaDueAtUtc, DepartmentName = d != null ? d.Name : null, DepartmentCode = d != null ? d.Code : null })
             .GroupJoin(dbContext.RequestTypes, x => x.Ticket.RequestTypeId, r => (int?)r.RequestTypeId, (x, requestTypes) => new { x, requestTypes })
-            .SelectMany(y => y.requestTypes.DefaultIfEmpty(), (y, r) => new { y.x.Ticket, y.x.SlaDueAtUtc, y.x.DepartmentName, RequestTypeName = r != null ? r.Name : null })
+            .SelectMany(y => y.requestTypes.DefaultIfEmpty(), (y, r) => new { y.x.Ticket, y.x.SlaDueAtUtc, y.x.DepartmentName, y.x.DepartmentCode, RequestTypeName = r != null ? r.Name : null })
             .GroupJoin(dbContext.Employees, x => x.Ticket.CurrentOwnerEmployeeId, e => (Guid?)e.EmployeeId, (x, employees) => new { x, employees })
             .SelectMany(y => y.employees.DefaultIfEmpty(), (y, e) => new
             {
                 y.x.Ticket,
                 y.x.SlaDueAtUtc,
                 y.x.DepartmentName,
+                y.x.DepartmentCode,
                 y.x.RequestTypeName,
                 OwnerName = e != null ? e.DisplayName : null
             })
-            .OrderBy(x =>
-                x.Ticket.SlaState == SlaState.Breached ? 0
-                : x.SlaDueAtUtc != null && x.SlaDueAtUtc <= atRiskUntil ? 1
-                : x.Ticket.PriorityId == 1 ? 2
-                : x.Ticket.PriorityId == 2 ? 3
-                : 4)
-            .ThenBy(x => x.SlaDueAtUtc ?? DateTime.MaxValue)
-            .ThenByDescending(x => x.Ticket.CreatedAtUtc)
+            .OrderByDescending(x => x.Ticket.CreatedAtUtc)
+            .ThenByDescending(x => x.Ticket.TicketId)
             .Take(query.RecentLimit)
             .Select(x => new DashboardRecentTicketRow(
                 x.Ticket.TicketId,
@@ -195,7 +191,8 @@ public sealed class DashboardQueryRepository(TigerCsDbContext dbContext) : IDash
                 x.SlaDueAtUtc,
                 x.Ticket.CurrentOwnerEmployeeId,
                 x.OwnerName,
-                x.Ticket.CreatedAtUtc))
+                x.Ticket.CreatedAtUtc,
+                x.DepartmentCode))
             .ToListAsync(cancellationToken);
 
         return new DashboardOverviewSnapshot(

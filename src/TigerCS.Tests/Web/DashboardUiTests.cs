@@ -426,16 +426,20 @@ public sealed class DashboardUiTests
     {
         var html = View("Dashboard.cshtml");
 
-        foreach (var column in new[] { "Ticket", "Customer", "Unit / Project", "Department", "Request Type", "Priority", "Status", "Assigned To", "Created", "SLA" })
+        foreach (var column in new[] { "Ticket", "Department", "Created" })
         {
             Assert.Contains($"<th scope=\"col\">{column}</th>", html);
+        }
+
+        foreach (var removed in new[] { "Customer", "Unit / Project", "Request Type", "Priority", "Status", "Assigned To", "SLA" })
+        {
+            Assert.DoesNotContain($"<th scope=\"col\">{removed}</th>", html);
         }
 
         Assert.Contains("href=\"/Tickets/@ticket.TicketId\"", html);
         Assert.Contains("DashboardLinks.ViewAll(f)", html);
         // Names come from the Api's joined projection — no per-row name resolution on this page.
         Assert.Contains("ticket.DepartmentName", html);
-        Assert.Contains("ticket.OwnerName", html);
         Assert.DoesNotContain("ResolveOwnerNameAsync", html);
         // Never a full description, never a misleading ownerless label.
         Assert.DoesNotContain("RequestSummary", html);
