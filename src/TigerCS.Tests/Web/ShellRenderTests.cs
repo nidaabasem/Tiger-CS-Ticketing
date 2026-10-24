@@ -233,6 +233,14 @@ public sealed class ShellRenderTests : IDisposable
         Assert.Contains("id=\"dashboardFilters\"", html, StringComparison.Ordinal);
         Assert.Contains("Tickets Requiring Attention", html, StringComparison.Ordinal);
         Assert.Contains("data-href=\"/Tickets/5\"", html, StringComparison.Ordinal);
+        // Department icons follow the stable DepartmentCode, not the display name.
+        foreach (var (id, tone) in new[] { (7, "green"), (8, "pink"), (9, "purple"), (10, "blue"), (6, "orange"), (5, "indigo") })
+        {
+            var row = html[html.IndexOf($"data-href=\"/Tickets/{id}\"", StringComparison.Ordinal)..];
+            row = row[..row.IndexOf("</tr>", StringComparison.Ordinal)];
+            Assert.Contains($"dept-icon dept-icon--{tone}", row, StringComparison.Ordinal);
+        }
+        Assert.DoesNotContain("<th scope=\"col\">Priority</th>", html, StringComparison.Ordinal);
         Assert.Contains("Volume by Department", html, StringComparison.Ordinal);
         Assert.Equal(6, Count(html, "class=\"panel dash-card tone-"));
         // KPI drill-downs land on the Tickets workspace; My Tickets on its own tab.
@@ -394,8 +402,13 @@ public sealed class ShellRenderTests : IDisposable
                 [Item("1", "Critical", 5, 4.2), Item("2", "High", 25, 20.8), Item("3", "Medium", 60, 50), Item("4", "Low", 30, 25)],
                 [Item("UnderOneDay", "< 1 day", 10, 23.8), Item("OneToThreeDays", "1–3 days", 20, 47.6), Item("OverSevenDays", "> 7 days", 12, 28.6)],
                 [
-                    new DashboardRecentTicketDto(5, "TG-CS-00005", "Mariam Al Falasi", "T-1204", "Tiger Tower", 2, "Customer Service", 9, "Payment Reminder", 1, "Open", "Breached", Now.AddHours(-5), null, null, Now.AddDays(-2)),
-                    new DashboardRecentTicketDto(6, "TG-CS-00006", "Omar Haddad", "P-08", "Palm Residence", 3, "Collections", 10, "Complaint", 2, "InProgress", "Running", Now.AddHours(3), ViewerId, "Test Agent", Now.AddHours(-20)),
+                    new DashboardRecentTicketDto(5, "TG-CS-00005", "Mariam Al Falasi", "T-1204", "Tiger Tower", 2, "Customer Service", 9, "Payment Reminder", 1, "Open", "Breached", Now.AddHours(-5), null, null, Now.AddDays(-2), "CS"),
+                    new DashboardRecentTicketDto(6, "TG-CS-00006", "Omar Haddad", "P-08", "Palm Residence", 3, "Collections", 10, "Complaint", 2, "InProgress", "Running", Now.AddHours(3), ViewerId, "Test Agent", Now.AddHours(-20), "COL"),
+                    // LCS must render the Leasing (green home) icon even when its display name is "Customer Service".
+                    new DashboardRecentTicketDto(7, "TG-LCS-00007", null, null, null, 4, "Customer Service", null, null, 3, "Open", "Running", null, null, null, Now.AddHours(-1), "LCS"),
+                    new DashboardRecentTicketDto(8, "TG-CC-00008", null, null, null, 5, "Call Center", null, null, 3, "Open", "Running", null, null, null, Now.AddHours(-2), "CC"),
+                    new DashboardRecentTicketDto(9, "TG-REG-00009", null, null, null, 6, "Registration", null, null, 3, "Open", "Running", null, null, null, Now.AddHours(-3), "REG"),
+                    new DashboardRecentTicketDto(10, "TG-ACC-00010", null, null, null, 7, "Accounting", null, null, 3, "Open", "Running", null, null, null, Now.AddHours(-4), "ACC"),
                 ],
                 new DashboardFilterOptionsDto(
                     [new DashboardFilterOptionDto("2", "Customer Service"), new DashboardFilterOptionDto("3", "Collections")],
