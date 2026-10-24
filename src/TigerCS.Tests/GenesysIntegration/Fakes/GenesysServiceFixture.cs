@@ -184,7 +184,7 @@ public sealed class GenesysServiceFixture
         RequestTypeClassification = new GenesysRequestTypeClassificationAppService(
             Tickets, Approvals, Conversations, Handoffs,
             new TicketRequestTypeRoutingService(
-                RequestTypes, WorkflowTemplates, Departments, autoAssignment, sla.DueDates, StatusHistory, Audit, WorkflowEvents),
+                RequestTypes, Categories, WorkflowTemplates, Departments, autoAssignment, sla.DueDates, StatusHistory, Audit, WorkflowEvents),
             new GenesysDefaultPriorityResolver(Options, new FakePriorityRepository()),
             AgentHandoff, UnitOfWork, TimeProvider.System);
 

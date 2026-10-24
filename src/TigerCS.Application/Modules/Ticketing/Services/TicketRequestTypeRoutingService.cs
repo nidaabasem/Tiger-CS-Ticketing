@@ -84,6 +84,7 @@ public sealed record RequestTypeRoutingResult(
 /// </summary>
 public sealed class TicketRequestTypeRoutingService(
     IRequestTypeRepository requestTypeRepository,
+    ICategoryRepository categoryRepository,
     IWorkflowTemplateRepository workflowTemplateRepository,
     IDepartmentRepository departmentRepository,
     TicketAutoAssignmentService autoAssignmentService,
@@ -92,6 +93,25 @@ public sealed class TicketRequestTypeRoutingService(
     IAuditEntryWriter auditWriter,
     ITicketWorkflowEventRepository workflowEventRepository)
 {
+    /// <summary>
+    /// The Category that pairs with a request type under the only rule the data model has: an active category of the request type's
+    /// department with the same name (how the UAT import and the New Ticket picker pair them). Exactly one match or null — never invented,
+    /// never guessed between several.
+    /// </summary>
+    public async Task<int?> ResolveCategoryIdAsync(RequestType requestType, CancellationToken cancellationToken = default)
+    {
+        var categories = await categoryRepository.ListAsync(activeOnly: true, requestType.DepartmentId, cancellationToken);
+        var matches = categories
+            .Where(c => string.Equals(c.Name?.Trim(), requestType.Name.Trim(), StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        return matches.Count == 1 ? matches[0].CategoryId : null;
+    }
+
+    public async Task<int?> ResolveCategoryForRequestTypeIdAsync(int requestTypeId, CancellationToken cancellationToken = default) =>
+        await requestTypeRepository.GetByIdAsync(requestTypeId, cancellationToken) is { } rt
+            ? await ResolveCategoryIdAsync(rt, cancellationToken)
+            : null;
+
     /// <summary>Resolves a request type by id (preferred) or by exact name, and validates that it can govern a ticket.</summary>
     public async Task<RequestTypeResolution> ResolveAsync(
         int? requestTypeId, string? requestTypeName, CancellationToken cancellationToken = default)
@@ -204,6 +224,13 @@ public sealed class TicketRequestTypeRoutingService(
             ticket.PinWorkflowVersion(resolution.PublishedWorkflow.WorkflowTemplateId);
         }
 
+        // The paired Category is saved with the request type so Ticket Details shows both. No pairing exists -> Category stays empty; a category a person already chose is never overwritten (a reclassification is only allowed by the caller when the category is the system's own).
+        var categoryId = await ResolveCategoryIdAsync(requestType, cancellationToken);
+        if (categoryId is { } pairedCategoryId && (reclassify || ticket.CategoryId is null))
+        {
+            ticket.ApplyCategoryFromRequestType(pairedCategoryId);
+        }
+
         // Department FIRST, exactly as TransferAsync does: the responsible
         // department is the primary assignment, OriginatingDepartmentId is
         // never touched, and the transfer clears the previous owner.
@@ -251,7 +278,7 @@ public sealed class TicketRequestTypeRoutingService(
             actorEmployeeId, reclassify ? "ReclassifyRequestType" : "ClassifyRequestType", "Ticket", ticket.TicketId.ToString(),
             beforeValue: $"RequestTypeId={previousRequestTypeId?.ToString() ?? "(none)"};DepartmentId={previousDepartmentId};AssignedEmployeeId={previousOwner?.ToString() ?? "DepartmentQueue"}",
             afterValue:
-                $"RequestTypeId={requestType.RequestTypeId};RequestType={requestType.Name};DepartmentId={ticket.CurrentDepartmentId};"
+                $"RequestTypeId={requestType.RequestTypeId};RequestType={requestType.Name};CategoryId={categoryId?.ToString() ?? "(none paired)"};DepartmentId={ticket.CurrentDepartmentId};"
                 + $"OriginatingDepartmentId={ticket.OriginatingDepartmentId};Transferred={transferred};"
                 + $"Assignment={assignmentOutcome};AssignedEmployeeId={assignedEmployeeId?.ToString() ?? "DepartmentQueue"};"
                 + $"Sla={slaOutcome};Source={source}",

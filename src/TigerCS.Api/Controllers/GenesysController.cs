@@ -88,12 +88,12 @@ public class GenesysController(
     /// The department comes from the customer's explicit website-chat choice
     /// (Leasing / Customer Service / Maintenance) when there is one, and
     /// otherwise from the configured Genesys queue → department mapping.
-    /// Category and Request Type are never inferred from it: the ticket is
+    /// Category and Request Type are never inferred from the subject or the queue: the ticket is
     /// created <b>Unclassified</b> (no category at all — never a placeholder
     /// one), on the configured default priority (<c>Genesys:DefaultTicketPriority</c>,
     /// "Normal"), and its SLA clock starts at creation like any other ticket.
     /// When the bot supplies a valid <c>requestType</c> it is applied
-    /// immediately — the request type's department becomes responsible (the
+    /// immediately, together with the Category paired with it (active, same department, same name; none is created or guessed) — the request type's department becomes responsible (the
     /// originating department is never rewritten), the configured automatic
     /// assignment runs (no eligible employee leaves it in the department
     /// queue) and its SLA policy replaces the Normal-priority targets

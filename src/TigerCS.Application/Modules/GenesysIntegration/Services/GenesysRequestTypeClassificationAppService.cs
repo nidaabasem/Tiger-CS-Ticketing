@@ -169,7 +169,10 @@ public sealed class GenesysRequestTypeClassificationAppService(
             return $"the ticket is {ticket.TicketStatus}.";
         }
 
-        if (ticket.CategoryId is not null)
+        // A category the system paired with the current request type is the AI's own work; any other category was chosen by a person.
+        if (ticket.CategoryId is { } category
+            && !(ticket.RequestTypeId is { } currentTypeId
+                 && await routingService.ResolveCategoryForRequestTypeIdAsync(currentTypeId, cancellationToken) == category))
         {
             return "a person classified it.";
         }
