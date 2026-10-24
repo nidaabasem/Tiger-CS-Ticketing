@@ -571,7 +571,7 @@ public sealed partial class GenesysDataActionContractTests
     /// <summary>String inputs the DTO reads as a typed value (GUID, date, number), where a hostile string is rightly rejected.</summary>
     private static readonly HashSet<string> TypedStrings = new(StringComparer.Ordinal)
     {
-        "ticketId", "startedAtUtc", "endedAtUtc", "confirmedAtUtc", "verificationSessionId", "challengeId", "crmLeadId", "unitId", "awaiting", "closedByAi", "humanFollowUpRequired"
+        "ticketId", "startedAtUtc", "endedAtUtc", "confirmedAtUtc", "verificationSessionId", "challengeId", "crmLeadId", "unitId", "awaiting", "closedByAi", "humanFollowUpRequired", "requestTypeId"
     };
 
     private static Dictionary<string, object?> Baseline(JsonElement schemaProperties)
@@ -582,6 +582,7 @@ public sealed partial class GenesysDataActionContractTests
             result[property.Name] = property.Name switch
             {
                 "ticketId" => "42",
+                "requestTypeId" => "20",
                 "conversationId" => "conv-1",
                 "channel" => "Phone",
                 "startedAtUtc" or "endedAtUtc" or "confirmedAtUtc" => "2026-10-08T10:00:00Z",

@@ -12,7 +12,7 @@
         "Content-Type": "application/json",
         "Accept": "application/json"
       },
-      "requestTemplate": "{\"conversationId\": \"$esc.jsonString(${input.conversationId})\", \"routing\": {\"queueId\": \"$!esc.jsonString($input.queueId)\", \"queueName\": \"$!esc.jsonString($input.queueName)\", \"agentId\": \"$!esc.jsonString($input.agentId)\", \"agentName\": \"$!esc.jsonString($input.agentName)\"}, \"requestType\": {\"name\": \"$!esc.jsonString($input.requestTypeName)\"}}"
+      "requestTemplate": "{\"conversationId\": \"$esc.jsonString(${input.conversationId})\", \"routing\": {\"queueId\": \"$!esc.jsonString($input.queueId)\", \"queueName\": \"$!esc.jsonString($input.queueName)\", \"agentId\": \"$!esc.jsonString($input.agentId)\", \"agentName\": \"$!esc.jsonString($input.agentName)\"}, \"requestType\": {\"requestTypeId\": \"$!esc.jsonString($input.requestTypeId)\", \"name\": \"$!esc.jsonString($input.requestTypeName)\"}}"
     },
     "response": {
       "translationMap": {
@@ -61,9 +61,13 @@
             "type": "string",
             "description": "Optional."
           },
+          "requestTypeId": {
+            "type": "string",
+            "description": "Optional. The id of the configured request type the customer selected, from this environment's Request Type export (a data-table lookup in the flow; ids differ per environment). Preferred over requestTypeName. Blank = not supplied. If requestTypeName is also sent it must be the same request type or the call is refused (422)."
+          },
           "requestTypeName": {
             "type": "string",
-            "description": "Optional. The exact name of the request type the bot has now identified. Applies its department routing, auto-assignment and SLA policy once; repeating the same name changes nothing, a different one than the ticket already has is refused (409)."
+            "description": "Optional. Fallback only when no id is available: the exact name of one active request type (refused if the name exists in more than one department). Blank = not supplied. Applies the request type's department routing, Category, auto-assignment and SLA policy once; repeating the same one changes nothing, a different one than the ticket already has is refused (409) once a person has worked the ticket."
           }
         }
       }
