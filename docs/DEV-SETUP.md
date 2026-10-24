@@ -30,9 +30,10 @@ connection targets `localhost` only. It's the value in
 `dotnet ef` uses when `TIGERCS_DESIGN_TIME_CONNECTION` is unset.
 
 The committed `appsettings*.json` do **not** carry it, and do not point at
-this container: both `src/TigerCS.Api/appsettings.json` and
-`appsettings.Development.json` ship a shared-server connection string whose
-`Password=` is empty, so neither can connect as it stands. Supply the whole
+this container: `src/TigerCS.Api/appsettings.json` ships a shared-server
+connection string whose `Password=` is empty (`appsettings.Development.json`
+inherits it - it carries only its differences from the base file), so it
+cannot connect as it stands. Supply the whole
 connection string yourself — user-secrets locally (step 3), or
 `ConnectionStrings__TigerCsDatabase` in UAT/Production — rather than editing
 the committed file. To point at the Docker container above, set the

@@ -148,14 +148,20 @@ public sealed class CrmProviderRegistrationTests
             File.ReadAllText(ApiSettingsFile(fileName)),
             new JsonDocumentOptions { CommentHandling = JsonCommentHandling.Skip, AllowTrailingCommas = true });
 
-        var crm = document.RootElement.GetProperty("Crm");
+        // appsettings.Development.json carries only its differences from appsettings.json, so the
+        // provider is asserted on the EFFECTIVE configuration (base file, then this file on top).
+        var effective = new ConfigurationBuilder()
+            .AddJsonFile(ApiSettingsFile("appsettings.json"), optional: false)
+            .AddJsonFile(ApiSettingsFile(fileName), optional: false)
+            .Build();
+        Assert.Equal("Http", effective["Crm:Provider"]);
 
-        Assert.Equal("Http", crm.GetProperty("Provider").GetString());
         // Crm:SecretKey comes from user-secrets or the Crm__SecretKey
         // environment variable (docs/DEV-SETUP.md §3a) — never from a
         // committed file.
         Assert.False(
-            crm.EnumerateObject().Any(p => string.Equals(p.Name, "SecretKey", StringComparison.OrdinalIgnoreCase)),
+            document.RootElement.TryGetProperty("Crm", out var crm)
+            && crm.EnumerateObject().Any(p => string.Equals(p.Name, "SecretKey", StringComparison.OrdinalIgnoreCase)),
             $"{fileName} must not carry Crm:SecretKey");
     }
 }

@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Configuration;
 using TigerCS.Application.Modules.Notifications.Abstractions;
 using TigerCS.Application.Modules.Notifications;
 using TigerCS.Application.Modules.Notifications.Services;
@@ -169,9 +170,14 @@ public class CustomerEmailRegressionTests
     {
         foreach (var file in new[] { "appsettings.json", "appsettings.Development.json" })
         {
-            var path = Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "TigerCS.Api", file);
-            var json = File.ReadAllText(path);
-            Assert.Contains("\"LogoUrl\": \"https://www.tigergroup.ae/logos/TigerHead.jpg\"", json, StringComparison.Ordinal);
+            var api = Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "TigerCS.Api");
+            var json = File.ReadAllText(Path.Combine(api, file));
+            // appsettings.Development.json carries only its differences from appsettings.json: assert the EFFECTIVE value.
+            var effective = new ConfigurationBuilder()
+                .AddJsonFile(Path.Combine(api, "appsettings.json"), optional: false)
+                .AddJsonFile(Path.Combine(api, file), optional: false)
+                .Build();
+            Assert.Equal("https://www.tigergroup.ae/logos/TigerHead.jpg", effective["CustomerNotifications:Branding:LogoUrl"]);
             Assert.DoesNotContain("/img/tiger-logo.png", json, StringComparison.Ordinal);
         }
     }
