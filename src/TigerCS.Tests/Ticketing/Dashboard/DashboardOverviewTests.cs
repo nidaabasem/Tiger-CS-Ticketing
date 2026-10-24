@@ -548,7 +548,7 @@ public sealed class DashboardOverviewTests : IDisposable
     // ---------------------------------------------------------------
 
     [Fact]
-    public async Task RecentTickets_RankBreachedThenDueSoonThenHighPriorityThenNewest_WithNamesResolved()
+    public async Task RecentTickets_AreNewestFirstRegardlessOfSlaOrPriority_WithNamesResolved()
     {
         using (var context = _db.CreateContext())
         {
@@ -562,7 +562,7 @@ public sealed class DashboardOverviewTests : IDisposable
 
         var overview = await OverviewAsync(Guid.NewGuid(), CrossDepartment);
 
-        Assert.Equal(["Breached", "Due soon", "High", "Newest Low", "Older Low"], overview.RecentTickets.Select(r => r.CustomerName ?? "").ToArray());
+        Assert.Equal(["Newest Low", "Older Low", "Breached", "Due soon", "High"], overview.RecentTickets.Select(r => r.CustomerName ?? "").ToArray());
         var high = overview.RecentTickets.Single(r => r.CustomerName == "High");
         Assert.Equal("Customer Service", high.DepartmentName);
         Assert.Equal("Complaint", high.RequestTypeName);
@@ -570,6 +570,24 @@ public sealed class DashboardOverviewTests : IDisposable
         Assert.Equal("Tiger Tower", high.ProjectName);
         Assert.StartsWith("U-", high.UnitNumber);
         Assert.Equal(Now.AddHours(1), overview.RecentTickets.Single(r => r.CustomerName == "Due soon").SlaDueAtUtc);
+    }
+
+    [Fact]
+    public async Task RecentTickets_TiedCreatedAt_BreakByTicketIdDescending_AndCarryDepartmentCode()
+    {
+        using (var context = _db.CreateContext())
+        {
+            for (var i = 0; i < 3; i++)
+            {
+                _db.AddTicket(context, _db.CustomerServiceId, createdAtUtc: Now.AddHours(-1), customerName: $"Tie {i}");
+            }
+        }
+
+        var overview = await OverviewAsync(Guid.NewGuid(), CrossDepartment);
+
+        Assert.Equal(["Tie 2", "Tie 1", "Tie 0"], overview.RecentTickets.Select(r => r.CustomerName ?? "").ToArray());
+        Assert.Equal(overview.RecentTickets.Select(r => r.TicketId).OrderByDescending(id => id), overview.RecentTickets.Select(r => r.TicketId));
+        Assert.All(overview.RecentTickets, r => Assert.Equal("CS", r.DepartmentCode));
     }
 
     [Fact]

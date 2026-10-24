@@ -86,7 +86,8 @@ public sealed record DashboardRecentTicketRow(
     DateTime? SlaDueAtUtc,
     Guid? CurrentOwnerEmployeeId,
     string? OwnerName,
-    DateTime CreatedAtUtc);
+    DateTime CreatedAtUtc,
+    string? DepartmentCode = null);
 
 /// <summary>
 /// Every dashboard number, computed SQL-side over the query's scope. Counts
