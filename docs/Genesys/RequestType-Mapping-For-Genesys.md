@@ -41,6 +41,8 @@ What Ticketing does with it is unchanged and tested: validate (exists, active, d
 
 A different type later in the conversation (the customer's real need emerged) replaces the first only while no person has worked the ticket; afterwards the call answers `409` and nothing changes (see the audit document).
 
+**Category.** When a valid request type is applied, Ticketing also saves the Category paired with it: the active Category of the request type's department with the **same name** (the pairing the UAT import creates). No match, or more than one, leaves Category empty ("Not yet classified") while the request type is still saved. The `subject` is display text only — it is never parsed, so a request named only in `subject` (e.g. `... - CS - Ownership Transfer and NOC`) leaves the ticket unclassified. The flow must send `requestType.requestTypeId` (or an exact `requestTypeName`).
+
 ## 3. UAT baseline catalogue (names and owning departments)
 
 This is the approved baseline imported by `ImportNewRequestTypes_UAT.sql` (see `docs/New-Request-Types-UAT-Import.md`). Ids are deliberately **not** listed — export them (section 1). Names and departments below can be edited in Administration after import, so treat the live export as authoritative.
