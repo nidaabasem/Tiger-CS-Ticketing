@@ -159,15 +159,16 @@ public sealed class DashboardQueryRepository(TigerCsDbContext dbContext) : IDash
                 SlaDueAtUtc = s != null && !s.ResolutionBreached ? s.ResolutionDueAtUtc : (DateTime?)null
             })
             .GroupJoin(dbContext.Departments, x => x.Ticket.CurrentDepartmentId, d => d.DepartmentId, (x, departments) => new { x, departments })
-            .SelectMany(y => y.departments.DefaultIfEmpty(), (y, d) => new { y.x.Ticket, y.x.SlaDueAtUtc, DepartmentName = d != null ? d.Name : null })
+            .SelectMany(y => y.departments.DefaultIfEmpty(), (y, d) => new { y.x.Ticket, y.x.SlaDueAtUtc, DepartmentName = d != null ? d.Name : null, DepartmentCode = d != null ? d.Code : null })
             .GroupJoin(dbContext.RequestTypes, x => x.Ticket.RequestTypeId, r => (int?)r.RequestTypeId, (x, requestTypes) => new { x, requestTypes })
-            .SelectMany(y => y.requestTypes.DefaultIfEmpty(), (y, r) => new { y.x.Ticket, y.x.SlaDueAtUtc, y.x.DepartmentName, RequestTypeName = r != null ? r.Name : null })
+            .SelectMany(y => y.requestTypes.DefaultIfEmpty(), (y, r) => new { y.x.Ticket, y.x.SlaDueAtUtc, y.x.DepartmentName, y.x.DepartmentCode, RequestTypeName = r != null ? r.Name : null })
             .GroupJoin(dbContext.Employees, x => x.Ticket.CurrentOwnerEmployeeId, e => (Guid?)e.EmployeeId, (x, employees) => new { x, employees })
             .SelectMany(y => y.employees.DefaultIfEmpty(), (y, e) => new
             {
                 y.x.Ticket,
                 y.x.SlaDueAtUtc,
                 y.x.DepartmentName,
+                y.x.DepartmentCode,
                 y.x.RequestTypeName,
                 OwnerName = e != null ? e.DisplayName : null
             })
@@ -190,7 +191,8 @@ public sealed class DashboardQueryRepository(TigerCsDbContext dbContext) : IDash
                 x.SlaDueAtUtc,
                 x.Ticket.CurrentOwnerEmployeeId,
                 x.OwnerName,
-                x.Ticket.CreatedAtUtc))
+                x.Ticket.CreatedAtUtc,
+                x.DepartmentCode))
             .ToListAsync(cancellationToken);
 
         return new DashboardOverviewSnapshot(

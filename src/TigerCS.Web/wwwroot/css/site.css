@@ -882,12 +882,23 @@ a.kpi-card:hover .kpi-card__icon { background: var(--tone, var(--color-ink)); bo
   white-space: nowrap; font-size: var(--text-xs); font-weight: var(--weight-strong);
   color: var(--tone, var(--color-text-secondary));
 }
+.panel--compact .panel__header .link-muted { white-space: nowrap; }
 .panel--compact .panel__header { padding-top: var(--space-2); padding-bottom: var(--space-2); }
 .data-table--compact th, .data-table--compact td { padding-top: 6px; padding-bottom: 6px; }
 .dept-cell { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
 .dept-cell__name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dept-icon { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 7px; color: var(--dept-fg); background: var(--dept-bg); }
 .dept-icon svg { width: 14px; height: 14px; }
+@media (max-width: 560px) {
+  /* Narrow screens: each row becomes two lines — ticket and time, then the department — so nothing scrolls sideways. */
+  .data-table--compact thead { display: none; }
+  .data-table--compact, .data-table--compact tbody { display: block; }
+  .data-table--compact tr { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: var(--space-3); padding: 6px var(--space-3); border-bottom: 1px solid var(--color-border); }
+  .data-table--compact tr:last-child { border-bottom: 0; }
+  .data-table--compact td, .dashboard-workspace .data-table--compact td { padding: 2px 0; border-bottom: 0; }
+  .data-table--compact td:nth-child(2) { grid-column: 1 / -1; grid-row: 2; }
+  .data-table--compact td:nth-child(3) { grid-column: 2; grid-row: 1; text-align: right; }
+}
 .dept-pink { --dept-fg: #C2297A; --dept-bg: rgba(194, 41, 122, 0.12); }
 .dept-purple { --dept-fg: #6D4FD0; --dept-bg: rgba(109, 79, 208, 0.12); }
 .dept-green { --dept-fg: #2F7D52; --dept-bg: rgba(47, 125, 82, 0.12); }

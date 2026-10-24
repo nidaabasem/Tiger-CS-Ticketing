@@ -60,9 +60,20 @@
 
     // Consistent colour + glyph per department, matched on the department's
     // name — decoration only; the name shown comes from the model.
-    (string Tone, string Icon) DeptStyle(string? name)
+    (string Tone, string Icon) DeptStyle(string? code, string? name)
     {
-        var n = (name ?? string.Empty).ToLowerInvariant();
+        // Stable DepartmentCode first; the name is only a fallback for departments created with other codes.
+        var n = (code?.ToUpperInvariant()) switch
+        {
+            "CC" => "call",
+            "REG" => "registr",
+            "LCS" => "leasing",
+            "FIN" or "ACC" => "financ",
+            "COL" => "collect",
+            "HO" => "handover",
+            "CS" => "customer",
+            _ => (name ?? string.Empty).ToLowerInvariant(),
+        };
         const string stroke = "stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\"";
         if (n.Contains("call")) return ("dept-pink", $"<path d=\"M4 14v-2a8 8 0 0 1 16 0v2\" {stroke}/><rect x=\"3\" y=\"13\" width=\"4\" height=\"6\" rx=\"1.5\" {stroke}/><rect x=\"17\" y=\"13\" width=\"4\" height=\"6\" rx=\"1.5\" {stroke}/><path d=\"M19 19c0 1.5-2 2-5 2\" {stroke}/>");
         if (n.Contains("registr")) return ("dept-purple", $"<path d=\"M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8l-5-5Z\" {stroke}/><path d=\"M14 3v5h5M9 13h6M9 17h4\" {stroke}/>");
@@ -305,7 +316,7 @@
                                 @foreach (var ticket in Model.Overview.RecentTickets)
                                 {
                                     var deptName = TicketDisplay.AssignedDepartmentLabel(ticket.CurrentDepartmentId, ticket.DepartmentName);
-                                    var (deptTone, deptIcon) = DeptStyle(ticket.DepartmentName);
+                                    var (deptTone, deptIcon) = DeptStyle(ticket.DepartmentCode, ticket.DepartmentName);
                                     var created = ticket.CreatedAtUtc.ToLocalTime();
                                     <tr class="is-link" data-href="/Tickets/@ticket.TicketId">
                                         <td><a class="ticket-id-link" href="/Tickets/@ticket.TicketId">@ticket.TicketNumber</a></td>

@@ -255,7 +255,8 @@ public sealed class DashboardAppService(
         row.SlaDueAtUtc,
         row.CurrentOwnerEmployeeId,
         row.OwnerName,
-        row.CreatedAtUtc);
+        row.CreatedAtUtc,
+        row.DepartmentCode);
 
     private static DashboardAttentionTicketDto ToAttentionDto(DashboardAttentionTicket row) => new(
         row.Ticket.TicketId,

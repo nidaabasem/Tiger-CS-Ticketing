@@ -203,7 +203,8 @@ public sealed record DashboardRecentTicketDto(
     DateTime? SlaDueAtUtc,
     Guid? CurrentOwnerEmployeeId,
     string? OwnerName,
-    DateTime CreatedAtUtc);
+    DateTime CreatedAtUtc,
+    string? DepartmentCode = null);
 
 /// <summary>A filter picker option. <see cref="GroupId"/> is the owning department for request types; <see cref="IsActive"/> false marks a retired channel kept for historical filtering.</summary>
 public sealed record DashboardFilterOptionDto(string Id, string Label, int? GroupId = null, bool IsActive = true);
