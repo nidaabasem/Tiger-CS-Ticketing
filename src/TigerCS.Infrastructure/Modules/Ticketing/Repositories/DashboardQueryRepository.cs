@@ -147,8 +147,9 @@ public sealed class DashboardQueryRepository(TigerCsDbContext dbContext) : IDash
             .ToListAsync(cancellationToken);
         var ageingByBucket = ageingCounts.ToDictionary(a => (BacklogAgeBucket)a.Key, a => a.Count);
 
-        // ---- Recent / Critical (current state): breached, then overdue/due
-        // soon, then Critical, High, then newest — names joined in-query.
+        // ---- Tickets Requiring Attention (current state): the newest active
+        // tickets in scope, CreatedAt DESC applied before the limit — names
+        // joined in-query.
         var atRiskUntil = query.NowUtc + query.AtRiskWindow;
         var recentRows = await backlog
             .GroupJoin(TicketQueryFilters.CurrentSlaPeriods(dbContext), t => t.TicketId, s => s.TicketId, (t, slas) => new { t, slas })
@@ -170,14 +171,8 @@ public sealed class DashboardQueryRepository(TigerCsDbContext dbContext) : IDash
                 y.x.RequestTypeName,
                 OwnerName = e != null ? e.DisplayName : null
             })
-            .OrderBy(x =>
-                x.Ticket.SlaState == SlaState.Breached ? 0
-                : x.SlaDueAtUtc != null && x.SlaDueAtUtc <= atRiskUntil ? 1
-                : x.Ticket.PriorityId == 1 ? 2
-                : x.Ticket.PriorityId == 2 ? 3
-                : 4)
-            .ThenBy(x => x.SlaDueAtUtc ?? DateTime.MaxValue)
-            .ThenByDescending(x => x.Ticket.CreatedAtUtc)
+            .OrderByDescending(x => x.Ticket.CreatedAtUtc)
+            .ThenByDescending(x => x.Ticket.TicketId)
             .Take(query.RecentLimit)
             .Select(x => new DashboardRecentTicketRow(
                 x.Ticket.TicketId,

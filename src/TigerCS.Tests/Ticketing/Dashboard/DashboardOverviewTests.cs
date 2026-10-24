@@ -548,7 +548,7 @@ public sealed class DashboardOverviewTests : IDisposable
     // ---------------------------------------------------------------
 
     [Fact]
-    public async Task RecentTickets_RankBreachedThenDueSoonThenHighPriorityThenNewest_WithNamesResolved()
+    public async Task RecentTickets_AreNewestFirstRegardlessOfSlaOrPriority_WithNamesResolved()
     {
         using (var context = _db.CreateContext())
         {
@@ -562,7 +562,7 @@ public sealed class DashboardOverviewTests : IDisposable
 
         var overview = await OverviewAsync(Guid.NewGuid(), CrossDepartment);
 
-        Assert.Equal(["Breached", "Due soon", "High", "Newest Low", "Older Low"], overview.RecentTickets.Select(r => r.CustomerName ?? "").ToArray());
+        Assert.Equal(["Newest Low", "Older Low", "Breached", "Due soon", "High"], overview.RecentTickets.Select(r => r.CustomerName ?? "").ToArray());
         var high = overview.RecentTickets.Single(r => r.CustomerName == "High");
         Assert.Equal("Customer Service", high.DepartmentName);
         Assert.Equal("Complaint", high.RequestTypeName);

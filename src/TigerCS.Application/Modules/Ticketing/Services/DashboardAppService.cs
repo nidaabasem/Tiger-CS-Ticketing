@@ -36,7 +36,7 @@ public sealed class DashboardAppService(
     public const int DefaultPeriodDays = 30;
 
     /// <summary>The Recent/Critical list stays a short, scannable queue — it links to the full ticket queue for everything else.</summary>
-    public const int RecentLimit = 10;
+    public const int RecentLimit = 5;
 
     /// <summary>
     /// The default age at which a customer waiting for a human is rendered as
