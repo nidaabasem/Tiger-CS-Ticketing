@@ -670,6 +670,19 @@ public class Ticket
     }
 
     /// <summary>
+    /// Records the Category that pairs with the request type the system just
+    /// applied (Genesys classification). Unlike <see cref="Classify"/> this does
+    /// not judge priority and may replace a category the system itself set when
+    /// the AI refines the request type; the calling service decides that a
+    /// person has not chosen the current category.
+    /// </summary>
+    public void ApplyCategoryFromRequestType(int categoryId)
+    {
+        EnsureNotClosed();
+        CategoryId = categoryId;
+    }
+
+    /// <summary>
     /// Replaces the request type (and the workflow version pinned through it)
     /// of a ticket that already has one — the narrow, explicit exception to
     /// "classify once" that lets the Genesys AI refine its own classification
