@@ -1,6 +1,8 @@
 using System.Globalization;
 using System.Web;
+using TigerCS.Application.Modules.Ticketing.Abstractions;
 using TigerCS.Application.Modules.Ticketing.Dto;
+using TigerCS.Domain.Modules.Ticketing;
 
 namespace TigerCS.Web.Models;
 
@@ -10,8 +12,9 @@ namespace TigerCS.Web.Models;
 /// (<c>/Tickets</c>) with the matching query-string filters — never a
 /// one-off page. The dashboard's own dimension filters (department, agent,
 /// channel, request type, status, priority) travel with each link so the
-/// list shows exactly what the number counted; the date range travels only
-/// with the volume breakdowns, because KPIs and backlog are current-state.
+/// list shows exactly what the number counted; the date range travels with the
+/// volume breakdowns (as the created date) and the four closure KPIs (as the
+/// latest closure date); the other KPIs and the backlog are current-state.
 /// </summary>
 public static class DashboardLinks
 {
@@ -31,6 +34,26 @@ public static class DashboardLinks
     public static string DueToday(DashboardAppliedFiltersDto f) => Build(f, includeDates: false, ("dueToday", "true"));
 
     public static string PendingApproval(DashboardAppliedFiltersDto f) => Build(f, includeDates: false, ("pendingApproval", "true"));
+
+    // The closure KPIs always represent Closed tickets: the link selects the
+    // Closed tab and ticketStatus=Closed whatever the dashboard's status filter
+    // says, and carries the date range as the LATEST CLOSURE date
+    // (closedFrom/closedTo) — what the cards counted — together with the other
+    // dimension filters.
+    public static string Reviewed(DashboardAppliedFiltersDto f) => Closure(f, nameof(TicketClosureCategory.Reviewed));
+
+    public static string NotReviewed(DashboardAppliedFiltersDto f) => Closure(f, nameof(TicketClosureCategory.NotReviewed));
+
+    public static string ClosedByAi(DashboardAppliedFiltersDto f) => Closure(f, nameof(TicketClosureCategory.ClosedByAi));
+
+    public static string ClosedByAgent(DashboardAppliedFiltersDto f) => Closure(f, nameof(TicketClosureCategory.ClosedByAgent));
+
+    private static string Closure(DashboardAppliedFiltersDto f, string category) =>
+        Build(f with { TicketStatus = nameof(TicketStatus.Closed) }, includeDates: false,
+            (TicketsViews.QueryKey, TicketsView.Closed.Key()),
+            ("closureCategory", category),
+            ("closedFrom", f.DateFrom.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)),
+            ("closedTo", f.DateTo.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)));
 
     public static string Channel(DashboardAppliedFiltersDto f, string channelId) =>
         Build(f with { ChannelId = byte.Parse(channelId, CultureInfo.InvariantCulture) }, includeDates: true);

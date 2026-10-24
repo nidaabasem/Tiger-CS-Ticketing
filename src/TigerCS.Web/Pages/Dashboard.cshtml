@@ -22,6 +22,10 @@
         "SLA Breached" => "critical",
         "Due Today" => "warning",
         "Pending Approval" => "brand",
+        "Reviewed Tickets" => "success",
+        "Not Reviewed" => "warning",
+        "Closed by AI" => "secondary",
+        "Closed by Agent" => "progress",
         _ => "info",
     };
 
@@ -34,6 +38,10 @@
         "SLA Breached" => "<path d=\"M12 9v4M12 17h.01M10.3 3.9 2.5 18a1.6 1.6 0 0 0 1.4 2.4h16.2a1.6 1.6 0 0 0 1.4-2.4L13.7 3.9a1.6 1.6 0 0 0-2.8 0Z\" stroke=\"currentColor\" stroke-width=\"1.6\"/>",
         "Due Today" => "<circle cx=\"12\" cy=\"12\" r=\"9\" stroke=\"currentColor\" stroke-width=\"1.8\"/><path d=\"M12 7v5l3 2\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\"/>",
         "Pending Approval" => "<path d=\"M9 12l2 2 4-4\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/><rect x=\"4\" y=\"4\" width=\"16\" height=\"16\" rx=\"3\" stroke=\"currentColor\" stroke-width=\"1.8\"/>",
+        "Reviewed Tickets" => "<path d=\"M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.9 6.8 19.6l1-5.8-4.3-4.1 5.9-.9L12 3.5Z\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linejoin=\"round\"/>",
+        "Not Reviewed" => "<path d=\"M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.9 6.8 19.6l1-5.8-4.3-4.1 5.9-.9L12 3.5Z\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linejoin=\"round\" stroke-dasharray=\"2.4 2.4\"/>",
+        "Closed by AI" => "<rect x=\"5\" y=\"8\" width=\"14\" height=\"10\" rx=\"3\" stroke=\"currentColor\" stroke-width=\"1.7\"/><path d=\"M12 8V4.5M9.5 12.5h.01M14.5 12.5h.01M9.5 15.5h5\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\"/>",
+        "Closed by Agent" => "<circle cx=\"12\" cy=\"8\" r=\"4\" stroke=\"currentColor\" stroke-width=\"1.8\"/><path d=\"M4 20c1.8-3.2 4.5-5 8-5s6.2 1.8 8 5\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\"/><path d=\"M15.5 17.5l1.6 1.6 3-3\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>",
         _ => "<rect x=\"5\" y=\"4\" width=\"14\" height=\"16\" rx=\"1.5\" stroke=\"currentColor\" stroke-width=\"1.6\"/><path d=\"M9 9h6M9 13h6M9 17h3\" stroke=\"currentColor\" stroke-width=\"1.6\" stroke-linecap=\"round\"/>",
     };
 
@@ -121,6 +129,20 @@
             @foreach (var card in Model.Cards)
             {
                 <a class="kpi-card kpi-card--icon tone-@KpiTone(card.Label) @(card.Emphasis is not null ? $"kpi-card--{card.Emphasis}" : "")" href="@card.Href" title="@card.Hint">
+                    <span class="kpi-card__icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none">@Html.Raw(KpiIcon(card.Label))</svg></span>
+                    <span class="kpi-card__body">
+                        <strong>@card.Value</strong>
+                        <span>@card.Label</span>
+                    </span>
+                </a>
+            }
+        </section>
+
+        @* ---- Closure KPIs: Closed tickets by latest closure date in the date range, split by customer feedback and by who closed them; same card, same drill-down. ---- *@
+        <section class="kpi-grid kpi-grid--four" aria-label="Closed ticket counters">
+            @foreach (var card in Model.ClosureCards)
+            {
+                <a class="kpi-card kpi-card--icon tone-@KpiTone(card.Label)" href="@card.Href" title="@card.Hint">
                     <span class="kpi-card__icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none">@Html.Raw(KpiIcon(card.Label))</svg></span>
                     <span class="kpi-card__body">
                         <strong>@card.Value</strong>

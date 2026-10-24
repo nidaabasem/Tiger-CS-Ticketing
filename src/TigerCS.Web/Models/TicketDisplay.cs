@@ -260,6 +260,16 @@ public static class TicketDisplay
         _ => bucket
     };
 
+    /// <summary>The Dashboard closure KPI names — keyed on the Api's <c>TicketClosureCategory</c> enum names.</summary>
+    public static string ClosureCategoryLabel(string category) => category switch
+    {
+        "Reviewed" => "Closed: reviewed by customer",
+        "NotReviewed" => "Closed: not reviewed",
+        "ClosedByAi" => "Closed by AI",
+        "ClosedByAgent" => "Closed by agent",
+        _ => category
+    };
+
     /// <summary>The approval type as people say it ("Accounting Approval"); an unknown type is shown as stored.</summary>
     public static string ApprovalTypeLabel(string type) => type switch
     {
