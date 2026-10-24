@@ -213,12 +213,22 @@ public sealed class ShellRenderTests : IDisposable
         try { html = await Ok(await client.GetAsync("/Dashboard")); }
         finally { FakeApi.Populated = false; }
 
-        Assert.Equal(6, Count(html, "class=\"kpi-card kpi-card--icon"));
-        // Six KPIs, six semantic identities — gold is spent on one card only.
-        foreach (var tone in new[] { "tone-info", "tone-secondary", "tone-progress", "tone-critical", "tone-warning", "tone-brand" })
+        // Six operational KPIs plus the four closure KPIs beneath them.
+        Assert.Equal(10, Count(html, "class=\"kpi-card kpi-card--icon"));
+        // Gold is spent on one card only; the closure cards reuse the existing semantic tones.
+        foreach (var (tone, expected) in new[]
         {
-            Assert.Equal(1, Count(html, $"kpi-card--icon {tone} "));
+            ("tone-info", 1), ("tone-secondary", 2), ("tone-progress", 2), ("tone-critical", 1),
+            ("tone-warning", 2), ("tone-brand", 1), ("tone-success", 1)
+        })
+        {
+            Assert.Equal(expected, Count(html, $"kpi-card--icon {tone}"));
         }
+        foreach (var label in new[] { "Reviewed Tickets", "Not Reviewed", "Closed by AI", "Closed by Agent" })
+        {
+            Assert.Contains($"<span>{label}</span>", html, StringComparison.Ordinal);
+        }
+        Assert.Contains("closureCategory=ClosedByAi", html, StringComparison.Ordinal);
         Assert.Contains("class=\"filter-disclosure\"", html, StringComparison.Ordinal);
         Assert.Contains("id=\"dashboardFilters\"", html, StringComparison.Ordinal);
         Assert.Contains("Tickets Requiring Attention", html, StringComparison.Ordinal);

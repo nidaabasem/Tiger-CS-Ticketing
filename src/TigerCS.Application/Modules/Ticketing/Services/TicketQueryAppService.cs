@@ -1,5 +1,6 @@
 using TigerCS.Application.Authorization;
 using TigerCS.Application.Modules.IdentityAndAccess.Abstractions;
+using TigerCS.Application.Modules.Notifications;
 using TigerCS.Application.Modules.Ticketing.Abstractions;
 using TigerCS.Application.Modules.Ticketing.Dto;
 using TigerCS.Application.Modules.WorkflowConfiguration.Abstractions;
@@ -26,7 +27,8 @@ public sealed class TicketQueryAppService(
     IWorkflowRepository? workflowRepository = null,
     ITicketInteractionRepository? interactionRepository = null,
     IChannelRepository? channelRepository = null,
-    ITicketAgentHandoffRepository? agentHandoffRepository = null)
+    ITicketAgentHandoffRepository? agentHandoffRepository = null,
+    CustomerNotificationModePolicy? notificationMode = null)
 {
     public async Task<TicketListResultDto> GetQueueAsync(
         Guid callerEmployeeId,
@@ -76,7 +78,11 @@ public sealed class TicketQueryAppService(
             CreatedFromUtc: request.CreatedFrom?.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc),
             CreatedToUtc: request.CreatedTo?.AddDays(1).ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc),
             NowUtc: timeProvider.GetUtcNow().UtcDateTime,
-            Unclassified: request.Unclassified == true);
+            Unclassified: request.Unclassified == true,
+            ClosureCategory: ParseEnum<TicketClosureCategory>(request.ClosureCategory),
+            ClosedFromUtc: request.ClosedFrom?.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc),
+            ClosedToUtc: request.ClosedTo?.AddDays(1).ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc),
+            ReviewsAreTest: notificationMode?.IsTest == true);
 
         var result = await ticketRepository.SearchAsync(query, cancellationToken);
 

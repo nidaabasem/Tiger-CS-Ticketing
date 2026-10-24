@@ -158,6 +158,11 @@ public sealed record DashboardAppliedFiltersDto(
 /// <b>Not an SLA.</b> Human Wait is an operational KPI: it raises no breach
 /// row, no escalation and no <c>SlaDeadlineType</c>.
 /// </param>
+/// <param name="ReviewedTickets">Distinct Closed tickets whose current cycle has a customer review submitted (Test-mode reviews excluded). Closed within the dashboard date range (latest closure date).</param>
+/// <param name="NotReviewedTickets">Distinct Closed tickets with no customer review for their current cycle. Same range (latest closure date).</param>
+/// <param name="ClosedByAiTickets">Distinct Closed tickets whose latest closure was audited as <c>AutoCloseByAi</c>. Same range (latest closure date).</param>
+/// <param name="ReviewsAreTestMode">True while customer notifications run in test mode: Reviewed / Not Reviewed then evaluate Test-mode reviews (so UAT can validate them); production satisfaction statistics never include those.</param>
+/// <param name="ClosedByAgentTickets">Distinct Closed tickets whose latest closure was audited as <c>Close</c> (a person). Same range (latest closure date).</param>
 public sealed record DashboardKpisDto(
     int OpenTickets,
     int MyTickets,
@@ -167,7 +172,12 @@ public sealed record DashboardKpisDto(
     int PendingApproval,
     int AwaitingHumanAgent = 0,
     int OldestHumanWaitSeconds = 0,
-    int HumanWaitRiskThresholdSeconds = 900);
+    int HumanWaitRiskThresholdSeconds = 900,
+    int ReviewedTickets = 0,
+    int NotReviewedTickets = 0,
+    int ClosedByAiTickets = 0,
+    int ClosedByAgentTickets = 0,
+    bool ReviewsAreTestMode = false);
 
 /// <summary>One bar row of a breakdown widget.</summary>
 /// <param name="Key">The dimension value the drill-down filters on (a channel/request type/department/priority id, a status name, or an age bucket name); null when the value is not recorded on the ticket, in which case the row is informational and not a drill-down.</param>

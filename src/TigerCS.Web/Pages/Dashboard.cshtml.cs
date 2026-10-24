@@ -79,6 +79,9 @@ public sealed class DashboardModel(DashboardApiClient dashboardApiClient) : Page
     public DashboardOverviewDto? Overview { get; private set; }
     public ApiOutcome Outcome { get; private set; }
     public IReadOnlyList<KpiCard> Cards { get; private set; } = [];
+
+    /// <summary>The four closure cards (Reviewed, Not Reviewed, Closed by AI, Closed by Agent), shown as a second row beneath <see cref="Cards"/>.</summary>
+    public IReadOnlyList<KpiCard> ClosureCards { get; private set; } = [];
     public IReadOnlyList<DashboardBarCard> BreakdownCards { get; private set; } = [];
 
     /// <summary>True when the user narrowed anything beyond the defaults — the filter bar then offers "Clear".</summary>
@@ -123,6 +126,7 @@ public sealed class DashboardModel(DashboardApiClient dashboardApiClient) : Page
 
         Overview = result.Value;
         Cards = BuildCards(Overview, Viewer);
+        ClosureCards = BuildClosureCards(Overview);
         BreakdownCards = BuildBreakdownCards(Overview);
     }
 
@@ -144,6 +148,27 @@ public sealed class DashboardModel(DashboardApiClient dashboardApiClient) : Page
             new KpiCard("Due Today", k.DueToday, k.DueToday > 0 ? "attention" : null, DashboardLinks.DueToday(f), "Resolution due today (UTC day)"),
             new KpiCard("Pending Approval", k.PendingApproval, k.PendingApproval > 0 ? "attention" : null,
                 DashboardLinks.PendingApproval(f), "Approvals you can action")
+        ];
+    }
+
+    /// <summary>
+    /// The four closure KPI cards. Unlike the six above they are not
+    /// current-state: they always count Closed tickets, by latest closure date within the
+    /// dashboard's date range, honouring every other dashboard filter except status, and each links to
+    /// the Tickets list filtered to the same category.
+    /// </summary>
+    public static IReadOnlyList<KpiCard> BuildClosureCards(DashboardOverviewDto o)
+    {
+        var f = o.Filters;
+        var k = o.Kpis;
+        // In test mode the review cards evaluate Test-mode reviews (UAT); say so.
+        var kind = k.ReviewsAreTestMode ? " (test-mode reviews)" : "";
+        return
+        [
+            new KpiCard("Reviewed Tickets", k.ReviewedTickets, null, DashboardLinks.Reviewed(f), "Closed tickets with customer feedback submitted" + kind),
+            new KpiCard("Not Reviewed", k.NotReviewedTickets, null, DashboardLinks.NotReviewed(f), "Closed tickets without customer feedback" + kind),
+            new KpiCard("Closed by AI", k.ClosedByAiTickets, null, DashboardLinks.ClosedByAi(f), "Closed tickets whose closure was recorded as AI"),
+            new KpiCard("Closed by Agent", k.ClosedByAgentTickets, null, DashboardLinks.ClosedByAgent(f), "Closed tickets closed by a person")
         ];
     }
 

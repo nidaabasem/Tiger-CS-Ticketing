@@ -523,4 +523,110 @@ public sealed class DashboardUiTests
 
         Assert.Contains("Filtered from Dashboard", view);
     }
+
+    // ---------------------------------------------------------------
+    // Closure KPI cards (Reviewed, Not Reviewed, Closed by AI, Closed by Agent)
+    // ---------------------------------------------------------------
+
+    [Fact]
+    public async Task ClosureCards_ShowTheApiCounts_InOrder_BeneathTheSixOriginalCards()
+    {
+        var overview = Overview(kpis: new DashboardKpisDto(12, 3, 4, 1, 2, 5, ReviewedTickets: 7, NotReviewedTickets: 9, ClosedByAiTickets: 6, ClosedByAgentTickets: 10));
+        var (model, _) = CreateModel((_, _) => FakeApiHandler.JsonResponse(HttpStatusCode.OK, overview));
+
+        await model.OnGetAsync(null, null, null, null, null, null, null, null, CancellationToken.None);
+
+        Assert.Equal(["Reviewed Tickets", "Not Reviewed", "Closed by AI", "Closed by Agent"], model.ClosureCards.Select(c => c.Label).ToArray());
+        Assert.Equal([7, 9, 6, 10], model.ClosureCards.Select(c => c.Value).ToArray());
+        // The original six are untouched.
+        Assert.Equal(6, model.Cards.Count);
+    }
+
+    [Fact]
+    public void ClosureCardDrilldowns_OpenTheClosedTab_WithTheCategory_TheClosureDateRange_AndDimensionFilters()
+    {
+        var f = DefaultFilters with { DepartmentId = 2, ChannelId = 6 };
+
+        var links = new Dictionary<string, string>
+        {
+            ["Reviewed"] = DashboardLinks.Reviewed(f),
+            ["NotReviewed"] = DashboardLinks.NotReviewed(f),
+            ["ClosedByAi"] = DashboardLinks.ClosedByAi(f),
+            ["ClosedByAgent"] = DashboardLinks.ClosedByAgent(f),
+        };
+
+        foreach (var (category, href) in links)
+        {
+            Assert.StartsWith(DashboardLinks.TicketsPath + "?", href);
+            var q = Query(href);
+            Assert.Equal(category, q["closureCategory"]);
+            Assert.Equal("Closed", q["ticketStatus"]);
+            Assert.Equal("closed", q["view"]);
+            // The range travels as the latest CLOSURE date, never the creation date.
+            Assert.Equal("2026-08-12", q["closedFrom"]);
+            Assert.Equal("2026-09-10", q["closedTo"]);
+            Assert.False(q.ContainsKey("createdFrom"));
+            Assert.False(q.ContainsKey("createdTo"));
+            Assert.Equal("2", q["departmentId"]);
+            Assert.Equal("6", q["channelId"]);
+        }
+    }
+
+    [Theory]
+    [InlineData("Open")]
+    [InlineData("InProgress")]
+    [InlineData("Resolved")]
+    [InlineData("Closed")]
+    public void ClosureCardDrilldown_AlwaysOpensTheClosedTab_WhateverTheDashboardsStatusFilter(string statusFilter)
+    {
+        var q = Query(DashboardLinks.ClosedByAi(DefaultFilters with { TicketStatus = statusFilter, DepartmentId = 3 }));
+
+        Assert.Equal("Closed", q["ticketStatus"]);
+        Assert.Equal("closed", q["view"]);
+        Assert.Equal("ClosedByAi", q["closureCategory"]);
+        Assert.Equal("3", q["departmentId"]);
+        Assert.Equal("2026-08-12", q["closedFrom"]);
+    }
+
+    [Fact]
+    public async Task TheReviewCards_SayWhenTheyEvaluateTestModeReviews()
+    {
+        var overview = Overview(kpis: new DashboardKpisDto(0, 0, 0, 0, 0, 0, ReviewsAreTestMode: true));
+        var (model, _) = CreateModel((_, _) => FakeApiHandler.JsonResponse(HttpStatusCode.OK, overview));
+
+        await model.OnGetAsync(null, null, null, null, null, null, null, null, CancellationToken.None);
+
+        Assert.Contains("test-mode reviews", model.ClosureCards.Single(c => c.Label == "Reviewed Tickets").Hint);
+        Assert.Contains("test-mode reviews", model.ClosureCards.Single(c => c.Label == "Not Reviewed").Hint);
+        Assert.DoesNotContain("test-mode", model.ClosureCards.Single(c => c.Label == "Closed by AI").Hint);
+    }
+
+    [Fact]
+    public void TheDashboardView_RendersTheClosureCards_AsClickableCards_InTheSameCardMarkup()
+    {
+        var view = View("Dashboard.cshtml");
+
+        Assert.Contains("Model.ClosureCards", view);
+        Assert.Contains("kpi-grid--four", view);
+        Assert.Contains("class=\"kpi-card kpi-card--icon tone-@KpiTone(card.Label)\" href=\"@card.Href\"", view);
+    }
+
+    [Fact]
+    public void TheTicketsPage_CarriesTheClosureCategoryThroughToTheQueueEndpoint_AndEveryRefilter()
+    {
+        var page = File.ReadAllText(SourceFile(Path.Combine("TigerCS.Web", "Pages", "Tickets.cshtml.cs")));
+        var list = View("Shared", "_TicketListView.cshtml");
+        var client = File.ReadAllText(SourceFile(Path.Combine("TigerCS.Web", "Services", "Api", "TicketsApiClient.cs")));
+        var views = File.ReadAllText(SourceFile(Path.Combine("TigerCS.Web", "Models", "TicketsView.cs")));
+
+        Assert.Contains("string? closureCategory = null", page);
+        Assert.Contains("Unclassified ? true : null, ClosureCategory, ClosedFrom, ClosedTo", page);
+        Assert.Contains("closureCategory = Model.ClosureCategory", list);
+        Assert.Contains("closedFrom = Model.ClosedFrom", list);
+        Assert.Contains("name=\"closedTo\"", list);
+        Assert.Contains("query[\"closedFrom\"]", client);
+        Assert.Contains("name=\"closureCategory\"", list);
+        Assert.Contains("query[\"closureCategory\"]", client);
+        Assert.Contains("\"closureCategory\"", views);
+    }
 }

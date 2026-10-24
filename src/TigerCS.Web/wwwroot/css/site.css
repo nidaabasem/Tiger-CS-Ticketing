@@ -779,6 +779,8 @@ a.kpi-card:hover { border-color: var(--tone-line, var(--color-border-strong)); b
 a.kpi-card:hover .kpi-card__icon { background: var(--tone, var(--color-ink)); border-color: var(--tone, var(--color-ink)); color: #FFFFFF; }
 /* Six KPIs share one row on desktop; they wrap to three and two below. */
 .kpi-grid--six { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+/* The closure KPIs sit in a second row of four, as wide as the six above. */
+.kpi-grid--four { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 
 /* The tones. One class sets --tone / --tone-tint / --tone-line on whatever
    carries it — a KPI card, a workspace shortcut, a breakdown card — and the
@@ -1262,6 +1264,7 @@ a.customer-card__name:hover { text-decoration: underline; }
 
 @media (max-width: 1180px) {
   .kpi-grid--six { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .kpi-grid--four { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .dash-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .detail-layout { grid-template-columns: 1fr; }
   /* The summary collapses below the main content on smaller screens. */
@@ -1276,7 +1279,7 @@ a.customer-card__name:hover { text-decoration: underline; }
 }
 
 @media (max-width: 720px) {
-  .kpi-grid--six { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .kpi-grid--six, .kpi-grid--four { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .dash-grid { grid-template-columns: 1fr; }
   .dash-filters .field-group { flex: 1 1 45%; }
   .dash-filters .field-select, .dash-filters .field-input { width: 100%; min-width: 0; }
