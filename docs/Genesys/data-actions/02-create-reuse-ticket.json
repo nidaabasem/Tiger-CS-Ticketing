@@ -12,7 +12,7 @@
         "Content-Type": "application/json",
         "Accept": "application/json"
       },
-      "requestTemplate": "{\"conversationId\": \"$esc.jsonString(${input.conversationId})\", \"channel\": \"$esc.jsonString(${input.channel})\", \"customerPhone\": \"$!esc.jsonString($input.customerPhone)\", \"customerName\": \"$!esc.jsonString($input.customerName)\", \"customerEmail\": \"$!esc.jsonString($input.customerEmail)\", \"departmentCode\": \"$!esc.jsonString($input.departmentCode)\", \"queueId\": \"$!esc.jsonString($input.queueId)\", \"queueName\": \"$!esc.jsonString($input.queueName)\", \"agentId\": \"$!esc.jsonString($input.agentId)\", \"agentName\": \"$!esc.jsonString($input.agentName)\", \"calledNumber\": \"$!esc.jsonString($input.calledNumber)\", \"direction\": \"$!esc.jsonString($input.direction)\", \"subject\": \"$!esc.jsonString($input.subject)\", \"towerName\": \"$!esc.jsonString($input.towerName)\", \"unitNumber\": \"$!esc.jsonString($input.unitNumber)\", \"startedAtUtc\": #if(\"$!{input.startedAtUtc}\" == \"\")null#else\"$esc.jsonString(${input.startedAtUtc})\"#end, \"requestType\": {\"name\": \"$!esc.jsonString($input.requestTypeName)\"}, \"serviceRequestId\": \"$!esc.jsonString($input.serviceRequestId)\", \"humanFollowUpRequired\": \"$!esc.jsonString($input.humanFollowUpRequired)\"}"
+      "requestTemplate": "{\"conversationId\": \"$esc.jsonString(${input.conversationId})\", \"channel\": \"$esc.jsonString(${input.channel})\", \"customerPhone\": \"$!esc.jsonString($input.customerPhone)\", \"customerName\": \"$!esc.jsonString($input.customerName)\", \"customerEmail\": \"$!esc.jsonString($input.customerEmail)\", \"departmentCode\": \"$!esc.jsonString($input.departmentCode)\", \"queueId\": \"$!esc.jsonString($input.queueId)\", \"queueName\": \"$!esc.jsonString($input.queueName)\", \"agentId\": \"$!esc.jsonString($input.agentId)\", \"agentName\": \"$!esc.jsonString($input.agentName)\", \"calledNumber\": \"$!esc.jsonString($input.calledNumber)\", \"direction\": \"$!esc.jsonString($input.direction)\", \"subject\": \"$!esc.jsonString($input.subject)\", \"towerName\": \"$!esc.jsonString($input.towerName)\", \"unitNumber\": \"$!esc.jsonString($input.unitNumber)\", \"startedAtUtc\": #if(\"$!{input.startedAtUtc}\" == \"\")null#else\"$esc.jsonString(${input.startedAtUtc})\"#end, \"requestType\": {\"requestTypeId\": \"$!esc.jsonString($input.requestTypeId)\", \"name\": \"$!esc.jsonString($input.requestTypeName)\"}, \"serviceRequestId\": \"$!esc.jsonString($input.serviceRequestId)\", \"humanFollowUpRequired\": \"$!esc.jsonString($input.humanFollowUpRequired)\"}"
     },
     "response": {
       "translationMap": {
@@ -107,9 +107,13 @@
             "type": "boolean",
             "description": "Optional. true when this request needs a person (apartment leasing, a complaint). The ticket is then never closed by the chatbot inactivity timers, closedByAi or document delivery - only by an employee in TigerCS. Leave blank for a request the bot completes itself (e.g. sending documents)."
           },
+          "requestTypeId": {
+            "type": "string",
+            "description": "Optional. The id of the configured request type the customer selected, from this environment's Request Type export (a data-table lookup in the flow; ids differ per environment). Preferred over requestTypeName. Blank = not supplied. If requestTypeName is also sent it must be the same request type or the call is refused (422)."
+          },
           "requestTypeName": {
             "type": "string",
-            "description": "Optional. The exact name of the request type the bot identified. Valid: the ticket is routed to that request type's department, auto-assigned and given its SLA. Blank or unknown: the ticket awaits classification in the human follow-up queue; send it later with the Update Routing action."
+            "description": "Optional. Fallback only when no id is available: the exact name of one active request type (refused if the name exists in more than one department). Blank = not supplied. Valid: the ticket is routed to that request type's department (the originating department is kept), auto-assigned and given its SLA and Category. Blank: the ticket is created Unclassified on Normal priority for a person to classify. An unknown or unusable value is refused (422), or sent to the configured classification queue."
           }
         }
       }
