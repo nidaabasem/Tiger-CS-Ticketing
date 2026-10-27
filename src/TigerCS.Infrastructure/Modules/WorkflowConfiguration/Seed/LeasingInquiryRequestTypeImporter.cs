@@ -86,7 +86,9 @@ public static class LeasingInquiryRequestTypeImporter
             return new LeasingInquiryImportResult(LeasingInquiryImportOutcome.SkippedCodeInUse, null);
         }
 
-        await using var transaction = dbContext.Database.IsRelational()
+        // Joins a transaction the caller already opened (the Production seeder wraps every importer in one) instead of
+        // starting a second one, which EF Core refuses; only a transaction started here is committed here.
+        await using var transaction = dbContext.Database.IsRelational() && dbContext.Database.CurrentTransaction is null
             ? await dbContext.Database.BeginTransactionAsync(cancellationToken)
             : null;
 

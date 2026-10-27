@@ -3,6 +3,11 @@
   <!-- TargetFramework, Nullable, ImplicitUsings, TreatWarningsAsErrors inherited from Directory.Build.props -->
 
   <ItemGroup>
+    <!-- Development settings (local API address, DetailedErrors) must never ship in a Production publish. -->
+    <Content Update="appsettings.Development.json" CopyToPublishDirectory="Never" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\TigerCS.Application\TigerCS.Application.csproj" />
     <ProjectReference Include="..\TigerCS.Infrastructure\TigerCS.Infrastructure.csproj" />
     <ProjectReference Include="..\TigerCS.Reporting\TigerCS.Reporting.csproj" />
