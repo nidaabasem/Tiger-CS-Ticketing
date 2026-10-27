@@ -114,19 +114,49 @@ try
     // 3. Pre-seed state.
     var before = await CountsAsync(db);
     Console.WriteLine($"Current rows: {Format(before)}");
-    var populated = before.Where(c => c.Value > 0).Select(c => c.Key).ToArray();
+    var state = SeedSafety.Classify(before);
+
+    // Content check used both for an already-seeded target and for the post-seed verification.
+    async Task<List<string>> ContentProblemsAsync()
+    {
+        var problems = new List<string>();
+        var roleNames = await db.Roles.Select(r => r.Name!).ToListAsync();
+        problems.AddRange(Roles.All.Except(roleNames).Select(r => $"Missing role: {r}"));
+        var departmentCodes = await db.Departments.Select(d => d.Code).ToListAsync();
+        problems.AddRange(new[] { "CS", "COL", "REG", "HO", "CC", "ACC", "LCS", "FM" }
+            .Except(departmentCodes, StringComparer.OrdinalIgnoreCase).Select(c => $"Missing department: {c}"));
+        return problems;
+    }
 
     if (!request.Seed)
     {
-        Console.WriteLine(populated.Length == 0
-            ? "Validation successful. Reference tables are empty; a seed would be allowed. No changes made."
-            : $"Validation successful. Reference data already present in: {string.Join(", ", populated)}; a seed would be BLOCKED. No changes made.");
+        Console.WriteLine(state switch
+        {
+            PreSeedState.Empty => "Validation successful. Reference tables are empty; a seed would be allowed. No changes made.",
+            PreSeedState.AlreadySeeded => "Validation successful. Reference data is already present with the expected counts; a seed would be a no-op. No changes made.",
+            _ => "Validation successful. Reference data is PARTIALLY present; a seed would be BLOCKED. No changes made."
+        });
         return 0;
     }
 
-    if (populated.Length > 0)
+    if (state == PreSeedState.AlreadySeeded)
     {
-        Console.Error.WriteLine($"BLOCKED: reference data already exists in: {string.Join(", ", populated)}. Nothing was written.");
+        var existing = await ContentProblemsAsync();
+        if (existing.Count > 0)
+        {
+            Console.Error.WriteLine("BLOCKED: counts match but content differs. Nothing was written.");
+            foreach (var line in existing) Console.Error.WriteLine($"  {line}");
+            return 1;
+        }
+
+        Console.WriteLine("Reference data is already seeded and verified. Nothing to do; nothing was written.");
+        return 0;
+    }
+
+    if (state == PreSeedState.Partial)
+    {
+        var populated = before.Where(c => c.Value > 0).Select(c => c.Key);
+        Console.Error.WriteLine($"BLOCKED: reference data is partially present ({string.Join(", ", populated)}). Nothing was written; a person must inspect the target.");
         return 1;
     }
 
@@ -139,11 +169,7 @@ try
     var after = await CountsAsync(db);
     var verification = SeedSafety.CompareCounts(after).ToList();
 
-    var roleNames = await db.Roles.Select(r => r.Name!).ToListAsync();
-    verification.AddRange(Roles.All.Except(roleNames).Select(r => $"Missing role: {r}"));
-    var departmentCodes = await db.Departments.Select(d => d.Code).ToListAsync();
-    verification.AddRange(new[] { "CS", "COL", "REG", "HO", "CC", "ACC", "LCS", "FM" }
-        .Except(departmentCodes, StringComparer.OrdinalIgnoreCase).Select(c => $"Missing department: {c}"));
+    verification.AddRange(await ContentProblemsAsync());
 
     if (verification.Count > 0)
     {

@@ -82,4 +82,17 @@ public sealed class ProductionSeederSafetyTests
             Assert.DoesNotContain("ProductionReferenceData", File.ReadAllText(Path.Combine(src, project, "Program.cs")));
         }
     }
+
+    [Fact]
+    public void PreSeedState_DistinguishesEmpty_AlreadySeeded_AndPartial()
+    {
+        var empty = SeedSafety.ExpectedCounts.ToDictionary(e => e.Key, _ => 0);
+        var exact = SeedSafety.ExpectedCounts.ToDictionary(e => e.Key, e => e.Value);
+        var partial = SeedSafety.ExpectedCounts.ToDictionary(e => e.Key, e => e.Value);
+        partial["RequestTypes"] = 10;
+
+        Assert.Equal(PreSeedState.Empty, SeedSafety.Classify(empty));
+        Assert.Equal(PreSeedState.AlreadySeeded, SeedSafety.Classify(exact));
+        Assert.Equal(PreSeedState.Partial, SeedSafety.Classify(partial));
+    }
 }

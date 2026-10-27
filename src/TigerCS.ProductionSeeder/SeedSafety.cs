@@ -2,6 +2,9 @@ namespace TigerCS.ProductionSeeder;
 
 public enum SeedTarget { SeedTest, Production }
 
+/// <summary>State of the reference tables before a seed: nothing there, exactly the expected data, or something in between.</summary>
+public enum PreSeedState { Empty, AlreadySeeded, Partial }
+
 /// <summary>What the command line asked for. <see cref="Error"/> is set instead when the arguments are not an explicit, complete request.</summary>
 public sealed record SeedRequest(bool Seed, SeedTarget Target, bool AllowUntrustedCertificate, string? Error);
 
@@ -111,4 +114,10 @@ public static class SeedSafety
             .Where(e => !actual.TryGetValue(e.Key, out var n) || n != e.Value)
             .Select(e => $"{e.Key}: expected {e.Value}, found {(actual.TryGetValue(e.Key, out var n) ? n.ToString() : "n/a")}")
             .ToArray();
+
+    /// <summary>Empty = seed may run; AlreadySeeded = counts equal the expected set (re-run is a verified no-op); Partial = refuse, a human must look.</summary>
+    public static PreSeedState Classify(IReadOnlyDictionary<string, int> counts) =>
+        counts.Values.All(n => n == 0) ? PreSeedState.Empty
+        : CompareCounts(counts).Count == 0 ? PreSeedState.AlreadySeeded
+        : PreSeedState.Partial;
 }

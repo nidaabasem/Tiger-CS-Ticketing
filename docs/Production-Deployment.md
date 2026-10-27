@@ -199,7 +199,7 @@ Safeguards, in order (any failure exits non-zero before anything is written):
 2. The connection string must name `TigerCS_Ticketing_Prod`, and the server itself must answer `@@SERVERNAME = TGAESHJDBP02` and `DB_NAME() = TigerCS_Ticketing_Prod`.
 3. `TrustServerCertificate=True` blocks a production seed unless `--allow-untrusted-certificate` is passed (logged as a warning) — fix the certificate instead (§7).
 4. Applied migrations must equal the build's migrations **by identity** (missing and unknown IDs listed by name), not by count.
-5. Roles, Departments, Priorities, SlaPolicies, Workflows, RequestTypes and Categories must all be empty; anything present aborts and names the tables.
+5. Roles, Departments, Priorities, SlaPolicies, Workflows, RequestTypes and Categories must all be empty. If they already hold exactly the expected counts and every role and department code, the run reports "already seeded" and exits 0 without writing (idempotent re-run). Any other state (partial data) aborts and names the tables.
 6. The seed and its verification run in **one transaction** (the two request-type importers now join it instead of opening their own). Post-seed counts must be exactly 9 / 8 / 4 / 4 / 35 / 45 / 45 and every role and department code present; otherwise it rolls back. Any exception rolls back.
 7. Output contains target, migration/row counts and timing only — no connection string, no stack traces.
 
