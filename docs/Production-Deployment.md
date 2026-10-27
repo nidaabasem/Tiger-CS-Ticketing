@@ -70,6 +70,9 @@ Nothing else in this guide requires an IIS restart: pools/sites are started and 
 
 ## 3. Build and publish (build machine, not the server)
 
+Scripted: `tools/deploy/Publish-TigerCS.ps1 -Output C:\build\TigerCS` runs the tests, publishes both apps to a timestamped folder and fails
+if a Development/UAT file or a non-empty secret setting is in the output. Manual equivalent:
+
 ```powershell
 # SDK pinned by global.json (10.0.111, rollForward latestFeature)
 dotnet test src/TigerCS.Tests -c Release
@@ -179,26 +182,38 @@ when step 5 is done. Never edit the committed file.
 
 ## 8. Production reference-data seeding
 
-**Do not run until approved. Not part of deployment of the apps.**
+**Do not run until approved. Not part of deployment of the apps (neither Api nor Web references the seeder; a test enforces it).**
 
-> **Finding:** `TigerCS.ProductionSeeder` and `ProductionReferenceData.cs` are **not in this repository** (not on `main`, this
-> branch, or in history; only `SlaReferenceData`, `WorkflowReferenceData`, `ChannelReferenceData`, `NewRequestTypesImporter`,
-> `LeasingInquiryRequestTypeImporter`, `DevSeedData` are). The SeedTest-validated seeder therefore could not be reviewed or
-> hardened here. Commit it (without connection strings) and apply the requirements below; they are the acceptance criteria.
+`src/TigerCS.ProductionSeeder` (commit `d0705fd`) now has an explicit Production mode. All input is the environment variable
+`ConnectionStrings__TigerCsDatabase` (the seeder's own, set only in the DBA's shell; never an argument or a file).
 
-Required production mode:
-1. **Explicit confirmation:** refuse unless run with `--environment production --confirm-production "TGAESHJDBP02/TigerCS_Ticketing_Prod"` and the same target is typed back at an interactive prompt; default is dry-run (no writes).
-2. **Hard target verification:** connection string only from `ConnectionStrings__TigerCsDatabase` (never an argument); after opening, `SELECT @@SERVERNAME, DB_NAME()` must equal the confirmed server/database exactly; refuse `SeedTest`, `master`, or any name not on an allow-list.
-3. **Full migration identity:** `SELECT MigrationId FROM __EFMigrationsHistory` must equal `DbContext.Database.GetMigrations()` as ordered lists (37 expected) — report missing and unexpected IDs by name; also refuse pending migrations. Count alone is not accepted.
-4. **Pre-seed checks:** Roles, Departments, Priorities, SlaPolicies, Workflows, RequestTypes, Categories (and Channels) must be empty, or already be *exactly* the expected set (then report "nothing to do"). Any other state aborts with the table and count.
-5. **Atomicity:** all importers run on one `DbContext`/connection inside one explicit transaction (via the execution strategy); any exception, or a failed post-check, rolls everything back. No partial commits; no per-importer `SaveChanges` outside the transaction.
-6. **Post-seed verification (before commit):** 9 Roles, 8 Departments, 4 Priorities, 4 SLA policies, 35 Workflows, 45 Request Types, 45 Categories, plus referential integrity (every request type has category, workflow, SLA policy, department; no orphans).
-7. **Logging:** stage, table, expected/actual counts, elapsed time, outcome; never the connection string, passwords, or user data.
-8. Never invoked from `Program.cs` of the Api/Web; no seeding or migration on application startup.
+```powershell
+# 1. Read-only: proves target, migration identity and shows current row counts. Writes nothing.
+dotnet TigerCS.ProductionSeeder.dll validate --target production
+# 2. After a full backup of TigerCS_Ticketing_Prod and written approval:
+dotnet TigerCS.ProductionSeeder.dll seed --target production --confirm-production TGAESHJDBP02/TigerCS_Ticketing_Prod --backup-confirmed
+```
+
+Safeguards, in order (any failure exits non-zero before anything is written):
+1. Arguments must be a complete, explicit request (exact `server/database` confirmation and `--backup-confirmed`); `seed` without them, or with the SeedTest flag, is refused.
+2. The connection string must name `TigerCS_Ticketing_Prod`, and the server itself must answer `@@SERVERNAME = TGAESHJDBP02` and `DB_NAME() = TigerCS_Ticketing_Prod`.
+3. `TrustServerCertificate=True` blocks a production seed unless `--allow-untrusted-certificate` is passed (logged as a warning) — fix the certificate instead (§7).
+4. Applied migrations must equal the build's migrations **by identity** (missing and unknown IDs listed by name), not by count.
+5. Roles, Departments, Priorities, SlaPolicies, Workflows, RequestTypes and Categories must all be empty; anything present aborts and names the tables.
+6. The seed and its verification run in **one transaction** (the two request-type importers now join it instead of opening their own). Post-seed counts must be exactly 9 / 8 / 4 / 4 / 35 / 45 / 45 and every role and department code present; otherwise it rolls back. Any exception rolls back.
+7. Output contains target, migration/row counts and timing only — no connection string, no stack traces.
+
+`SeedTest` is still supported (`seed --target seedtest --confirm-seed-test`). The seeder does not create users; the first System
+Administrator and service-identity employees are created separately (§12).
 
 ---
 
 ## 9. Deploy to the existing IIS directories (per-site, no IIS restart)
+
+Scripts in `tools/deploy` (PowerShell, run elevated on the server; **not run or tested from the repository environment**):
+`Test-IisReadiness.ps1` (read-only checks), `Deploy-TigerCS.ps1 -Source <publish dir> -WhatIf` (then without `-WhatIf`),
+`Rollback-TigerCS.ps1 -App Api|Web -Backup <dir>`. They only address `TigerCS-API`/`TigerCS-Web`, refuse any other site, and never
+restart IIS. Always run `-WhatIf` first. Manual equivalent:
 
 Prerequisites done: Hosting Bundle (§2), database migrated by DBA, pool env vars (§4), certificate decision (§7).
 
@@ -253,7 +268,7 @@ Web HTTPS port; `8091` stays loopback/internal (or restricted to the Genesys/cha
 - [ ] SQL certificate trusted (§7) — or signed, time-boxed exception recorded
 - [ ] `TigerCS_App` verified `db_datareader`+`db_datawriter` only; Hangfire schema decision made (§6)
 - [ ] `TigerCS_Ticketing_Prod`: 37 migrations match by identity; full backup taken
-- [ ] ProductionSeeder committed, hardened per §8, re-tested on SeedTest, then run **once** with approval
+- [ ] `validate --target production` clean; the new transactional seed path exercised against an empty SQL Server copy of the schema (restored from a migrations-only backup — it has not yet run against real SQL; only its decision logic is unit-tested); then `seed --target production` run **once** with approval (§8)
 - [ ] First System Administrator and service-identity employees created; IDs set (§4)
 - [ ] Pool env vars set (`Jwt__SigningKey`, `ConnectionStrings__TigerCsDatabase`, `ASPNETCORE_ENVIRONMENT`)
 - [ ] Published output checked: no Development/UAT files, no secret values

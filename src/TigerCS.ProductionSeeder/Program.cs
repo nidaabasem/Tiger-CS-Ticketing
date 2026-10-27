@@ -1,152 +1,166 @@
-
 using Microsoft.AspNetCore.Identity;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using TigerCS.Domain.Modules.IdentityAndAccess;
 using TigerCS.Infrastructure.Identity;
 using TigerCS.Infrastructure.Modules.IdentityAndAccess.Seed;
 using TigerCS.Infrastructure.Persistence;
+using TigerCS.ProductionSeeder;
 
-const string expectedServer = "TGAESHJDBP02";
-const string expectedDatabase = "TigerCS_Ticketing_SeedTest";
+// Reference-data seeder. Never run by the Api/Web. Nothing is written unless a complete, explicit seed request is given and
+// every check below passes; the seed and its verification run in ONE transaction that is rolled back on any failure.
+// Output never includes the connection string or any credential.
 
-var validArgs =
-    args.Length == 1 && args[0] == "validate" ||
-    args.Length == 2 && args[0] == "seed" &&
-    args[1] == "--confirm-seed-test";
-
-if (!validArgs)
+var request = SeedSafety.Parse(args);
+if (request.Error is not null)
 {
-    Console.WriteLine(
-        "Usage: validate | seed --confirm-seed-test");
+    Console.Error.WriteLine($"BLOCKED: {request.Error}");
+    Console.WriteLine(SeedSafety.Usage);
     return 1;
 }
 
-var configuration = new ConfigurationBuilder()
-    .AddEnvironmentVariables()
-    .Build();
+var expectedDatabase = SeedSafety.DatabaseFor(request.Target);
 
-var connectionString =
-    configuration.GetConnectionString("TigerCsDatabase");
-
+var configuration = new ConfigurationBuilder().AddEnvironmentVariables().Build();
+var connectionString = configuration.GetConnectionString("TigerCsDatabase");
 if (string.IsNullOrWhiteSpace(connectionString))
 {
-    Console.Error.WriteLine("Missing connection string.");
+    Console.Error.WriteLine("BLOCKED: ConnectionStrings__TigerCsDatabase is not set.");
     return 1;
 }
 
 var cs = new SqlConnectionStringBuilder(connectionString);
-
-if (!string.Equals(cs.InitialCatalog, expectedDatabase,
-    StringComparison.OrdinalIgnoreCase))
+if (!string.Equals(cs.InitialCatalog, expectedDatabase, StringComparison.OrdinalIgnoreCase))
 {
-    Console.Error.WriteLine("BLOCKED: Wrong database.");
+    Console.Error.WriteLine($"BLOCKED: the connection string does not name the {request.Target} database ({expectedDatabase}).");
     return 1;
 }
 
+if (request.Target == SeedTarget.Production && cs.TrustServerCertificate)
+{
+    if (request.Seed && !request.AllowUntrustedCertificate)
+    {
+        Console.Error.WriteLine("BLOCKED: TrustServerCertificate=True is not accepted for a production seed. Fix the SQL certificate, or pass --allow-untrusted-certificate to accept the risk explicitly.");
+        return 1;
+    }
+
+    Console.WriteLine("WARNING: TrustServerCertificate=True - the SQL Server identity is not being validated.");
+}
+
 var services = new ServiceCollection();
-
-services.AddLogging(x => x.AddConsole());
+services.AddLogging(x => x.AddSimpleConsole(o => o.SingleLine = true));
 services.AddSingleton<IConfiguration>(configuration);
-
-services.AddDbContext<TigerCsDbContext>(options =>
-    options.UseSqlServer(connectionString));
-
-services.AddIdentityCore<ApplicationUser>()
-    .AddRoles<ApplicationRole>()
-    .AddEntityFrameworkStores<TigerCsDbContext>();
+services.AddDbContext<TigerCsDbContext>(options => options.UseSqlServer(connectionString));
+services.AddIdentityCore<ApplicationUser>().AddRoles<ApplicationRole>().AddEntityFrameworkStores<TigerCsDbContext>();
 
 using var provider = services.BuildServiceProvider();
 using var scope = provider.CreateScope();
+var db = scope.ServiceProvider.GetRequiredService<TigerCsDbContext>();
+var clock = System.Diagnostics.Stopwatch.StartNew();
 
-var db = scope.ServiceProvider
-    .GetRequiredService<TigerCsDbContext>();
+static async Task<Dictionary<string, int>> CountsAsync(TigerCsDbContext db) => new()
+{
+    ["Roles"] = await db.Roles.CountAsync(),
+    ["Departments"] = await db.Departments.CountAsync(),
+    ["Priorities"] = await db.Priorities.CountAsync(),
+    ["SlaPolicies"] = await db.SlaPolicies.CountAsync(),
+    ["Workflows"] = await db.Workflows.CountAsync(),
+    ["RequestTypes"] = await db.RequestTypes.CountAsync(),
+    ["Categories"] = await db.Categories.CountAsync()
+};
+
+static string Format(IReadOnlyDictionary<string, int> counts) => string.Join(", ", counts.Select(c => $"{c.Key}={c.Value}"));
 
 try
 {
     await db.Database.OpenConnectionAsync();
-
     var connection = (SqlConnection)db.Database.GetDbConnection();
 
-    await using var command = connection.CreateCommand();
-    command.CommandText = "SELECT @@SERVERNAME, DB_NAME()";
-
-    string server;
-    string database;
-
-    await using (var reader = await command.ExecuteReaderAsync())
+    // 1. Hard target verification, asked of the server itself.
+    string server, database;
+    await using (var command = connection.CreateCommand())
     {
-        if (!await reader.ReadAsync())
-            throw new Exception("Could not identify SQL Server.");
-
+        command.CommandText = "SELECT @@SERVERNAME, DB_NAME()";
+        await using var reader = await command.ExecuteReaderAsync();
+        if (!await reader.ReadAsync()) throw new InvalidOperationException("Could not identify SQL Server.");
         server = reader.GetString(0);
         database = reader.GetString(1);
     }
 
-    if (!string.Equals(server, expectedServer,
-            StringComparison.OrdinalIgnoreCase) ||
-        !string.Equals(database, expectedDatabase,
-            StringComparison.OrdinalIgnoreCase))
+    if (!string.Equals(server, SeedSafety.Server, StringComparison.OrdinalIgnoreCase)
+        || !string.Equals(database, expectedDatabase, StringComparison.OrdinalIgnoreCase))
     {
-        Console.Error.WriteLine("BLOCKED: Unexpected SQL target.");
+        Console.Error.WriteLine($"BLOCKED: unexpected SQL target (server {server}, database {database}).");
         return 1;
     }
 
-    var applied = (await db.Database
-        .GetAppliedMigrationsAsync()).OrderBy(x => x).ToArray();
+    Console.WriteLine($"Target: {request.Target} - server {server}, database {database}");
 
-    var expected = db.Database
-        .GetMigrations()
-        .OrderBy(x => x)
-        .ToArray();
-    if (expected.Length == 0 ||
-        !applied.SequenceEqual(expected))
+    // 2. Full migration identity comparison (not a count).
+    var applied = await db.Database.GetAppliedMigrationsAsync();
+    var problems = SeedSafety.CompareMigrations(applied, db.Database.GetMigrations());
+    if (problems.Count > 0)
     {
-        Console.Error.WriteLine(
-            "BLOCKED: Migration history mismatch.");
+        Console.Error.WriteLine("BLOCKED: migration history does not match this build.");
+        foreach (var problem in problems) Console.Error.WriteLine($"  {problem}");
         return 1;
     }
 
-    Console.WriteLine($"Server: {server}");
-    Console.WriteLine($"Database: {database}");
-    Console.WriteLine($"Migrations: {applied.Length}");
+    Console.WriteLine($"Migrations: {applied.Count()} applied, identical to this build.");
 
-    if (args[0] == "validate")
+    // 3. Pre-seed state.
+    var before = await CountsAsync(db);
+    Console.WriteLine($"Current rows: {Format(before)}");
+    var populated = before.Where(c => c.Value > 0).Select(c => c.Key).ToArray();
+
+    if (!request.Seed)
     {
-        Console.WriteLine("Validation successful. No changes made.");
+        Console.WriteLine(populated.Length == 0
+            ? "Validation successful. Reference tables are empty; a seed would be allowed. No changes made."
+            : $"Validation successful. Reference data already present in: {string.Join(", ", populated)}; a seed would be BLOCKED. No changes made.");
         return 0;
     }
 
-
-
-    var roles = scope.ServiceProvider
-        .GetRequiredService<RoleManager<ApplicationRole>>();
-
-    if (await db.Departments.AnyAsync() ||
-        await db.Priorities.AnyAsync() ||
-        await db.RequestTypes.AnyAsync() ||
-        await db.Workflows.AnyAsync() ||
-        roles.Roles.Any())
+    if (populated.Length > 0)
     {
-        Console.Error.WriteLine(
-            "BLOCKED: SeedTest already contains reference data.");
+        Console.Error.WriteLine($"BLOCKED: reference data already exists in: {string.Join(", ", populated)}. Nothing was written.");
         return 1;
     }
 
-    Console.WriteLine("Starting SeedTest reference data...");
+    // 4. Seed + verify inside one transaction; disposing it without Commit rolls everything back.
+    Console.WriteLine($"Starting reference-data seed for {request.Target}...");
+    await using var transaction = await db.Database.BeginTransactionAsync();
 
-    await ProductionReferenceData.SeedAsync(
-        scope.ServiceProvider);
+    await ProductionReferenceData.SeedAsync(scope.ServiceProvider);
 
-    Console.WriteLine("SeedTest completed successfully.");
+    var after = await CountsAsync(db);
+    var verification = SeedSafety.CompareCounts(after).ToList();
+
+    var roleNames = await db.Roles.Select(r => r.Name!).ToListAsync();
+    verification.AddRange(Roles.All.Except(roleNames).Select(r => $"Missing role: {r}"));
+    var departmentCodes = await db.Departments.Select(d => d.Code).ToListAsync();
+    verification.AddRange(new[] { "CS", "COL", "REG", "HO", "CC", "ACC", "LCS", "FM" }
+        .Except(departmentCodes, StringComparer.OrdinalIgnoreCase).Select(c => $"Missing department: {c}"));
+
+    if (verification.Count > 0)
+    {
+        Console.Error.WriteLine("Post-seed verification FAILED; rolling back. Nothing was written.");
+        foreach (var line in verification) Console.Error.WriteLine($"  {line}");
+        await transaction.RollbackAsync();
+        return 1;
+    }
+
+    await transaction.CommitAsync();
+    Console.WriteLine($"Seed committed and verified: {Format(after)} ({clock.Elapsed.TotalSeconds:F1}s).");
     return 0;
 }
 catch (Exception ex)
 {
-    Console.Error.WriteLine(ex.ToString());
-    Console.Error.WriteLine(
-        "Seed failed. Inspect SeedTest before retrying.");
+    // Type and message only: no stack of arguments, no connection string. An uncommitted transaction has been rolled back.
+    Console.Error.WriteLine($"Seed failed ({ex.GetType().Name}): {ex.Message}");
+    Console.Error.WriteLine("Any open transaction was rolled back. Run 'validate' to inspect the target before retrying.");
     return 1;
 }
