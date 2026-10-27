@@ -38,6 +38,13 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Environment-specific settings (Development has local endpoints and a test mailbox; UAT has UAT overrides) are
+         for those environments only and must never ship in a Production publish. -->
+    <Content Update="appsettings.Development.json" CopyToPublishDirectory="Never" />
+    <Content Update="appsettings.UAT.json" CopyToPublishDirectory="Never" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\TigerCS.Application\TigerCS.Application.csproj" />
     <ProjectReference Include="..\TigerCS.Infrastructure\TigerCS.Infrastructure.csproj" />
     <ProjectReference Include="..\TigerCS.Integrations\TigerCS.Integrations.csproj" />
