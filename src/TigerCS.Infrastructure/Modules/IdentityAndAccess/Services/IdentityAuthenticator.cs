@@ -19,7 +19,7 @@ public sealed class IdentityAuthenticator(
     public async Task<CredentialCheckResult> CheckCredentialsAsync(
         string username, string password, CancellationToken cancellationToken = default)
     {
-        var user = await userManager.FindByNameAsync(username);
+        var user = await FindUserAsync(username);
         if (user is null)
         {
             return CredentialCheckResult.InvalidCredentials();
@@ -51,5 +51,32 @@ public sealed class IdentityAuthenticator(
         // every request — see TigerCsTokenClaims.SecurityStamp.
         var securityStamp = await userManager.GetSecurityStampAsync(user);
         return CredentialCheckResult.Success(employee.EmployeeId, employee.DisplayName, roles.ToList(), securityStamp);
+    }
+
+    /// <summary>
+    /// The login page asks for "Email or Employee ID", so the identifier is
+    /// resolved by Identity's user-name key first and, failing that, by its
+    /// email key. Both go through Identity's own normalized lookups. An email
+    /// shared by several accounts (Identity does not require it to be unique
+    /// here) is ambiguous and resolves to no account rather than guessing.
+    /// </summary>
+    private async Task<ApplicationUser?> FindUserAsync(string identifier)
+    {
+        var trimmed = identifier.Trim();
+
+        var user = await userManager.FindByNameAsync(trimmed);
+        if (user is not null || !trimmed.Contains('@'))
+        {
+            return user;
+        }
+
+        try
+        {
+            return await userManager.FindByEmailAsync(trimmed);
+        }
+        catch (InvalidOperationException)
+        {
+            return null;
+        }
     }
 }
