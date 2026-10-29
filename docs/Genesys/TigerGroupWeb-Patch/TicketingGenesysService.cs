@@ -1,4 +1,5 @@
 ﻿using Microsoft.Extensions.Caching.Memory;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using System.Diagnostics;
 using System.Globalization;
@@ -14,6 +15,7 @@ namespace Tiger.TigerGroupWeb.Genesys
         private readonly IHttpClientFactory _httpClientFactory;
         private readonly IMemoryCache _cache;
         private readonly TicketingOptions _options;
+        private readonly ILogger<TicketingGenesysService>? _logger; // TEMPORARY 401 diagnostics
 
         private const string TokenCacheKey = "TigerCS_Genesys_AccessToken";
 
@@ -94,12 +96,19 @@ namespace Tiger.TigerGroupWeb.Genesys
         public TicketingGenesysService(
             IHttpClientFactory httpClientFactory,
             IMemoryCache cache,
-            IOptions<TicketingOptions> options)
+            IOptions<TicketingOptions> options,
+            ILogger<TicketingGenesysService>? logger = null)
         {
             _httpClientFactory = httpClientFactory;
             _cache = cache;
             _options = options.Value;
+            _logger = logger;
         }
+
+        // TEMPORARY (remove with TicketingConfigDiagnostics): says which operation was refused.
+        // Fixed operation label and status only - no URL, query, body, username or token.
+        private void Log401(string operation) =>
+            _logger?.LogWarning("TigerCS 401 diagnostic: operation={Operation}", operation);
 
         // =====================================================
         // GET TIGERCS ACCESS TOKEN
@@ -164,6 +173,11 @@ namespace Tiger.TigerGroupWeb.Genesys
 
                 if (!response.IsSuccessStatusCode)
                 {
+                    if (response.StatusCode == HttpStatusCode.Unauthorized)
+                    {
+                        Log401("Login (POST /api/auth/login)");
+                    }
+
                     // Status only: never the body, the username or the password.
                     throw new InvalidOperationException(
                         $"TigerCS authentication failed. " +
@@ -301,6 +315,7 @@ namespace Tiger.TigerGroupWeb.Genesys
             // Token expired → renew and retry once
             if (response.StatusCode == HttpStatusCode.Unauthorized)
             {
+                Log401("Customer Lookup (GET /api/genesys/customers/lookup) after successful login");
                 response.Dispose();
 
                 ClearToken();
@@ -382,6 +397,7 @@ namespace Tiger.TigerGroupWeb.Genesys
 
             if (response.StatusCode == HttpStatusCode.Unauthorized)
             {
+                Log401("Screen Pop (POST /api/genesys/screen-pop) after successful login");
                 response.Dispose();
 
                 ClearToken();
@@ -485,6 +501,7 @@ namespace Tiger.TigerGroupWeb.Genesys
             // Token expired → renew and retry once, within the same budget
             if (response.StatusCode == HttpStatusCode.Unauthorized)
             {
+                Log401("Collections read (GET /api/genesys/collections/*) after successful login");
                 response.Dispose();
 
                 ClearToken();
@@ -724,6 +741,7 @@ namespace Tiger.TigerGroupWeb.Genesys
                 // Never retry a business error, a timeout or a network failure.
                 if (attempt == 0 && authenticationFailed)
                 {
+                    Log401($"Forwarded {method.Method} /api/genesys/* after successful login");
                     response.Dispose();
 
                     // Keep a newer cached token installed by another call.
