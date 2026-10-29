@@ -84,6 +84,45 @@ public class AuthEndpointsTests : IClassFixture<TigerCsApiFactory>
     }
 
     [Fact]
+    public async Task Login_UserWithWrongNormalizedName_SucceedsAndRepairsTheKey()
+    {
+        var (username, password, employeeId) = await _factory.SeedEmployeeAsync(Roles.CsAgent);
+        await SetNormalizedUserNameAsync(employeeId, username); // lower-case: what a direct SQL insert leaves behind
+        var client = _factory.CreateClient();
+
+        var response = await client.PostAsJsonAsync("/api/auth/login", new LoginRequestDto(username, password));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var scope = _factory.Services.CreateScope();
+        var user = await scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>().FindByIdAsync(employeeId.ToString());
+        Assert.Equal(username.ToUpperInvariant(), user!.NormalizedUserName);
+    }
+
+    [Fact]
+    public async Task Login_UserWithWrongNormalizedName_WrongPassword_Returns401AndLeavesTheKeyUntouched()
+    {
+        var (username, _, employeeId) = await _factory.SeedEmployeeAsync(Roles.CsAgent);
+        await SetNormalizedUserNameAsync(employeeId, username);
+        var client = _factory.CreateClient();
+
+        var response = await client.PostAsJsonAsync("/api/auth/login", new LoginRequestDto(username, "wrong-password"));
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        using var scope = _factory.Services.CreateScope();
+        var user = await scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>().FindByIdAsync(employeeId.ToString());
+        Assert.Equal(username, user!.NormalizedUserName);
+    }
+
+    private async Task SetNormalizedUserNameAsync(Guid employeeId, string normalizedUserName)
+    {
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<TigerCsDbContext>();
+        var user = await db.Users.FindAsync(employeeId);
+        user!.NormalizedUserName = normalizedUserName;
+        await db.SaveChangesAsync();
+    }
+
+    [Fact]
     public async Task GetUsersMe_WithValidToken_Returns200()
     {
         var (username, password, employeeId) = await _factory.SeedEmployeeAsync(Roles.CsAgent);

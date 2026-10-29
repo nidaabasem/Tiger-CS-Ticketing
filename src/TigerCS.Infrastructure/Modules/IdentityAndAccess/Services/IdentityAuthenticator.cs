@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Identity;
+using Microsoft.EntityFrameworkCore;
 using TigerCS.Application.Modules.IdentityAndAccess.Abstractions;
 using TigerCS.Infrastructure.Identity;
 
@@ -20,6 +21,16 @@ public sealed class IdentityAuthenticator(
         string username, string password, CancellationToken cancellationToken = default)
     {
         var user = await userManager.FindByNameAsync(username);
+        var normalizedKeysNeedRepair = false;
+        if (user is null)
+        {
+            // Identity finds users by NormalizedUserName only. A row written outside Identity (direct SQL, an import) can
+            // carry a wrong or empty normalized key and would never be found. Look it up by UserName instead; the keys are
+            // rewritten below, but only once the password has been proven.
+            user = await userManager.Users.FirstOrDefaultAsync(u => u.UserName == username, cancellationToken);
+            normalizedKeysNeedRepair = user is not null;
+        }
+
         if (user is null)
         {
             return CredentialCheckResult.InvalidCredentials();
@@ -35,6 +46,12 @@ public sealed class IdentityAuthenticator(
         if (!signInResult.Succeeded)
         {
             return CredentialCheckResult.InvalidCredentials();
+        }
+
+        if (normalizedKeysNeedRepair)
+        {
+            // UpdateAsync recomputes NormalizedUserName and NormalizedEmail, so the next sign-in takes the normal path.
+            await userManager.UpdateAsync(user);
         }
 
         var employee = await employeeRepository.GetByIdAsync(user.Id, cancellationToken);
