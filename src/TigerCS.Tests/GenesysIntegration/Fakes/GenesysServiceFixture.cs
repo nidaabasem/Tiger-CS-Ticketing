@@ -121,6 +121,9 @@ public sealed class GenesysServiceFixture
     /// </summary>
     public TicketQueryAppService StrictTicketQuery { get; }
 
+    /// <summary>The agent work list and claim exactly as production wires them (strict visibility), unlike <see cref="PendingWork"/>.</summary>
+    public AgentHandoffAppService StrictPendingWork { get; }
+
     /// <summary>Controllable clock shared by the update facade, the lifecycle service and the inactivity closer — advance it to cross the timeout.</summary>
     public FakeTimeProvider Clock { get; } = new(DateTime.UtcNow);
 
@@ -232,6 +235,10 @@ public sealed class GenesysServiceFixture
 
         PendingWork = new AgentHandoffAppService(
             Handoffs, ticketQuery, Tickets, TicketAssignments, StatusHistory, WorkflowEvents,
+            DepartmentAssignments, UnitOfWork, Audit, TimeProvider.System);
+
+        StrictPendingWork = new AgentHandoffAppService(
+            Handoffs, StrictTicketQuery, Tickets, TicketAssignments, StatusHistory, WorkflowEvents,
             DepartmentAssignments, UnitOfWork, Audit, TimeProvider.System);
 
         var requestTypes = RequestTypes;

@@ -1,9 +1,11 @@
+using Microsoft.EntityFrameworkCore;
 using TigerCS.Application.Modules.Ticketing.Abstractions;
 using TigerCS.Application.Modules.Ticketing.Dto;
 using TigerCS.Application.Modules.Ticketing.Services;
 using TigerCS.Domain.Modules.IdentityAndAccess;
 using TigerCS.Domain.Modules.Ticketing;
 using TigerCS.Infrastructure.Modules.IdentityAndAccess.Repositories;
+using TigerCS.Infrastructure.Persistence;
 using TigerCS.Infrastructure.Modules.Ticketing.Repositories;
 using TigerCS.Tests.Ticketing.Dashboard;
 using TigerCS.Tests.Ticketing.Fakes;
@@ -352,5 +354,107 @@ public sealed class CsAgentTicketVisibilitySqliteTests : IDisposable
         var hidden = asSupervisor.Items.Single(i => i.DisplayName == "Hidden Customer");
         var profile = await directory.GetProfileAsync(_agentA, Agent, hidden.CustomerKey);
         Assert.Equal(CustomerDirectoryProfileOutcome.NotFound, profile.Outcome); // reached by direct key, still not theirs
+    }
+
+    // =====================================================================
+    // Awaiting Human Agent: waiting work an agent may claim
+    // =====================================================================
+
+    private TicketAgentHandoff AddWaitingWork(TigerCsDbContext context, int departmentId, Guid? claimedBy = null)
+    {
+        var ticket = _db.AddTicket(context, departmentId);
+        var interaction = TicketInteraction.CreateLocal(ticket.TicketId, WellKnownChannels.Phone, "+971500000000", DashboardSqliteFixture.Now, isOriginatingInteraction: true);
+        context.TicketInteractions.Add(interaction);
+        context.SaveChanges();
+        var handoff = new TicketAgentHandoff(
+            ticket.TicketId, interaction.TicketInteractionId, departmentId, WellKnownChannels.Phone,
+            DashboardSqliteFixture.Now.AddMinutes(-10), DashboardSqliteFixture.Now.AddMinutes(-10));
+        if (claimedBy is { } claimer)
+        {
+            handoff.ClaimBy(claimer, DashboardSqliteFixture.Now.AddMinutes(-5));
+        }
+
+        context.TicketAgentHandoffs.Add(handoff);
+        context.SaveChanges();
+        return handoff;
+    }
+
+    [Fact]
+    public async Task TheWaitingWorkList_AndTheDashboardTile_ShowAnAgentUnclaimedWorkOfTheirOwnDepartmentsOnly()
+    {
+        long inMine, inOther, claimedByColleague, assignedToMe;
+        using (var context = _db.CreateContext())
+        {
+            inMine = AddWaitingWork(context, _db.CustomerServiceId).TicketAgentHandoffId;
+            inOther = AddWaitingWork(context, _db.CollectionsId).TicketAgentHandoffId;
+            claimedByColleague = AddWaitingWork(context, _db.CustomerServiceId, claimedBy: _agentB).TicketAgentHandoffId;
+            var mine = AddWaitingWork(context, _db.CollectionsId, claimedBy: _agentA);   // claimed by me, in a department I am not in
+            context.Tickets.Find(mine.TicketId)!.AssignTo(_agentA);
+            context.SaveChanges();
+            assignedToMe = mine.TicketAgentHandoffId;
+        }
+
+        using var read = _db.CreateContext();
+        var repository = new TicketAgentHandoffRepository(read);
+        var claimable = new[] { _db.CustomerServiceId };
+
+        var list = await repository.SearchAsync(new AgentHandoffQuery(
+            [], AgentScopeEmployeeId: _agentA, ClaimableDepartmentIds: claimable));
+        var tile = await repository.GetAwaitingHumanAgentSnapshotAsync([], CancellationToken.None, _agentA, claimable);
+        var supervisorList = await repository.SearchAsync(new AgentHandoffQuery(null));
+
+        // Mine (claimable + waiting) and the one I already own; not another department's, not a colleague's claimed work.
+        Assert.Equal(
+            new[] { inMine, assignedToMe }.Order(),
+            list.Items.Select(i => i.Handoff.TicketAgentHandoffId).Order());
+        Assert.DoesNotContain(list.Items, i => i.Handoff.TicketAgentHandoffId == inOther || i.Handoff.TicketAgentHandoffId == claimedByColleague);
+        Assert.Equal(1, tile.Count);                       // waiting & claimable only
+        Assert.Equal(4, supervisorList.TotalCount);        // a supervisor's view is unchanged
+    }
+
+    // =====================================================================
+    // Migration backfill
+    // =====================================================================
+
+    [Fact]
+    public async Task TheMigrationBackfill_CopiesEachLegacySingleHandler_OnceAndOnlyThose()
+    {
+        long withHandler, withoutHandler;
+        using (var context = _db.CreateContext())
+        {
+            var first = _db.AddTicket(context, _db.CustomerServiceId);
+            var second = _db.AddTicket(context, _db.CustomerServiceId);
+            var handled = TicketInteraction.CreateFromGenesys(
+                first.TicketId, WellKnownChannels.Phone, "+971500000000", "conv-bf-1", null, null, null, null, null, null, "Inbound", DashboardSqliteFixture.Now,
+                isOriginatingInteraction: true);
+            handled.RecordHandlingAgentIfAbsent("genesys-agent-a", _agentA);
+            var unhandled = TicketInteraction.CreateFromGenesys(
+                second.TicketId, WellKnownChannels.Phone, "+971500000000", "conv-bf-2", null, null, null, null, null, null, "Inbound", DashboardSqliteFixture.Now,
+                isOriginatingInteraction: true);
+            context.TicketInteractions.AddRange(handled, unhandled);
+            context.SaveChanges();
+            withHandler = first.TicketId;
+            withoutHandler = second.TicketId;
+        }
+
+        // The very SQL the migration runs, taken from its operations.
+        var migration = new TigerCS.Infrastructure.Persistence.Migrations.AddTicketInteractionHandlers();
+        var backfill = migration.UpOperations.OfType<Microsoft.EntityFrameworkCore.Migrations.Operations.SqlOperation>().Single().Sql;
+
+        using (var context = _db.CreateContext())
+        {
+            context.Database.ExecuteSqlRaw(backfill);
+            context.Database.ExecuteSqlRaw(backfill.Replace("INSERT INTO", "INSERT OR IGNORE INTO")); // sanity: a second run must not duplicate
+        }
+
+        using var read = _db.CreateContext();
+        var row = Assert.Single(read.TicketInteractionHandlers.ToList());
+        Assert.Equal(withHandler, row.TicketId);
+        Assert.Equal(_agentA, row.HandledByUserId);
+        Assert.Equal("genesys-agent-a", row.GenesysAgentUserId);
+        Assert.Equal(InteractionHandlerSource.Legacy, row.Source);
+        Assert.Empty(read.TicketInteractionHandlers.Where(h => h.TicketId == withoutHandler));
+        // ...and the agent then sees exactly that ticket.
+        Assert.Equal([withHandler], await QueueAsync(_agentA, Agent));
     }
 }

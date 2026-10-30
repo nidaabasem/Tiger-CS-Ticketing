@@ -49,10 +49,14 @@ public sealed class FakeTicketAgentHandoffRepository : ITicketAgentHandoffReposi
 
     /// <summary>Mirrors the EF repository: a restricted CS Agent sees a work item only when they can see its ticket; everyone else is scoped by the item's own department.</summary>
     private IEnumerable<TicketAgentHandoff> ScopedHandoffs(
-        IEnumerable<TicketAgentHandoff> handoffs, IReadOnlyCollection<int>? visibleDepartmentIds, Guid? agentScopeEmployeeId) =>
+        IEnumerable<TicketAgentHandoff> handoffs, IReadOnlyCollection<int>? visibleDepartmentIds, Guid? agentScopeEmployeeId,
+        IReadOnlyCollection<int>? claimableDepartmentIds = null) =>
         agentScopeEmployeeId is null
             ? handoffs.Where(h => visibleDepartmentIds is null || visibleDepartmentIds.Contains(h.DepartmentId))
-            : handoffs.Where(h => Tickets?.IsVisibleTo(h.TicketId, visibleDepartmentIds, agentScopeEmployeeId) == true);
+            : handoffs.Where(h =>
+                Tickets?.IsVisibleTo(h.TicketId, visibleDepartmentIds, agentScopeEmployeeId) == true
+                || (h.ResolvedAtUtc is null && h.Status == AgentHandoffStatus.WaitingForAgent && h.AssignedEmployeeId is null
+                    && (claimableDepartmentIds?.Contains(h.DepartmentId) ?? false)));
 
     public Task<AgentHandoffQueryResult> SearchAsync(AgentHandoffQuery query, CancellationToken cancellationToken = default)
     {
@@ -65,7 +69,7 @@ public sealed class FakeTicketAgentHandoffRepository : ITicketAgentHandoffReposi
             filtered = filtered.Where(h => h.IsOpen);
         }
 
-        filtered = ScopedHandoffs(filtered, query.VisibleDepartmentIds, query.AgentScopeEmployeeId);
+        filtered = ScopedHandoffs(filtered, query.VisibleDepartmentIds, query.AgentScopeEmployeeId, query.ClaimableDepartmentIds);
 
         if (query.DepartmentId is { } departmentId)
         {
@@ -145,11 +149,12 @@ public sealed class FakeTicketAgentHandoffRepository : ITicketAgentHandoffReposi
     /// <summary>Mirrors the EF query: unresolved rows in WaitingForAgent, scoped to the visible departments, and the earliest RequestedAtUtc among them.</summary>
     public Task<AwaitingHumanAgentSnapshot> GetAwaitingHumanAgentSnapshotAsync(
         IReadOnlyCollection<int>? visibleDepartmentIds, CancellationToken cancellationToken = default,
-        Guid? agentScopeEmployeeId = null)
+        Guid? agentScopeEmployeeId = null,
+        IReadOnlyCollection<int>? claimableDepartmentIds = null)
     {
         var waiting = ScopedHandoffs(
                 All.Where(h => h.ResolvedAtUtc is null && h.Status == AgentHandoffStatus.WaitingForAgent),
-                visibleDepartmentIds, agentScopeEmployeeId)
+                visibleDepartmentIds, agentScopeEmployeeId, claimableDepartmentIds)
             .ToList();
 
         return Task.FromResult(new AwaitingHumanAgentSnapshot(

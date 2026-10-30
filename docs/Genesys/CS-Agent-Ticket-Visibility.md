@@ -56,8 +56,30 @@ All server-side; the web UI only reflects it.
 
 The set of department ids a restricted agent is resolved to is **empty, never "no restriction"**, so any future query that forgets the agent rule shows them nothing rather than everything.
 
-## Consequences to be aware of
+## Two deliberate exceptions
 
-* **The Awaiting Human Agent list no longer lets a CS Agent browse and claim waiting work.** A waiting item has, by definition, no handler yet; it reaches an agent when Genesys connects them (then it appears and they can start it). Supervisors/managers still see and can act on all of it.
-* **A ticket a CS Agent creates by hand in the New Ticket wizard** (no Genesys interaction, not assigned to them) is not visible to them afterwards unless it is assigned to them. Only Genesys-handled or assigned tickets qualify, as specified.
+### 1. Awaiting Human Agent — view and claim waiting work in your own department
+
+A CS Agent still sees the Awaiting Human Agent list, but only **unresolved work in departments they belong to** (plus work on tickets they can already see). The dashboard "awaiting" tile counts the same set. This exposes the *work item* only (ticket number, summary, customer, channel, wait time): `GET /api/tickets/{id}` and every other ticket endpoint still answer 403 until the claim.
+
+Claiming (`POST /api/pending-customer-interactions/{id}/start`) is enforced server-side by the existing claim:
+
+* the agent must belong to the work item's department **and** to the ticket's current department — otherwise 403 / `AgentNotInTicketDepartment`, and nothing changes;
+* the claim is exclusive: a second agent is told who holds it (409), the handoff `RowVersion` and the ticket's concurrency token close the interleaved-commit window (`ConcurrencyConflict`);
+* a successful claim assigns the ticket to the claimer, supersedes the previous assignment row and moves Open → InProgress — the existing workflow, unchanged. From then on the ticket is theirs by assignment;
+* the exception is for **claiming only**: an agent cannot complete or cancel work they have not claimed, and read-only roles cannot claim.
+
+### 2. Tickets a CS Agent creates by hand are assigned to them
+
+`POST /api/tickets` (the New Ticket wizard) now makes the creating CS Agent the owner when **all** of these hold:
+
+* the caller is a restricted CS Agent (not a Supervisor/Manager/Admin/service identity) and the ticket is not Genesys-created;
+* they did not choose the Department Queue (`assignToDepartmentQueue: true`; the wizard has a "Leave in the department queue" checkbox);
+* nothing has already decided: no owner yet, and the request type's rule is not an assignment (`AssignedToPrimary`) or an explicit Department Queue rule, and the department's workflow settings do not disable assignment;
+* the creator is an active member of the ticket's current department (the same invariant every assignment honours).
+
+A request type with no rule, no request type, or a rule whose configured assignee went stale fall back to the queue today — those are the cases self-assignment fills. It is written as the creator's own act (`TicketAssignments.AssigningActorEmployeeId` = creator, audit action `SelfAssign`), unlike rule assignment which is a system action. An agent who is not a member of the ticket's department (for example a Call Center agent raising a Facilities ticket) is not self-assigned and cannot open that ticket afterwards.
+
+## Other consequences
+
 * Reports: the Team Performance report is limited to the CS Manager tier and has no export, so it is unaffected.

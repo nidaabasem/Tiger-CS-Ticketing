@@ -5,6 +5,7 @@ using TigerCS.Api.Controllers;
 using TigerCS.Application.Modules.IdentityAndAccess.Dto;
 using TigerCS.Application.Modules.Ticketing.Dto;
 using TigerCS.Domain.Modules.IdentityAndAccess;
+using TigerCS.Domain.Modules.SlaAndEscalation;
 using TigerCS.Tests.IdentityAndAccess.Integration;
 
 namespace TigerCS.Tests.Ticketing.Integration;
@@ -375,5 +376,172 @@ public sealed class CsAgentTicketVisibilityEndpointsTests(TigerCsApiFactory fact
         var (ticketId, _) = await GenesysTicketAsync(genesys);
 
         Assert.Equal(HttpStatusCode.OK, await DetailStatusAsync(both, ticketId));
+    }
+
+    // =====================================================================
+    // Manually created tickets: the creating agent owns them
+    // =====================================================================
+
+    /// <summary>The wizard's last step: an intake record promoted to a ticket in <paramref name="departmentId"/>, as <paramref name="creator"/>.</summary>
+    private async Task<TicketResponseDto> CreateManualTicketAsync(HttpClient creator, int departmentId, bool? departmentQueue = null)
+    {
+        var categoryId = await _factory.CreateCategoryAsync("Walk-in " + Guid.NewGuid(), departmentId);
+        var intake = await (await creator.PostAsJsonAsync(
+                "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", "+971500000099", null, false, null, null)))
+            .Content.ReadFromJsonAsync<IntakeRecordResponseDto>();
+        var response = await creator.PostAsJsonAsync(
+            "/api/tickets",
+            new CreateTicketRequestDto(
+                intake!.IntakeRecordId, null, null, categoryId, (byte)PriorityLevel.Medium, "Walk-in question",
+                AssignToDepartmentQueue: departmentQueue));
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        return (await response.Content.ReadFromJsonAsync<TicketResponseDto>())!;
+    }
+
+    [Fact]
+    public async Task ACsAgentWhoCreatesATicketByHand_OwnsIt_AndCanOpenListAndWorkIt()
+    {
+        var department = await DepartmentAsync();
+        var (creator, creatorId) = await ClientAsync(departmentId: department);
+        var (colleague, _) = await ClientAsync(departmentId: department);
+
+        var ticket = await CreateManualTicketAsync(creator, department);
+
+        Assert.Equal(creatorId, await _factory.GetTicketCurrentOwnerAsync(ticket.TicketId));
+        var detail = await (await creator.GetAsync($"/api/tickets/{ticket.TicketId}")).Content.ReadFromJsonAsync<TicketDetailDto>();
+        Assert.Equal(creatorId, detail!.CurrentOwnerEmployeeId);
+        Assert.Contains(ticket.TicketId, await ListedIdsAsync(creator));
+        Assert.Equal(HttpStatusCode.OK, (await creator.GetAsync($"/api/tickets/{ticket.TicketId}/notes")).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, await DetailStatusAsync(colleague, ticket.TicketId)); // a colleague still has no access
+    }
+
+    [Fact]
+    public async Task WhenTheAgentSelectsTheDepartmentQueue_TheTicketStaysUnassigned_AndIsNotTheirs()
+    {
+        var department = await DepartmentAsync();
+        var (creator, _) = await ClientAsync(departmentId: department);
+
+        var ticket = await CreateManualTicketAsync(creator, department, departmentQueue: true);
+
+        Assert.Null(await _factory.GetTicketCurrentOwnerAsync(ticket.TicketId));
+        Assert.Equal(HttpStatusCode.Forbidden, await DetailStatusAsync(creator, ticket.TicketId));
+    }
+
+    [Fact]
+    public async Task AnAgentOutsideTheTicketsDepartment_IsNotSelfAssigned()
+    {
+        var department = await DepartmentAsync();
+        var otherDepartment = await _factory.CreateDepartmentAsync("Other " + Guid.NewGuid(), Guid.NewGuid().ToString("N")[..8]);
+        var (creator, _) = await ClientAsync(departmentId: otherDepartment);
+
+        var ticket = await CreateManualTicketAsync(creator, department);
+
+        Assert.Null(await _factory.GetTicketCurrentOwnerAsync(ticket.TicketId));
+    }
+
+    [Fact]
+    public async Task ASupervisorWhoCreatesATicket_IsNotSelfAssigned_AsBefore()
+    {
+        var department = await DepartmentAsync();
+        var (creator, _) = await ClientAsync(Roles.CsSupervisor, departmentId: department);
+
+        var ticket = await CreateManualTicketAsync(creator, department);
+
+        Assert.Null(await _factory.GetTicketCurrentOwnerAsync(ticket.TicketId));
+    }
+
+    // =====================================================================
+    // Awaiting Human Agent: view and claim waiting work in the agent's department
+    // =====================================================================
+
+    private async Task<(long TicketId, long HandoffId)> WaitingWorkAsync(HttpClient genesys)
+    {
+        var (ticketId, conversationId) = await GenesysTicketAsync(genesys);
+        var raised = await genesys.PatchAsJsonAsync(
+            $"/api/genesys/tickets/{ticketId}",
+            new GenesysTicketUpdateRequest(conversationId, Handoff: new GenesysHandoffPart(Required: true, Trigger: "CustomerRequestedHuman")));
+        Assert.Equal(HttpStatusCode.OK, raised.StatusCode);
+        return (ticketId, (await raised.Content.ReadFromJsonAsync<GenesysTicketUpdateResponse>())!.TicketAgentHandoffId!.Value);
+    }
+
+    private static async Task<long[]> WorkListedAsync(HttpClient client)
+    {
+        var response = await client.GetAsync("/api/pending-customer-interactions");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        return [.. (await response.Content.ReadFromJsonAsync<AgentHandoffListResultDto>())!.Items.Select(i => i.TicketAgentHandoffId)];
+    }
+
+    [Fact]
+    public async Task AnAgent_SeesAndClaimsWaitingWorkInTheirDepartment_WithoutGainingGeneralTicketAccess()
+    {
+        var (genesys, _) = await ClientAsync();
+        var department = await DepartmentAsync();
+        var (agent, agentId) = await ClientAsync(departmentId: department);
+        var (ticketId, handoffId) = await WaitingWorkAsync(genesys);
+
+        Assert.Contains(handoffId, await WorkListedAsync(agent));
+        Assert.Equal(HttpStatusCode.Forbidden, await DetailStatusAsync(agent, ticketId));          // listing the work opened nothing
+        Assert.DoesNotContain(ticketId, await ListedIdsAsync(agent));
+
+        var claim = await agent.PostAsJsonAsync($"/api/pending-customer-interactions/{handoffId}/start", new { });
+
+        Assert.Equal(HttpStatusCode.OK, claim.StatusCode);
+        Assert.Equal(agentId, (await claim.Content.ReadFromJsonAsync<AgentHandoffDto>())!.AssignedEmployeeId);
+        Assert.Equal(agentId, await _factory.GetTicketCurrentOwnerAsync(ticketId));
+        Assert.Equal(HttpStatusCode.OK, await DetailStatusAsync(agent, ticketId));                 // now theirs
+        Assert.Contains(ticketId, await ListedIdsAsync(agent));
+    }
+
+    [Fact]
+    public async Task AnAgentOfAnotherDepartment_NeitherSeesNorClaimsThatWork()
+    {
+        var (genesys, _) = await ClientAsync();
+        await DepartmentAsync();
+        var otherDepartment = await _factory.CreateDepartmentAsync("Other " + Guid.NewGuid(), Guid.NewGuid().ToString("N")[..8]);
+        var (outsider, _) = await ClientAsync(departmentId: otherDepartment);
+        var (ticketId, handoffId) = await WaitingWorkAsync(genesys);
+
+        Assert.DoesNotContain(handoffId, await WorkListedAsync(outsider));
+        Assert.Equal(
+            HttpStatusCode.Forbidden,
+            (await outsider.PostAsJsonAsync($"/api/pending-customer-interactions/{handoffId}/start", new { })).StatusCode);
+        Assert.Null(await _factory.GetTicketCurrentOwnerAsync(ticketId));
+    }
+
+    [Fact]
+    public async Task ASecondAgentInTheDepartment_Gets409NamingTheHolder_WhenTheWorkIsAlreadyClaimed()
+    {
+        var (genesys, _) = await ClientAsync();
+        var department = await DepartmentAsync();
+        var (first, firstId) = await ClientAsync(departmentId: department);
+        var (second, _) = await ClientAsync(departmentId: department);
+        var (ticketId, handoffId) = await WaitingWorkAsync(genesys);
+        Assert.Contains(handoffId, await WorkListedAsync(second));
+
+        Assert.Equal(HttpStatusCode.OK, (await first.PostAsJsonAsync($"/api/pending-customer-interactions/{handoffId}/start", new { })).StatusCode);
+        var loser = await second.PostAsJsonAsync($"/api/pending-customer-interactions/{handoffId}/start", new { });
+
+        Assert.Equal(HttpStatusCode.Conflict, loser.StatusCode);
+        Assert.Contains(firstId.ToString(), await loser.Content.ReadAsStringAsync(), StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(firstId, await _factory.GetTicketCurrentOwnerAsync(ticketId));
+        Assert.DoesNotContain(handoffId, await WorkListedAsync(second));                            // no longer offered to them
+        Assert.Equal(HttpStatusCode.Forbidden, await DetailStatusAsync(second, ticketId));
+    }
+
+    [Fact]
+    public async Task TheClaimException_DoesNotLetAnAgentCancelOrCompleteWorkTheyHaveNotClaimed()
+    {
+        var (genesys, _) = await ClientAsync();
+        var department = await DepartmentAsync();
+        var (agent, _) = await ClientAsync(departmentId: department);
+        var (_, handoffId) = await WaitingWorkAsync(genesys);
+
+        var cancel = await agent.PostAsJsonAsync(
+            $"/api/pending-customer-interactions/{handoffId}/cancel", new CancelAgentHandoffRequestDto("not needed"));
+        var complete = await agent.PostAsJsonAsync(
+            $"/api/pending-customer-interactions/{handoffId}/complete", new CompleteAgentHandoffRequestDto("done"));
+
+        Assert.Equal(HttpStatusCode.Forbidden, cancel.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, complete.StatusCode);
     }
 }

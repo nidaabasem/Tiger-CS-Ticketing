@@ -65,6 +65,7 @@ namespace TigerCS.Application.Modules.Ticketing.Dto;
 /// <param name="ExternalCustomerName">The verified external customer's own name as the source returned it (PACT's <c>customerName</c>) — a ticket-time display snapshot, the external counterpart of <paramref name="CrmBuyerCustomerName"/>. Optional: null when the source holds no name.</param>
 /// <param name="ExternalCustomerEmail">The verified external customer's own email as the source returned it (PACT's <c>customerEmail</c>) — a ticket-time display snapshot. Optional: null when the source holds no email.</param>
 /// <param name="RequestTypeId">Optional (Workflow/Automation phase 2): the configured Request Type this ticket follows. Must be an active request type of the department the ticket routes to; when present it drives the workflow capabilities and the automatic assignment rule.</param>
+/// <param name="AssignToDepartmentQueue">Optional. A CS Agent creating a ticket by hand is made its owner when they are eligible (an active member of the ticket's department) and no assignment rule or setting already decided; <c>true</c> is the agent explicitly choosing the Department Queue instead, and is respected. Ignored for every other caller and for Genesys-created tickets.</param>
 /// <param name="GenesysContext">Optional (Workflow/Automation phase 2): the Genesys-provided interaction context, persisted verbatim for traceability. Absent for Face-to-Face and every other locally-created interaction.</param>
 public sealed record CreateTicketRequestDto(
     long IntakeRecordId,
@@ -89,7 +90,8 @@ public sealed record CreateTicketRequestDto(
     string? ExternalCustomerEmail = null,
     int? RequestTypeId = null,
     GenesysIntegration.Dto.GenesysInteractionContextDto? GenesysContext = null,
-    int? DepartmentId = null);
+    int? DepartmentId = null,
+    bool? AssignToDepartmentQueue = null);
 
 /// <summary>A newly created ticket (MVP-API-Contracts.md §3.1).</summary>
 /// <param name="TicketId">The ticket.</param>

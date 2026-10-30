@@ -151,7 +151,10 @@ public sealed class DashboardAppService(
         // the queue beside it.
         var awaitingHumanAgent = agentHandoffRepository is null
             ? new AwaitingHumanAgentSnapshot(0, null)
-            : await agentHandoffRepository.GetAwaitingHumanAgentSnapshotAsync(visibleDepartmentIds, cancellationToken, agentScope);
+            : await agentHandoffRepository.GetAwaitingHumanAgentSnapshotAsync(
+                visibleDepartmentIds, cancellationToken, agentScope,
+                // A restricted agent's tile also counts waiting work they may claim — their own departments' (the list shows the same).
+                agentScope is null ? null : [.. memberships.Select(m => m.DepartmentId)]);
 
         var oldestHumanWaitSeconds = awaitingHumanAgent.OldestRequestedAtUtc is { } oldestWaitStart
             ? (int)Math.Max(0, (nowUtc - oldestWaitStart).TotalSeconds)

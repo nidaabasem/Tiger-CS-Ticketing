@@ -1,3 +1,4 @@
+using TigerCS.Application.Authorization;
 using TigerCS.Application.Abstractions;
 using TigerCS.Application.Modules.CustomerVerification.Abstractions;
 using TigerCS.Application.Modules.IdentityAndAccess.Abstractions;
@@ -64,10 +65,21 @@ public sealed class TicketCreationAppService(
     IRequestTypeRepository requestTypeRepository,
     ITicketInteractionRepository interactionRepository,
     TicketAutoAssignmentService autoAssignmentService,
-    IWorkflowTemplateRepository workflowTemplateRepository)
+    IWorkflowTemplateRepository workflowTemplateRepository,
+    IServiceIdentityRegistry? serviceIdentities = null)
 {
+    /// <summary>Creates a ticket from an intake record. A CS Agent creating it by hand becomes its owner when eligible (see <paramref name="callerRoles"/>).</summary>
+    /// <param name="callerEmployeeId">The creating employee.</param>
+    /// <param name="request">The ticket to create.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <param name="callerRoles">
+    /// The caller's roles, when the caller is a person acting in the UI/API. Needed only for self-assignment: a CS Agent who creates a
+    /// ticket by hand owns it unless they chose the Department Queue (see <c>TicketAutoAssignmentService.TrySelfAssignAsync</c>). Left
+    /// out, nothing is self-assigned — which is what the Genesys ingestion (an integration, not a person) does.
+    /// </param>
     public async Task<TicketCreationResult> CreateAsync(
-        Guid callerEmployeeId, CreateTicketRequestDto request, CancellationToken cancellationToken = default)
+        Guid callerEmployeeId, CreateTicketRequestDto request, CancellationToken cancellationToken = default,
+        IReadOnlyCollection<string>? callerRoles = null)
     {
         var intakeRecord = await intakeRecordRepository.GetByIdAsync(request.IntakeRecordId, cancellationToken);
         if (intakeRecord is null)
@@ -347,8 +359,20 @@ public sealed class TicketCreationAppService(
         // leaves the ticket in the department queue, audited as a system
         // action. Runs in this same transaction, before the SLA period and
         // creation audit commit with it.
-        await autoAssignmentService.ApplyAsync(
+        var automatic = await autoAssignmentService.ApplyAsync(
             ticket, now, correlationId, AutoAssignmentTrigger.TicketCreated, cancellationToken);
+
+        // A CS Agent who creates a ticket by hand owns it — so they can see and work it — unless they chose the Department Queue, a
+        // configured rule already decided, or someone is already assigned. Genesys-created tickets (a GenesysContext) are never self-assigned:
+        // there the agent's access comes from handling the interaction.
+        if (request.GenesysContext is null
+            && request.AssignToDepartmentQueue != true
+            && callerRoles is not null
+            && TicketVisibilityRule.IsRestrictedCsAgent(callerRoles, callerEmployeeId, serviceIdentities))
+        {
+            await autoAssignmentService.TrySelfAssignAsync(
+                ticket, callerEmployeeId, automatic.Outcome, now, correlationId, cancellationToken);
+        }
 
         // Backlog S-08's corrected acceptance criterion: ticket creation
         // opens the ticket's initial TicketSlaInstances row with computed due

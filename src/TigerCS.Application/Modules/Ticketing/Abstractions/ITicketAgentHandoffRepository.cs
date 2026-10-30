@@ -11,6 +11,7 @@ namespace TigerCS.Application.Modules.Ticketing.Abstractions;
 /// <param name="IncludeResolved">Include completed/cancelled work; by default the list shows only what is still outstanding.</param>
 /// <param name="Page">1-based page number.</param>
 /// <param name="PageSize">Rows per page.</param>
+/// <param name="ClaimableDepartmentIds">Only with <paramref name="AgentScopeEmployeeId"/>: the departments the agent may claim work in (their memberships). A restricted CS Agent additionally sees <b>waiting, unclaimed</b> work of these departments, so they can claim it — this lists the work item only and grants no ticket visibility.</param>
 /// <param name="AgentScopeEmployeeId">Set only for a restricted CS Agent: a work item is then listed only when its ticket is assigned to, or was handled on Genesys by, that employee (see <c>TicketQuery</c>) — instead of by the item's department.</param>
 public sealed record AgentHandoffQuery(
     IReadOnlyCollection<int>? VisibleDepartmentIds = null,
@@ -21,7 +22,8 @@ public sealed record AgentHandoffQuery(
     bool IncludeResolved = false,
     int Page = 1,
     int PageSize = 50,
-    Guid? AgentScopeEmployeeId = null);
+    Guid? AgentScopeEmployeeId = null,
+    IReadOnlyCollection<int>? ClaimableDepartmentIds = null);
 
 /// <summary>One row of the work list, with the context an agent needs to decide without opening the ticket first.</summary>
 public sealed record AgentHandoffListRow(
@@ -82,8 +84,10 @@ public interface ITicketAgentHandoffRepository
     /// </summary>
     /// <param name="visibleDepartmentIds">Null means every department (a CS-layer/executive role).</param>
     /// <param name="cancellationToken">Cancellation token.</param>
-    /// <param name="agentScopeEmployeeId">Set only for a restricted CS Agent: count only work on tickets assigned to / handled by that employee.</param>
+    /// <param name="agentScopeEmployeeId">Set only for a restricted CS Agent: count only work on tickets assigned to / handled by that employee, plus waiting work in <paramref name="claimableDepartmentIds"/>.</param>
+    /// <param name="claimableDepartmentIds">With <paramref name="agentScopeEmployeeId"/>: the departments the agent may claim waiting work in.</param>
     Task<AwaitingHumanAgentSnapshot> GetAwaitingHumanAgentSnapshotAsync(
         IReadOnlyCollection<int>? visibleDepartmentIds, CancellationToken cancellationToken = default,
-        Guid? agentScopeEmployeeId = null);
+        Guid? agentScopeEmployeeId = null,
+        IReadOnlyCollection<int>? claimableDepartmentIds = null);
 }

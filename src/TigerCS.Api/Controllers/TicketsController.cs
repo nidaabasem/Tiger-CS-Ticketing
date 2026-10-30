@@ -70,7 +70,8 @@ public class TicketsController(
             return Unauthorized();
         }
 
-        var result = await ticketCreationAppService.CreateAsync(employeeId.Value, request, cancellationToken);
+        var result = await ticketCreationAppService.CreateAsync(
+            employeeId.Value, request, cancellationToken, callerRoles: GetRoles());
         return ToActionResult(result);
     }
 

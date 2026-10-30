@@ -61,6 +61,7 @@ public sealed class AgentHandoffAppService(
         var visibleDepartmentIds = await ticketQueryAppService.ResolveVisibleDepartmentIdsAsync(
             callerEmployeeId, callerRoles, cancellationToken);
         var agentScope = ticketQueryAppService.ResolveAgentScope(callerEmployeeId, callerRoles);
+        var claimableDepartmentIds = agentScope is null ? null : await ClaimableDepartmentIdsAsync(callerEmployeeId, cancellationToken);
 
         var page = request.Page < 1 ? 1 : request.Page;
         var pageSize = request.PageSize is < 1 or > 200 ? 50 : request.PageSize;
@@ -68,7 +69,7 @@ public sealed class AgentHandoffAppService(
         var result = await handoffRepository.SearchAsync(
             new AgentHandoffQuery(
                 visibleDepartmentIds, request.DepartmentId, request.ChannelId, request.AssignedEmployeeId,
-                request.UnassignedOnly, request.IncludeResolved, page, pageSize, agentScope),
+                request.UnassignedOnly, request.IncludeResolved, page, pageSize, agentScope, claimableDepartmentIds),
             cancellationToken);
 
         return new AgentHandoffListResultDto(
@@ -162,7 +163,7 @@ public sealed class AgentHandoffAppService(
         // override through AuthorizationGate.
         // Read-only roles (Chairman/CEO, Reporting User) view the work list but never act on it.
         if (Roles.IsReadOnlyCaller(callerRoles)
-            || !await CanViewHandoffAsync(callerEmployeeId, callerRoles, handoff, cancellationToken))
+            || !await CanViewHandoffAsync(callerEmployeeId, callerRoles, handoff, cancellationToken, allowClaimException: true))
         {
             return AgentHandoffResult.Failure(AgentHandoffOutcome.Forbidden);
         }
@@ -469,10 +470,35 @@ public sealed class AgentHandoffAppService(
     /// <summary>
     /// May the caller see (and so act on) this work item. By its department for everyone except a restricted CS Agent, who sees it only
     /// when they can see its ticket — assigned to them, or handled by them on Genesys.
+    ///
+    /// <para>
+    /// <paramref name="allowClaimException"/> (set only by <see cref="AcceptAsync"/>) adds the claim route: a restricted agent may also
+    /// try to claim <b>unresolved</b> work in a department they belong to, which is how they take it. If a colleague got there first they
+    /// are told who holds it (the exclusive claim) rather than refused blind. It never lets them complete or cancel work, and never opens the
+    /// ticket itself. The exclusive claim, the ticket-department membership precondition and the RowVersion check in
+    /// <see cref="AcceptAsync"/> still apply.
+    /// </para>
     /// </summary>
-    private Task<bool> CanViewHandoffAsync(
-        Guid callerEmployeeId, IReadOnlyCollection<string> callerRoles, TicketAgentHandoff handoff, CancellationToken cancellationToken) =>
-        ticketQueryAppService.IsRestrictedAgent(callerEmployeeId, callerRoles)
-            ? ticketQueryAppService.CanViewTicketAsync(callerEmployeeId, callerRoles, handoff.TicketId, cancellationToken)
-            : ticketQueryAppService.CanViewDepartmentAsync(callerEmployeeId, callerRoles, handoff.DepartmentId, cancellationToken);
+    private async Task<bool> CanViewHandoffAsync(
+        Guid callerEmployeeId, IReadOnlyCollection<string> callerRoles, TicketAgentHandoff handoff, CancellationToken cancellationToken,
+        bool allowClaimException = false)
+    {
+        if (!ticketQueryAppService.IsRestrictedAgent(callerEmployeeId, callerRoles))
+        {
+            return await ticketQueryAppService.CanViewDepartmentAsync(callerEmployeeId, callerRoles, handoff.DepartmentId, cancellationToken);
+        }
+
+        if (await ticketQueryAppService.CanViewTicketAsync(callerEmployeeId, callerRoles, handoff.TicketId, cancellationToken))
+        {
+            return true;
+        }
+
+        return allowClaimException
+            && handoff.ResolvedAtUtc is null
+            && await userDepartmentAssignmentRepository.ExistsAsync(callerEmployeeId, handoff.DepartmentId, cancellationToken);
+    }
+
+    /// <summary>The departments the caller belongs to — where a restricted CS Agent may claim waiting work.</summary>
+    private async Task<IReadOnlyCollection<int>> ClaimableDepartmentIdsAsync(Guid callerEmployeeId, CancellationToken cancellationToken) =>
+        [.. (await userDepartmentAssignmentRepository.GetByEmployeeIdAsync(callerEmployeeId, cancellationToken)).Select(a => a.DepartmentId)];
 }
