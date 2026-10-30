@@ -2060,6 +2060,7 @@ a.badge:hover { text-decoration: underline; }
 .password-rules li.is-met::before { content: "✓"; color: var(--color-success); }
 .password-rules li.is-unmet { color: var(--color-critical); }
 .password-rules li.is-unmet::before { content: "✗"; color: var(--color-critical); }
+.alert__list { margin: 0; padding-left: 1.2em; }
 .field-hint.is-ok { color: var(--color-success-text); }
 .field-hint.is-bad { color: var(--color-critical); }
 

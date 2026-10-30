@@ -38,6 +38,10 @@ public sealed class UserEditModel(AdminApiClient adminApi, DepartmentsApiClient 
     {
         EmployeeId = id;
         await LoadReferenceDataAsync(cancellationToken);
+        if (id is null)
+        {
+            await LoadPasswordPolicyAsync(cancellationToken);
+        }
 
         if (id is { } employeeId)
         {
@@ -54,8 +58,7 @@ public sealed class UserEditModel(AdminApiClient adminApi, DepartmentsApiClient 
             }
 
             UserRecord = result.Value;
-            var policy = await adminApi.GetPasswordPolicyAsync(cancellationToken);
-            PasswordPolicy = policy.IsSuccess ? policy.Value : null;
+            await LoadPasswordPolicyAsync(cancellationToken);
             Profile = new ProfileInput
             {
                 DisplayName = UserRecord!.DisplayName,
@@ -79,8 +82,9 @@ public sealed class UserEditModel(AdminApiClient adminApi, DepartmentsApiClient 
         if (errors.Count > 0)
         {
             ModelState.Clear();
-            ErrorMessage = string.Join(" ", errors);
+            ErrorMessage = string.Join("\n", errors);
             await LoadReferenceDataAsync(cancellationToken);
+            await LoadPasswordPolicyAsync(cancellationToken);
             return Page();
         }
 
@@ -95,6 +99,7 @@ public sealed class UserEditModel(AdminApiClient adminApi, DepartmentsApiClient 
             ModelState.Clear();
             ErrorMessage = DescribeFailure(result, "The user could not be created.");
             await LoadReferenceDataAsync(cancellationToken);
+            await LoadPasswordPolicyAsync(cancellationToken);
             return Page();
         }
 
@@ -149,7 +154,7 @@ public sealed class UserEditModel(AdminApiClient adminApi, DepartmentsApiClient 
             }
             else
             {
-                ErrorMessage = "The password was rejected: " + DescribeFailure(result, "The password could not be reset.");
+                ErrorMessage = DescribeFailure(result, "The password could not be reset.");
             }
         }
 
@@ -169,6 +174,12 @@ public sealed class UserEditModel(AdminApiClient adminApi, DepartmentsApiClient 
         }
 
         return RedirectToPage("/Admin/UserEdit", new { id });
+    }
+
+    private async Task LoadPasswordPolicyAsync(CancellationToken cancellationToken)
+    {
+        var policy = await adminApi.GetPasswordPolicyAsync(cancellationToken);
+        PasswordPolicy = policy.IsSuccess ? policy.Value : null;
     }
 
     private async Task LoadReferenceDataAsync(CancellationToken cancellationToken)

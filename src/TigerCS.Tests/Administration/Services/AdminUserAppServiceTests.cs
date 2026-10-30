@@ -210,6 +210,16 @@ public class AdminUserAppServiceTests
     }
 
     [Fact]
+    public void GetPasswordPolicy_exposes_the_account_managers_configured_rules()
+    {
+        var f = Create();
+
+        var policy = f.Service.GetPasswordPolicy();
+
+        Assert.Equal(new PasswordPolicyDto(8, true, true, true, true, 4), policy);
+    }
+
+    [Fact]
     public async Task Unlock_lifts_the_lockout_keeps_the_password_and_audits()
     {
         var f = Create();

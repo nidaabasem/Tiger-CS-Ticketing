@@ -211,15 +211,128 @@ public class PasswordManagementEndpointsTests : IClassFixture<TigerCsApiFactory>
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }
 
+    [Fact]
+    public async Task PasswordPolicyEndpoint_ReturnsTheConfiguredIdentityOptions_ToAnAdministratorOnly()
+    {
+        var (adminName, adminPassword, _) = await _factory.SeedEmployeeAsync(Roles.SystemAdministrator);
+        var admin = await SignInAsync(adminName, adminPassword);
+        var (agentName, agentPassword, _) = await _factory.SeedEmployeeAsync(Roles.CsAgent);
+        var agent = await SignInAsync(agentName, agentPassword);
+
+        var policy = await admin.GetFromJsonAsync<PasswordPolicyDto>("/api/admin/users/password-policy");
+        var forbidden = await agent.GetAsync("/api/admin/users/password-policy");
+
+        using var scope = _factory.Services.CreateScope();
+        var configured = scope.ServiceProvider.GetRequiredService<Microsoft.Extensions.Options.IOptions<IdentityOptions>>().Value.Password;
+        Assert.Equal(new PasswordPolicyDto(
+            configured.RequiredLength, configured.RequireDigit, configured.RequireLowercase,
+            configured.RequireUppercase, configured.RequireNonAlphanumeric, configured.RequiredUniqueChars), policy);
+        Assert.Equal(HttpStatusCode.Forbidden, forbidden.StatusCode);
+    }
+
+    [Fact]
+    public async Task AdminReset_PasswordBreakingSeveralRules_ReturnsEachIdentityErrorAsItsOwnMessage()
+    {
+        var (adminName, adminPassword, _) = await _factory.SeedEmployeeAsync(Roles.SystemAdministrator);
+        var admin = await SignInAsync(adminName, adminPassword);
+        var (_, _, targetId) = await _factory.SeedEmployeeAsync(Roles.CsAgent);
+
+        // Lower-case letters only: no digit, no uppercase, no symbol.
+        var response = await admin.PostAsJsonAsync($"/api/admin/users/{targetId}/password",
+            new ResetUserPasswordRequestDto("abcdefghij", null));
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var problem = await ProblemOf(response);
+        var messages = problem.GetProperty("errors").EnumerateObject()
+            .SelectMany(p => p.Value.EnumerateArray().Select(e => e.GetString()!))
+            .ToList();
+        Assert.True(messages.Count >= 3, $"Expected one message per broken rule, got: {string.Join(" | ", messages)}");
+        Assert.Single(messages, m => m.Contains("digit", StringComparison.OrdinalIgnoreCase));
+        Assert.Single(messages, m => m.Contains("uppercase", StringComparison.OrdinalIgnoreCase));
+        Assert.Single(messages, m => m.Contains("non alphanumeric", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public async Task AdminUnlock_ClearsLockoutEndAndFailedCount_LetsTheUserSignInAgain_AndAudits()
+    {
+        var (adminName, adminPassword, adminId) = await _factory.SeedEmployeeAsync(Roles.SystemAdministrator);
+        var admin = await SignInAsync(adminName, adminPassword);
+        var (targetName, targetPassword, targetId) = await _factory.SeedEmployeeAsync(Roles.CsAgent);
+        await LockOutAsync(targetId, accessFailedCount: 5);
+        Assert.Equal(HttpStatusCode.Locked, await LoginStatusAsync(targetName, targetPassword));
+
+        var response = await admin.PostAsync($"/api/admin/users/{targetId}/unlock", null);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var dto = await response.Content.ReadFromJsonAsync<AdminUserDto>();
+        Assert.False(dto!.IsLockedOut);
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var user = await scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>().FindByIdAsync(targetId.ToString());
+            Assert.Null(user!.LockoutEnd);
+            Assert.Equal(0, user.AccessFailedCount);
+        }
+
+        // Password and sign-in are untouched: the original password works again.
+        Assert.Equal(HttpStatusCode.OK, await LoginStatusAsync(targetName, targetPassword));
+        var entry = Assert.Single(await _factory.GetAuditEntriesAsync(targetId.ToString()), a => a.Action == "AdminUnlockUser");
+        Assert.Equal(adminId, entry.ActorEmployeeId);
+    }
+
+    [Fact]
+    public async Task AdminUnlock_OfAnAccountThatIsNotLocked_Returns409_UnknownReturns404_AndNeitherIsAudited()
+    {
+        var (adminName, adminPassword, _) = await _factory.SeedEmployeeAsync(Roles.SystemAdministrator);
+        var admin = await SignInAsync(adminName, adminPassword);
+        var (_, _, targetId) = await _factory.SeedEmployeeAsync(Roles.CsAgent);
+
+        Assert.Equal(HttpStatusCode.Conflict, (await admin.PostAsync($"/api/admin/users/{targetId}/unlock", null)).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await admin.PostAsync($"/api/admin/users/{Guid.NewGuid()}/unlock", null)).StatusCode);
+        Assert.DoesNotContain(await _factory.GetAuditEntriesAsync(targetId.ToString()), a => a.Action == "AdminUnlockUser");
+    }
+
+    [Theory]
+    [InlineData(Roles.CsAgent)]
+    [InlineData(Roles.CsManager)]
+    [InlineData(Roles.DepartmentEmployee)]
+    [InlineData(Roles.ReportingUser)]
+    public async Task Unlock_ByANonAdministrator_Returns403_AndLeavesTheAccountLocked(string role)
+    {
+        var (name, password, _) = await _factory.SeedEmployeeAsync(role);
+        var caller = await SignInAsync(name, password);
+        var (targetName, targetPassword, targetId) = await _factory.SeedEmployeeAsync(Roles.CsAgent);
+        await LockOutAsync(targetId, accessFailedCount: 5);
+
+        var response = await caller.PostAsync($"/api/admin/users/{targetId}/unlock", null);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.Equal(HttpStatusCode.Locked, await LoginStatusAsync(targetName, targetPassword));
+        Assert.DoesNotContain(await _factory.GetAuditEntriesAsync(targetId.ToString()), a => a.Action == "AdminUnlockUser");
+    }
+
+    [Fact]
+    public async Task Unlock_WithoutAToken_Returns401()
+    {
+        var response = await _factory.CreateClient().PostAsync($"/api/admin/users/{Guid.NewGuid()}/unlock", null);
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
     // ------------------------------------------------------------- helpers
 
     /// <summary>Puts the account in Identity's locked-out state, as too many failed attempts would.</summary>
-    private async Task LockOutAsync(Guid employeeId)
+    private async Task LockOutAsync(Guid employeeId, int accessFailedCount = 0)
     {
         using var scope = _factory.Services.CreateScope();
         var userManager = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
         var user = await userManager.FindByIdAsync(employeeId.ToString());
         await userManager.SetLockoutEnabledAsync(user!, true);
         await userManager.SetLockoutEndDateAsync(user!, DateTimeOffset.UtcNow.AddHours(1));
+        if (accessFailedCount > 0)
+        {
+            user!.AccessFailedCount = accessFailedCount;
+            await userManager.UpdateAsync(user);
+        }
     }
 }

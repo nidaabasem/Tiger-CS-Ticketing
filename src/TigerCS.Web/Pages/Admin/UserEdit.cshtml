@@ -28,7 +28,7 @@
         <div class="admin-grid admin-grid--list-form">
             <section class="panel panel--tone admin-form-panel" aria-labelledby="new-user-title">
                 <div class="panel__header"><h2 class="panel__title" id="new-user-title">New account</h2></div>
-                <form method="post" asp-page-handler="Create" class="admin-form">
+                <form method="post" asp-page-handler="Create" class="admin-form" data-password-form>
                     @await Html.PartialAsync("_AdminMessages", Model)
 
                     <fieldset class="form-section">
@@ -69,13 +69,20 @@
                         <div class="form-row">
                             <div class="form-group">
                                 <label class="form-label" asp-for="Create.InitialPassword">Initial password *</label>
-                                <input class="form-control" asp-for="Create.InitialPassword" type="password" required aria-required="true" autocomplete="new-password" />
-                                <span class="field-hint">@UserEditModel.PasswordPolicyText</span>
+                                <input class="form-control" asp-for="Create.InitialPassword" type="password" required aria-required="true" autocomplete="new-password" data-password-new aria-describedby="create-password-rules" />
+                                @if (Model.PasswordPolicy is { } createPolicy)
+                                {
+                                    @await Html.PartialAsync("_PasswordRules", (createPolicy, "create-password-rules"))
+                                }
+                                else
+                                {
+                                    <span class="field-hint">@UserEditModel.PasswordPolicyText</span>
+                                }
                             </div>
                             <div class="form-group">
                                 <label class="form-label" asp-for="Create.ConfirmPassword">Confirm password *</label>
-                                <input class="form-control" asp-for="Create.ConfirmPassword" type="password" required aria-required="true" autocomplete="new-password" />
-                                <span class="field-hint">Both entries must match.</span>
+                                <input class="form-control" asp-for="Create.ConfirmPassword" type="password" required aria-required="true" autocomplete="new-password" data-password-confirm aria-describedby="create-password-match" />
+                                <span class="field-hint" id="create-password-match" data-password-match aria-live="polite">Both entries must match.</span>
                             </div>
                         </div>
                     </fieldset>
@@ -290,14 +297,7 @@
                             <input class="form-control" asp-for="ResetPassword.NewPassword" type="password" required aria-required="true" autocomplete="new-password" data-password-new aria-describedby="reset-password-rules" />
                             @if (Model.PasswordPolicy is { } policy)
                             {
-                                <ul class="password-rules" id="reset-password-rules" data-password-rules aria-live="polite">
-                                    <li data-rule="length" data-min="@policy.RequiredLength">At least @policy.RequiredLength characters</li>
-                                    @if (policy.RequireUppercase) { <li data-rule="upper">An uppercase letter (A–Z)</li> }
-                                    @if (policy.RequireLowercase) { <li data-rule="lower">A lowercase letter (a–z)</li> }
-                                    @if (policy.RequireDigit) { <li data-rule="digit">A number (0–9)</li> }
-                                    @if (policy.RequireNonAlphanumeric) { <li data-rule="symbol">A special character (for example ! @@ # $ %)</li> }
-                                    @if (policy.RequiredUniqueChars > 1) { <li data-rule="unique" data-min="@policy.RequiredUniqueChars">At least @policy.RequiredUniqueChars different characters</li> }
-                                </ul>
+                                @await Html.PartialAsync("_PasswordRules", (policy, "reset-password-rules"))
                             }
                             else
                             {
