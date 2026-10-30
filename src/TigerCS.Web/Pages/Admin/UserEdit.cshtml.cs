@@ -20,6 +20,9 @@ public sealed class UserEditModel(AdminApiClient adminApi, DepartmentsApiClient 
     public IReadOnlyCollection<DepartmentDto> ActiveDepartments { get; private set; } = [];
     public string? LoadError { get; private set; }
 
+    /// <summary>Identity's configured password rules; null if they could not be loaded (the server still validates).</summary>
+    public PasswordPolicyDto? PasswordPolicy { get; private set; }
+
     [BindProperty] public CreateInput Create { get; set; } = new();
     [BindProperty] public ProfileInput Profile { get; set; } = new();
     [BindProperty] public RolesInput RolesForm { get; set; } = new();
@@ -35,6 +38,10 @@ public sealed class UserEditModel(AdminApiClient adminApi, DepartmentsApiClient 
     {
         EmployeeId = id;
         await LoadReferenceDataAsync(cancellationToken);
+        if (id is null)
+        {
+            await LoadPasswordPolicyAsync(cancellationToken);
+        }
 
         if (id is { } employeeId)
         {
@@ -51,6 +58,7 @@ public sealed class UserEditModel(AdminApiClient adminApi, DepartmentsApiClient 
             }
 
             UserRecord = result.Value;
+            await LoadPasswordPolicyAsync(cancellationToken);
             Profile = new ProfileInput
             {
                 DisplayName = UserRecord!.DisplayName,
@@ -74,8 +82,9 @@ public sealed class UserEditModel(AdminApiClient adminApi, DepartmentsApiClient 
         if (errors.Count > 0)
         {
             ModelState.Clear();
-            ErrorMessage = string.Join(" ", errors);
+            ErrorMessage = string.Join("\n", errors);
             await LoadReferenceDataAsync(cancellationToken);
+            await LoadPasswordPolicyAsync(cancellationToken);
             return Page();
         }
 
@@ -90,6 +99,7 @@ public sealed class UserEditModel(AdminApiClient adminApi, DepartmentsApiClient 
             ModelState.Clear();
             ErrorMessage = DescribeFailure(result, "The user could not be created.");
             await LoadReferenceDataAsync(cancellationToken);
+            await LoadPasswordPolicyAsync(cancellationToken);
             return Page();
         }
 
@@ -132,7 +142,7 @@ public sealed class UserEditModel(AdminApiClient adminApi, DepartmentsApiClient 
         }
         else if (ResetPassword.NewPassword != ResetPassword.ConfirmPassword)
         {
-            ErrorMessage = "The two passwords do not match.";
+            ErrorMessage = "The new password and its confirmation do not match.";
         }
         else
         {
@@ -164,6 +174,12 @@ public sealed class UserEditModel(AdminApiClient adminApi, DepartmentsApiClient 
         }
 
         return RedirectToPage("/Admin/UserEdit", new { id });
+    }
+
+    private async Task LoadPasswordPolicyAsync(CancellationToken cancellationToken)
+    {
+        var policy = await adminApi.GetPasswordPolicyAsync(cancellationToken);
+        PasswordPolicy = policy.IsSuccess ? policy.Value : null;
     }
 
     private async Task LoadReferenceDataAsync(CancellationToken cancellationToken)

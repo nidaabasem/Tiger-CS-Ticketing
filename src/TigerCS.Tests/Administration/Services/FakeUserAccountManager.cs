@@ -126,6 +126,19 @@ public sealed class FakeUserAccountManager : IUserAccountManager, IUserRoleReade
         return Task.FromResult(PasswordChangeResult.Success());
     }
 
+    public PasswordPolicyInfo GetPasswordPolicy() => new(8, true, true, true, true, 4);
+
+    public Task<bool> UnlockAccountAsync(Guid employeeId, CancellationToken cancellationToken = default)
+    {
+        if (!_accounts.TryGetValue(employeeId, out var account))
+        {
+            return Task.FromResult(false);
+        }
+
+        account.IsLockedOut = false;
+        return Task.FromResult(true);
+    }
+
     public Task<PasswordChangeResult> ChangePasswordAsync(Guid employeeId, string currentPassword, string newPassword, CancellationToken cancellationToken = default)
     {
         if (!_accounts.TryGetValue(employeeId, out var account))

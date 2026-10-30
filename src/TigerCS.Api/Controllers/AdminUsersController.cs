@@ -21,6 +21,11 @@ public class AdminUsersController(AdminUserAppService users) : AdminControllerBa
         [FromQuery] int page = 1, [FromQuery] int pageSize = 25, CancellationToken cancellationToken = default) =>
         Ok(await users.ListAsync(search, includeInactive, page, pageSize, cancellationToken));
 
+    /// <summary>The password rules ASP.NET Core Identity is configured with.</summary>
+    [HttpGet("password-policy")]
+    [ProducesResponseType<PasswordPolicyDto>(StatusCodes.Status200OK)]
+    public IActionResult GetPasswordPolicy() => Ok(users.GetPasswordPolicy());
+
     /// <summary>One user with roles, department memberships and whether ticket history references them.</summary>
     [HttpGet("{employeeId:guid}")]
     [ProducesResponseType<AdminUserDto>(StatusCodes.Status200OK)]
@@ -90,6 +95,14 @@ public class AdminUsersController(AdminUserAppService users) : AdminControllerBa
     [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status422UnprocessableEntity)]
     public async Task<IActionResult> ResetPassword(Guid employeeId, [FromBody] ResetUserPasswordRequestDto request, CancellationToken cancellationToken) =>
         FromResult(await users.ResetPasswordAsync(CallerEmployeeId, employeeId, request, cancellationToken));
+
+    /// <summary>Unlocks a locked-out account (clears the lockout end date and failed-attempt count) and audits it.</summary>
+    [HttpPost("{employeeId:guid}/unlock")]
+    [ProducesResponseType<AdminUserDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    public async Task<IActionResult> Unlock(Guid employeeId, CancellationToken cancellationToken) =>
+        FromResult(await users.UnlockAsync(CallerEmployeeId, employeeId, cancellationToken));
 
     /// <summary>Ends a department membership; the primary membership cannot be removed while others remain.</summary>
     [HttpDelete("{employeeId:guid}/departments/{departmentId:int}")]

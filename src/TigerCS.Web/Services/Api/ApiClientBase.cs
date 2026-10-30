@@ -260,7 +260,7 @@ public abstract class ApiClientBase(HttpClient httpClient, ILogger logger)
                     .ToList();
                 if (messages.Count > 0)
                 {
-                    detail = string.Join(" ", messages);
+                    detail = string.Join("\n", messages);
                 }
             }
 

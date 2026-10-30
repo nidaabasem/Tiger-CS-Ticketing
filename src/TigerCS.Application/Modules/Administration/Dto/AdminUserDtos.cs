@@ -46,3 +46,7 @@ public sealed record AddDepartmentMembershipRequestDto(int DepartmentId, bool Is
 /// is recorded in the audit trail. The password itself never is.
 /// </summary>
 public sealed record ResetUserPasswordRequestDto(string NewPassword, string? Reason);
+
+/// <summary>The password rules ASP.NET Core Identity is currently configured with — what the reset form shows and checks live.</summary>
+public sealed record PasswordPolicyDto(
+    int RequiredLength, bool RequireDigit, bool RequireLowercase, bool RequireUppercase, bool RequireNonAlphanumeric, int RequiredUniqueChars);

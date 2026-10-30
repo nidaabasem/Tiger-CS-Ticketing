@@ -53,7 +53,8 @@ public class GenesysScreenPopAppServiceTests
         public Task<UserAccountResult> SetRolesAsync(Guid employeeId, IReadOnlyCollection<string> roleNames, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<IReadOnlyCollection<Guid>> SearchAccountIdsAsync(string search, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<PasswordChangeResult> ResetPasswordAsync(Guid employeeId, string newPassword, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task<PasswordChangeResult> ChangePasswordAsync(Guid employeeId, string currentPassword, string newPassword, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<PasswordChangeResult> ChangePasswordAsync(Guid employeeId, string currentPassword, string newPassword, CancellationToken cancellationToken = default) => throw new NotSupportedException();        public PasswordPolicyInfo GetPasswordPolicy() => throw new NotSupportedException();
+        public Task<bool> UnlockAccountAsync(Guid employeeId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     }
 
     private sealed class Harness

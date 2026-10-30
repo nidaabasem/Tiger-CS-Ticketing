@@ -11,6 +11,16 @@
 {
     <div class="alert alert-error" role="alert">
         @await Html.PartialAsync("_AdminIcon", "warning")
-        <span>@Model.ErrorMessage</span>
+        @{ var errorLines = Model.ErrorMessage.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries); }
+        @if (errorLines.Length > 1)
+        {
+            <ul class="alert__list">
+                @foreach (var line in errorLines) { <li>@line</li> }
+            </ul>
+        }
+        else
+        {
+            <span>@Model.ErrorMessage</span>
+        }
     </div>
 }

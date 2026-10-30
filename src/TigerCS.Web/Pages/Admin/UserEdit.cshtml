@@ -28,7 +28,7 @@
         <div class="admin-grid admin-grid--list-form">
             <section class="panel panel--tone admin-form-panel" aria-labelledby="new-user-title">
                 <div class="panel__header"><h2 class="panel__title" id="new-user-title">New account</h2></div>
-                <form method="post" asp-page-handler="Create" class="admin-form">
+                <form method="post" asp-page-handler="Create" class="admin-form" data-password-form>
                     @await Html.PartialAsync("_AdminMessages", Model)
 
                     <fieldset class="form-section">
@@ -69,13 +69,20 @@
                         <div class="form-row">
                             <div class="form-group">
                                 <label class="form-label" asp-for="Create.InitialPassword">Initial password *</label>
-                                <input class="form-control" asp-for="Create.InitialPassword" type="password" required aria-required="true" autocomplete="new-password" />
-                                <span class="field-hint">@UserEditModel.PasswordPolicyText</span>
+                                <input class="form-control" asp-for="Create.InitialPassword" type="password" required aria-required="true" autocomplete="new-password" data-password-new aria-describedby="create-password-rules" />
+                                @if (Model.PasswordPolicy is { } createPolicy)
+                                {
+                                    @await Html.PartialAsync("_PasswordRules", (createPolicy, "create-password-rules"))
+                                }
+                                else
+                                {
+                                    <span class="field-hint">@UserEditModel.PasswordPolicyText</span>
+                                }
                             </div>
                             <div class="form-group">
                                 <label class="form-label" asp-for="Create.ConfirmPassword">Confirm password *</label>
-                                <input class="form-control" asp-for="Create.ConfirmPassword" type="password" required aria-required="true" autocomplete="new-password" />
-                                <span class="field-hint">Both entries must match.</span>
+                                <input class="form-control" asp-for="Create.ConfirmPassword" type="password" required aria-required="true" autocomplete="new-password" data-password-confirm aria-describedby="create-password-match" />
+                                <span class="field-hint" id="create-password-match" data-password-match aria-live="polite">Both entries must match.</span>
                             </div>
                         </div>
                     </fieldset>
@@ -283,17 +290,24 @@
                 <div class="panel__note panel__note--top">
                     <p>Replaces the password without knowing the old one. The user is signed out everywhere and any sign-in lock is lifted, so they can sign in with the new password straight away. The password is never recorded; the reason is.</p>
                 </div>
-                <form method="post" asp-page-handler="ResetPassword" asp-route-id="@u.EmployeeId" class="admin-form" autocomplete="off">
+                <form method="post" asp-page-handler="ResetPassword" asp-route-id="@u.EmployeeId" class="admin-form" autocomplete="off" data-password-form>
                     <div class="form-row">
                         <div class="form-group">
                             <label class="form-label" asp-for="ResetPassword.NewPassword">New password *</label>
-                            <input class="form-control" asp-for="ResetPassword.NewPassword" type="password" required aria-required="true" autocomplete="new-password" minlength="8" />
-                            <span class="field-hint">@UserEditModel.PasswordPolicyText</span>
+                            <input class="form-control" asp-for="ResetPassword.NewPassword" type="password" required aria-required="true" autocomplete="new-password" data-password-new aria-describedby="reset-password-rules" />
+                            @if (Model.PasswordPolicy is { } policy)
+                            {
+                                @await Html.PartialAsync("_PasswordRules", (policy, "reset-password-rules"))
+                            }
+                            else
+                            {
+                                <span class="field-hint">@UserEditModel.PasswordPolicyText</span>
+                            }
                         </div>
                         <div class="form-group">
                             <label class="form-label" asp-for="ResetPassword.ConfirmPassword">Confirm new password *</label>
-                            <input class="form-control" asp-for="ResetPassword.ConfirmPassword" type="password" required aria-required="true" autocomplete="new-password" />
-                            <span class="field-hint">Both entries must match.</span>
+                            <input class="form-control" asp-for="ResetPassword.ConfirmPassword" type="password" required aria-required="true" autocomplete="new-password" data-password-confirm aria-describedby="reset-password-match" />
+                            <span class="field-hint" id="reset-password-match" data-password-match aria-live="polite">Both entries must match.</span>
                         </div>
                     </div>
                     <div class="form-group">

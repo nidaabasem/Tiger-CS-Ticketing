@@ -35,6 +35,8 @@ public class AdministrationAuthorizationTests : IClassFixture<TigerCsApiFactory>
     private static readonly (string Method, string Path)[] AdminEndpoints =
     [
         ("GET", "/api/admin/users"),
+        ("GET", "/api/admin/users/password-policy"),
+        ("POST", $"/api/admin/users/{Guid.NewGuid()}/unlock"),
         ("GET", $"/api/admin/users/{Guid.NewGuid()}"),
         ("POST", "/api/admin/users"),
         ("PUT", $"/api/admin/users/{Guid.NewGuid()}/profile"),

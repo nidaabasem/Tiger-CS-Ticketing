@@ -52,6 +52,8 @@
         </div>
     </form>
 
+    <div class="alert" role="status" aria-live="polite" id="users-flash" hidden></div>
+
     <div class="panel">
         @if (Model.LoadError is not null)
         {
@@ -87,7 +89,7 @@
                             <th>Departments</th>
                             <th>Status</th>
                             <th>Added</th>
-                            <th class="col-actions"><span class="visually-hidden">Open</span></th>
+                            <th class="col-actions"><span class="visually-hidden">Actions</span></th>
                         </tr>
                     </thead>
                     <tbody>
@@ -142,7 +144,7 @@
                                         @await Html.PartialAsync("_StatusBadge", user.IsActive)
                                         @if (user.IsLockedOut)
                                         {
-                                            <span class="status-note" title="Sign-in is blocked until the lock-out expires or is cleared">
+                                            <span class="status-note" data-lock-note title="Sign-in is blocked until the lock-out expires or is cleared">
                                                 @await Html.PartialAsync("_AdminIcon", "lock") Sign-in locked
                                             </span>
                                         }
@@ -156,6 +158,13 @@
                                     }
                                 </td>
                                 <td class="col-actions">
+                                    @if (user.IsLockedOut)
+                                    {
+                                        <form method="post" asp-page-handler="Unlock" asp-route-id="@user.EmployeeId" asp-route-search="@Model.Search" asp-route-includeInactive="@Model.IncludeInactive" asp-route-pageNo="@Model.PageNumber"
+                                              class="admin-actions" data-unlock-form data-confirm="Unlock @user.DisplayName? Their failed sign-in attempts will be cleared and they can sign in again.">
+                                            <button type="submit" class="btn btn-sm">Unlock</button>
+                                        </form>
+                                    }
                                     <a class="row-open" href="/Admin/Users/@user.EmployeeId" aria-label="Manage @user.DisplayName">@await Html.PartialAsync("_AdminIcon", "chevron-right")</a>
                                 </td>
                             </tr>
