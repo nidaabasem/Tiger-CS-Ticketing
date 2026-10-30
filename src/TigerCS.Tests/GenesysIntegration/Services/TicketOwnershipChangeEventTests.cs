@@ -160,4 +160,26 @@ public class TicketOwnershipChangeEventTests
         Assert.Equal(0, detail.EscalationCount);
         Assert.Equal(agent, detail.CurrentOwnerEmployeeId);
     }
+
+    [Fact]
+    public async Task HandoffAccept_RepeatedAfterTheTicketWasMovedAway_RecordsTheOwnershipChangeExactlyOnce()
+    {
+        var (f, handoffId, agent, departmentId) = await PendingHandoffAsync("conv-accept-retake");
+        var other = Guid.NewGuid();
+        f.DepartmentAssignments.Assignments.Add(new UserDepartmentAssignment(other, departmentId, true, DateTime.UtcNow, null));
+        var ticket = f.Tickets.All.Single();
+
+        await f.PendingWork.AcceptAsync(agent, AgentRoles, handoffId);                 // claim + take ownership: event 1
+        ticket.AssignTo(other);                                                        // a supervisor moves it away
+        await f.PendingWork.AcceptAsync(agent, AgentRoles, handoffId);                 // same agent accepts again: takes it back
+        await f.PendingWork.AcceptAsync(agent, AgentRoles, handoffId);                 // plain repeat: nothing changes
+
+        var started = f.WorkflowEvents.All.Where(e => e.EventType == WorkflowEventType.HandoffStarted).ToList();
+        Assert.Equal(2, started.Count);                                                // one per actual ownership change, not per click
+        Assert.All(started, e => Assert.Equal(agent, e.ToEmployeeId));
+        Assert.All(started, e => Assert.False(e.IsEscalation));
+        Assert.Contains("again", started[1].Note);
+        Assert.Equal(agent, ticket.CurrentOwnerEmployeeId);
+        Assert.DoesNotContain(f.WorkflowEvents.All, e => e.EventType == WorkflowEventType.TicketTransferred);
+    }
 }

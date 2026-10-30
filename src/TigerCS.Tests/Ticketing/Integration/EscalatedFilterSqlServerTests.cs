@@ -262,14 +262,17 @@ public class EscalatedFilterSqlServerTests(EscalationSqlServerFixture db) : ICla
     }
 
     [SqlServerFact]
-    public async Task TheEscalatedFlag_DoesNotChangeWhatACsAgentSeesWithoutIt()
+    public async Task TheEscalatedFlag_NeverChangesWhatACsAgentSees()
     {
-        // The previously approved CS Agent visibility is untouched: the same list with and without the (refused) flag's absence.
+        // Whatever the CS Agent visibility rule is (cross-department today, assigned-or-handled once the visibility change lands),
+        // this feature must not move it: an absent and an explicitly false flag give the same list, and a refused flag gives none.
+        // Deliberately no count here, so the test holds on either side of that rule.
         var baseline = await QueueAsync([Roles.CsAgent], db.Agent, escalated: null);
         var explicitFalse = await QueueAsync([Roles.CsAgent], db.Agent, escalated: false);
+        var refused = await QueueAsync([Roles.CsAgent], db.Agent, escalated: true);
 
         Assert.Equal(baseline, explicitFalse);
-        Assert.Equal(7, baseline.Count);
+        Assert.Empty(refused);
     }
 
     [SqlServerFact]

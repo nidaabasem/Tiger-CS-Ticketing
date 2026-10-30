@@ -16,11 +16,12 @@ namespace TigerCS.Application.Modules.GenesysIntegration.Services;
 /// </para>
 ///
 /// <para>
-/// <b>Everyone who handled it is preserved.</b> The first mapped agent is also <c>HandledByUserId</c> on the
-/// interaction (apply-if-absent, unchanged). Each later agent is the receiving side of a
-/// <see cref="WorkflowEventType.GenesysCallTransferred"/> event, and an agent who cannot be mapped to a TigerCS user is
-/// kept verbatim (Genesys id and name) in the event note. Nothing here changes ticket ownership or visibility — who
-/// handled the call and who owns the ticket stay different facts.
+/// <b>A timeline, not the source of truth for who handled the interaction.</b> The per-agent record of who handled a Genesys
+/// interaction - and so who may see the ticket - is <c>TicketInteractionHandlers</c>, owned by the CS Agent visibility work. These
+/// events are the ORDERED story shown on the ticket: who answered first (also <c>HandledByUserId</c>, apply-if-absent), then each
+/// step "agent X passed the call to agent Y", including agents with no TigerCS user (kept verbatim in the note). Nothing here
+/// grants or removes visibility, nothing reads these events to decide access, and nothing here writes a handler row.
+/// Nothing changes ticket ownership either - who handled the call and who owns the ticket stay different facts.
 /// </para>
 /// </summary>
 public sealed class GenesysAgentHandlingHistory(

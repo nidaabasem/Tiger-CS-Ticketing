@@ -273,6 +273,21 @@ public sealed class AgentHandoffAppService(
 
             await workflowEventRepository.AddAsync(started, cancellationToken);
         }
+        else if (assignedTicket)
+        {
+            // The rare repeat: the same agent who already holds the work item accepts again AFTER the ticket was moved to someone
+            // else, and the approved "accepting agent owns the ticket" rule takes it back. No second claim happened, but ownership
+            // really changed, so it is recorded - once, with where it landed. A plain repeat (the agent still owns it) changes
+            // nothing and writes nothing, so every actual ownership change has exactly one event.
+            await workflowEventRepository.AddAsync(
+                new TicketWorkflowEvent(
+                    handoff.TicketId, WorkflowEventType.HandoffStarted, now, callerEmployeeId,
+                    ticketApprovalId: null,
+                    note: "Accepted again: the accepting agent took the ticket back.",
+                    correlationId)
+                    .WithOwnership(ticket.CurrentDepartmentId, ticket.CurrentDepartmentId, callerEmployeeId),
+                cancellationToken);
+        }
 
         await auditWriter.WriteAsync(
             callerEmployeeId, "AcceptAgentHandoff", nameof(TicketAgentHandoff),
