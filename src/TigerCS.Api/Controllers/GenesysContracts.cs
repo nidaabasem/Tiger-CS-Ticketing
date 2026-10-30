@@ -361,13 +361,15 @@ public sealed record GenesysCustomerConfirmationPart(
 /// </summary>
 /// <param name="QueueId">The Genesys queue id the conversation is now in.</param>
 /// <param name="QueueName">That queue's name.</param>
-/// <param name="AgentId">The Genesys User ID of the agent now connected.</param>
+/// <param name="AgentId">The Genesys User ID of the agent now <b>connected</b> — send it when the agent answers/accepts, never while the interaction is only ringing or being offered to them. Every agent named here is recorded as having handled the interaction (which is what gives a CS Agent access to its ticket), so a transfer must send the receiving agent when they connect.</param>
 /// <param name="AgentName">That agent's display name. Display only.</param>
+/// <param name="ConnectedAtUtc">When that agent connected (Genesys' connected time, UTC). Optional.</param>
 public sealed record GenesysRoutingPart(
     string? QueueId = null,
     string? QueueName = null,
     string? AgentId = null,
-    string? AgentName = null);
+    string? AgentName = null,
+    DateTime? ConnectedAtUtc = null);
 
 /// <summary>The conversation has finished — for any reason: the agent ended it, the customer closed the browser, the connection dropped, Genesys timed it out.</summary>
 /// <param name="EndedAtUtc">When it ended. Defaults to now.</param>
@@ -644,7 +646,7 @@ internal static class GenesysContractMapper
             ? null
             : new GenesysRoutingUpdateDto(
                 Absent(request.Routing.QueueId), Absent(request.Routing.QueueName),
-                Absent(request.Routing.AgentId), Absent(request.Routing.AgentName)),
+                Absent(request.Routing.AgentId), Absent(request.Routing.AgentName), request.Routing.ConnectedAtUtc),
         request.CustomerConfirmation is null
             ? null
             : new GenesysCustomerConfirmationUpdateDto(

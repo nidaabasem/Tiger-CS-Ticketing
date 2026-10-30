@@ -294,6 +294,7 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddScoped<IRequestTypeAssignmentRuleRepository, RequestTypeAssignmentRuleRepository>();
         services.AddScoped<ITicketPendingRecordRepository, TicketPendingRecordRepository>();
         services.AddScoped<ITicketInteractionRepository, TicketInteractionRepository>();
+        services.AddScoped<ITicketInteractionHandlerRepository, TicketInteractionHandlerRepository>();
         services.AddScoped<ITicketAgentHandoffRepository, TicketAgentHandoffRepository>();
         services.AddScoped<TicketAutoAssignmentService>();
         services.AddScoped<TicketRequestTypeRoutingService>();
@@ -332,6 +333,7 @@ public static class InfrastructureServiceCollectionExtensions
         // over Identity's store; nothing provisions a user.
         services.AddScoped<IGenesysAgentMappingRepository, GenesysAgentMappingRepository>();
         services.AddScoped<GenesysAgentResolutionAppService>();
+        services.AddScoped<GenesysInteractionHandlerRecorder>();
         services.AddScoped<GenesysAgentContextAppService>();
         // Secure Screen Pop — one-time, one-hour launch tokens (hash stored
         // only) that sign the mapped agent into TigerCS Web.

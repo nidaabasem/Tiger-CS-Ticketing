@@ -141,6 +141,36 @@ public sealed class TicketsWorkspaceRenderTests : IDisposable
     }
 
     [Fact]
+    public async Task TheQueue_OffersACreatedByMeFilter_AndKeepsItAcrossPaging()
+    {
+        var plain = await Ok(await Client().GetAsync("/Tickets"));
+        Assert.Contains("name=\"createdByMe\"", plain, StringComparison.Ordinal);
+        Assert.Contains("Created by me", plain, StringComparison.Ordinal);
+        Assert.DoesNotContain("<option value=\"true\" selected=\"selected\">Created by me", plain, StringComparison.Ordinal);
+
+        var filtered = await Ok(await Client().GetAsync("/Tickets?createdByMe=true"));
+        Assert.Contains("<option value=\"true\" selected=\"selected\">Created by me", filtered, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ReadOnlyTicketDetails_ShowsTheNoticeAndOffersNoActions_WhileAnOrdinaryTicketStillDoes()
+    {
+        var ordinary = await Ok(await Client().GetAsync("/Tickets/5"));
+        Assert.Contains("Add a note", ordinary, StringComparison.Ordinal);
+        Assert.DoesNotContain("read-only-notice", ordinary, StringComparison.Ordinal);
+
+        var readOnly = await Ok(await Client().GetAsync("/Tickets/8"));
+        Assert.Contains("read-only-notice", readOnly, StringComparison.Ordinal);
+        Assert.Contains("it is read-only for you", readOnly, StringComparison.Ordinal);
+        Assert.DoesNotContain("Add a note", readOnly, StringComparison.Ordinal);
+        Assert.DoesNotContain("handler=Close", readOnly, StringComparison.Ordinal);
+        Assert.DoesNotContain("handler=Reopen", readOnly, StringComparison.Ordinal);
+        Assert.DoesNotContain("handler=Transfer", readOnly, StringComparison.Ordinal);
+        Assert.DoesNotContain("handler=Assign", readOnly, StringComparison.Ordinal);
+        Assert.DoesNotContain("handler=Classify", readOnly, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task ClosedView_HidesTheStatusAndSlaControls_TheMyView_HidesTheAssigneeControl()
     {
         var closed = await Ok(await Client().GetAsync("/Tickets?view=closed"));
@@ -291,6 +321,8 @@ public sealed class TicketsWorkspaceRenderTests : IDisposable
                 "/api/channels" => new[] { new ChannelDto(3, "WhatsApp", "WHATSAPP", true, true, true, 2) },
                 "/api/tickets" => new TicketListResultDto([Ticket(5), Ticket(6)], query["ownerEmployeeId"] is not null ? 3 : query["ticketStatus"] == "Closed" ? 7 : 42, 1, 20),
                 "/api/tickets/5" => Detail(5),
+                "/api/tickets/8" => Detail(8) with { CurrentDepartmentId = 3, CurrentOwnerEmployeeId = null, IsReadOnlyAccess = true, CreatedByEmployeeId = ViewerId },
+                "/api/tickets/8/sla" => null,
                 "/api/tickets/5/sla" => new TicketSlaSummaryResponseDto(
                     "NotApplicable", null, false, null, null, false, false, null, 0, "None",
                     new SlaExplanationDto(false, null, null, "Per-priority SLA policy", null, null, null, null, null, null, null,

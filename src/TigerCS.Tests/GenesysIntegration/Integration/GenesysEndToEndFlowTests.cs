@@ -629,6 +629,8 @@ public sealed class GenesysEndToEndFlowTests : IClassFixture<TigerCsApiFactory>
         var (_, created) = await CreateAsync(service, new GenesysInquiryRequest(conversationId, "LiveChat", QueueId: queueId));
         var requested = await PatchAsync(service, created.TicketId, new GenesysTicketUpdateRequest(
             conversationId, Handoff: new GenesysHandoffPart(Required: true, Trigger: "CustomerRequestedHuman")));
+        // Genesys connected this agent to the conversation, which is what makes the work (and its ticket) visible to a CS Agent.
+        await _factory.RecordHandlerAsync(created.TicketId, agent);
         var accept = await agent.PostAsync($"/api/pending-customer-interactions/{requested.TicketAgentHandoffId}/start", null);
         Assert.Equal(HttpStatusCode.OK, accept.StatusCode);
 
@@ -743,6 +745,8 @@ public sealed class GenesysEndToEndFlowTests : IClassFixture<TigerCsApiFactory>
         var (_, created) = await CreateAsync(service, new GenesysInquiryRequest(conversationId, "LiveChat", QueueId: queueId));
         var requested = await PatchAsync(service, created.TicketId, new GenesysTicketUpdateRequest(
             conversationId, Handoff: new GenesysHandoffPart(Required: true, Trigger: "CustomerRequestedHuman")));
+        // Genesys connected this agent to the conversation, which is what makes the work (and its ticket) visible to a CS Agent.
+        await _factory.RecordHandlerAsync(created.TicketId, agent);
         var accept = await agent.PostAsync($"/api/pending-customer-interactions/{requested.TicketAgentHandoffId}/start", null);
         Assert.Equal(HttpStatusCode.OK, accept.StatusCode);
 

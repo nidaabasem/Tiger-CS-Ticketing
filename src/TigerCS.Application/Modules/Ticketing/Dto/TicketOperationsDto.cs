@@ -30,6 +30,7 @@ namespace TigerCS.Application.Modules.Ticketing.Dto;
 /// <param name="ClosureCategory">Only Closed tickets in one Dashboard closure KPI: Reviewed (customer feedback submitted), NotReviewed, ClosedByAi (latest closure audited as AutoCloseByAi) or ClosedByAgent (latest closure audited as Close).</param>
 /// <param name="ClosedFrom">Only Closed tickets whose latest closure was on or after this UTC calendar day (Dashboard closure KPIs).</param>
 /// <param name="ClosedTo">Only Closed tickets whose latest closure was on or before this UTC calendar day.</param>
+/// <param name="CreatedByMe">True ("Created by Me"): only tickets the caller created — including ones that have since moved to another department, which a CS Agent keeps read-only access to. Never widens visibility: it only narrows the caller's own scope.</param>
 public sealed record TicketListRequestDto(
     int? DepartmentId,
     int? CategoryId,
@@ -55,7 +56,8 @@ public sealed record TicketListRequestDto(
     bool? Unclassified = null,
     string? ClosureCategory = null,
     DateOnly? ClosedFrom = null,
-    DateOnly? ClosedTo = null);
+    DateOnly? ClosedTo = null,
+    bool? CreatedByMe = null);
 
 /// <summary>One row of the ticket queue (MVP-API-Contracts.md §3.2).</summary>
 /// <param name="TicketId">The ticket.</param>
@@ -127,6 +129,8 @@ public sealed record TicketListResultDto(IReadOnlyList<TicketSummaryDto> Items, 
 /// <param name="WorkflowVersionNumber">The pinned version's number ("V2") — populated on detail reads.</param>
 /// <param name="OriginatingChannelId">The channel the ticket ENTERED the system on (its originating interaction's channel) — never changed by later interactions on other channels; null for tickets predating the interaction model. Populated on detail reads.</param>
 /// <param name="OriginatingChannelName">The originating channel's display name, resolved from channel configuration — still shown for a channel that has since been deactivated. Populated on detail reads.</param>
+/// <param name="IsReadOnlyAccess">True when the caller may open this ticket but change nothing on it: they created it, it is outside their department, and they hold no other grant on it. The server refuses every modification (403) regardless; the UI uses this to hide the actions. Populated on detail reads.</param>
+/// <param name="CreatedByEmployeeId">The employee who created the ticket. Populated on detail reads.</param>
 /// <param name="IsClassified">False while the ticket has no Category yet — an inquiry captured before anyone read the request. The UI shows "Unclassified" and offers the classify action rather than rendering a missing category.</param>
 /// <param name="HandoffState">
 /// Whether this ticket is waiting on a human agent, <b>derived</b> from the
@@ -183,7 +187,9 @@ public sealed record TicketDetailDto(
     int? WorkflowVersionNumber = null,
     byte? OriginatingChannelId = null,
     string? OriginatingChannelName = null,
-    bool IsClassified = true);
+    bool IsClassified = true,
+    bool IsReadOnlyAccess = false,
+    Guid? CreatedByEmployeeId = null);
 
 public enum TicketQueryOutcome
 {

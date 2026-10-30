@@ -55,7 +55,7 @@ public class TicketLifecycleOutboxTests
                 new FakeTicketAssignmentRepository(), audit),
             sla.DueDates,
             new ReopenEligibilityService(
-                statusHistory, new FakeRequestTypeRepository(), new FakeWorkflowTemplateRepository(), ReopenPolicy.Default));
+                statusHistory, new FakeRequestTypeRepository(), new FakeWorkflowTemplateRepository(), ReopenPolicy.Default), handlerRepository: FakeTicketInteractionHandlerRepository.Permissive());
 
         // Two departments so the seeded tickets' department 2 really exists —
         // Reopen validates its target against the directory.

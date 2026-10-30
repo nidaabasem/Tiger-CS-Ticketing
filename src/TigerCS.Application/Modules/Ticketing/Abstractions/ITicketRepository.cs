@@ -33,7 +33,14 @@ public enum TicketSortBy
 /// <item><see cref="ClosureCategory"/> — Closed tickets in one Dashboard closure KPI (Reviewed, NotReviewed, ClosedByAi, ClosedByAgent). <see cref="ReviewsAreTest"/> says which kind of review counts as feedback: Test-mode reviews while customer notifications run in test mode, real ones otherwise.</item>
 /// <item><see cref="ClosedFromUtc"/>/<see cref="ClosedToUtc"/> — Closed tickets whose latest closure falls within [from, to).</item>
 /// </list>
+/// <see cref="CreatedByEmployeeId"/> ("Created by Me") narrows the already-scoped result to tickets that employee created; the application service sets it from the caller, never from the request. A restricted CS Agent always sees their own created tickets, whatever department they now belong to.
 /// <see cref="NowUtc"/> is the evaluation instant for the time-relative filters — supplied by the application service, never read from the clock inside the repository.
+///
+/// <para>
+/// <see cref="AgentScopeEmployeeId"/> is set only for a restricted CS Agent (<c>TicketVisibilityRule.IsRestrictedCsAgent</c>): the ticket
+/// must then be assigned to that employee, or one they handled on Genesys, <i>or</i> in <see cref="VisibleDepartmentIds"/> (empty for a CS
+/// Agent). Like the department scope it is resolved by the application service from the caller, never client-supplied.
+/// </para>
 /// </remarks>
 public sealed record TicketQuery(
     IReadOnlyCollection<int>? VisibleDepartmentIds,
@@ -63,7 +70,9 @@ public sealed record TicketQuery(
     TicketClosureCategory? ClosureCategory = null,
     DateTime? ClosedFromUtc = null,
     DateTime? ClosedToUtc = null,
-    bool ReviewsAreTest = false);
+    bool ReviewsAreTest = false,
+    Guid? AgentScopeEmployeeId = null,
+    Guid? CreatedByEmployeeId = null);
 
 public sealed record TicketQueryResult(IReadOnlyList<Ticket> Items, int TotalCount);
 
@@ -112,7 +121,8 @@ public sealed record CustomerHistoryQuery(
     string? ExternalCustomerId = null,
     string? UnitNumber = null,
     bool OrderActiveFirst = false,
-    bool IncludeLinkedExternalIdentity = false);
+    bool IncludeLinkedExternalIdentity = false,
+    Guid? AgentScopeEmployeeId = null);
 
 /// <summary>
 /// <see cref="Tickets"/> is the newest-first page (bounded by
@@ -140,13 +150,15 @@ public sealed record CustomerHistoryQueryResult(
 /// <param name="ResolvedTodayStartUtc">Start of "today" for the Resolved Today count, in UTC.</param>
 /// <param name="AtRiskWindow">How far ahead of a pending SLA deadline counts as "at risk".</param>
 /// <param name="AttentionLimit">Maximum attention rows to return.</param>
+/// <param name="AgentScopeEmployeeId">Set only for a restricted CS Agent: every count and attention row is limited to tickets assigned to, or handled on Genesys by, that employee (plus <paramref name="VisibleDepartmentIds"/>, empty for a CS Agent).</param>
 public sealed record DashboardSnapshotQuery(
     IReadOnlyCollection<int>? VisibleDepartmentIds,
     Guid CallerEmployeeId,
     DateTime NowUtc,
     DateTime ResolvedTodayStartUtc,
     TimeSpan AtRiskWindow,
-    int AttentionLimit);
+    int AttentionLimit,
+    Guid? AgentScopeEmployeeId = null);
 
 /// <summary>One "requiring attention" row: the ticket plus its current SLA period's pending resolution deadline (null when no current period or the resolution clock already breached).</summary>
 public sealed record DashboardAttentionTicket(Ticket Ticket, DateTime? SlaDueAtUtc);

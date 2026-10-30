@@ -112,6 +112,8 @@ public sealed class GenesysDisabledEndpointsTests : IDisposable
         Assert.Equal("Open", ticket!.TicketStatus);
         Assert.Equal("Running", ticket.SlaState);
 
+        // The agent who took the walk-in is a handler of its interaction, so the ticket stays visible to them.
+        await _factory.RecordHandlerAsync(ticket.TicketId, client);
         var detail = await client.GetAsync($"/api/tickets/{ticket.TicketId}");
         Assert.Equal(HttpStatusCode.OK, detail.StatusCode);
 

@@ -40,7 +40,7 @@ public sealed class TicketNoteAppService(
             return NoteResult.Failure(NoteOutcome.Forbidden);
         }
 
-        if (!await ticketQueryAppService.CanViewDepartmentAsync(callerEmployeeId, callerRoles, ticket.CurrentDepartmentId, cancellationToken))
+        if (!await ticketQueryAppService.CanModifyTicketAsync(callerEmployeeId, callerRoles, ticket, cancellationToken))
         {
             return NoteResult.Failure(NoteOutcome.Forbidden);
         }
@@ -76,7 +76,7 @@ public sealed class TicketNoteAppService(
             return TicketQueryResultDto<TicketNoteListResultDto>.Failure(TicketQueryOutcome.NotFound);
         }
 
-        if (!await ticketQueryAppService.CanViewDepartmentAsync(callerEmployeeId, callerRoles, ticket.CurrentDepartmentId, cancellationToken))
+        if (!await ticketQueryAppService.CanViewTicketAsync(callerEmployeeId, callerRoles, ticket, cancellationToken))
         {
             return TicketQueryResultDto<TicketNoteListResultDto>.Failure(TicketQueryOutcome.Forbidden);
         }

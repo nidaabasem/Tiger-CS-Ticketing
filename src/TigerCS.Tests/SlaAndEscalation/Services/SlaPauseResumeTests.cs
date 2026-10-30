@@ -1,3 +1,4 @@
+using TigerCS.Tests.Ticketing.Fakes;
 using TigerCS.Application.Modules.SlaAndEscalation.Services;
 using TigerCS.Application.Modules.Ticketing.Dto;
 using TigerCS.Application.Modules.Ticketing.Services;
@@ -62,7 +63,7 @@ public class SlaPauseResumeTests
                 sla.DepartmentAssignments, new Ticketing.Fakes.FakeTicketAssignmentRepository(), sla.Audit),
             sla.DueDates,
             new ReopenEligibilityService(sla.StatusHistory, requestTypes, templates, ReopenPolicy.Default),
-            sla.PauseService);
+            sla.PauseService, handlerRepository: FakeTicketInteractionHandlerRepository.Permissive());
 
         return new Harness
         {

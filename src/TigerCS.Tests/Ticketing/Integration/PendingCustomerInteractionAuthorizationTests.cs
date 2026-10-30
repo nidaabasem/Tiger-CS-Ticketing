@@ -53,6 +53,13 @@ public class PendingCustomerInteractionAuthorizationTests(TigerCsApiFactory fact
     }
 
     /// <summary>
+    /// Genesys connecting <paramref name="agent"/> to the conversation. A CS Agent reaches a ticket (and so the work item behind it) only
+    /// through assignment or by having handled its Genesys interaction, so every test below in which a CS Agent acts on the work first has
+    /// Genesys connect them — which is also exactly how the work reaches an agent in production.
+    /// </summary>
+    private Task ConnectAsync(long ticketId, HttpClient agent) => _factory.RecordHandlerAsync(ticketId, agent);
+
+    /// <summary>
     /// An AI website chat that ends with nobody having taken it — the exact
     /// journey the work list exists for. Seeded through the Genesys endpoints
     /// so the handoff is raised by the real code path, not inserted.
@@ -100,9 +107,10 @@ public class PendingCustomerInteractionAuthorizationTests(TigerCsApiFactory fact
     public async Task CsAgent_CanListPendingInteractions()
     {
         var (genesys, _) = await ClientForAsync(Roles.CsAgent);
-        var (_, handoffId, _) = await WaitingInteractionAsync(genesys);
+        var (ticketId, handoffId, _) = await WaitingInteractionAsync(genesys);
 
         var (agent, _) = await ClientForAsync(Roles.CsAgent);
+        await ConnectAsync(ticketId, agent);
         var response = await agent.GetAsync("/api/pending-customer-interactions");
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
@@ -114,9 +122,10 @@ public class PendingCustomerInteractionAuthorizationTests(TigerCsApiFactory fact
     public async Task CsAgent_CanStartAndCompleteAPendingInteraction()
     {
         var (genesys, _) = await ClientForAsync(Roles.CsAgent);
-        var (_, handoffId, departmentId) = await WaitingInteractionAsync(genesys);
+        var (ticketId, handoffId, departmentId) = await WaitingInteractionAsync(genesys);
 
         var (agent, agentId) = await ClientForAsync(Roles.CsAgent, departmentId);
+        await ConnectAsync(ticketId, agent);
 
         var started = await agent.PostAsJsonAsync($"/api/pending-customer-interactions/{handoffId}/start", new { });
         Assert.Equal(HttpStatusCode.OK, started.StatusCode);
@@ -135,9 +144,10 @@ public class PendingCustomerInteractionAuthorizationTests(TigerCsApiFactory fact
     public async Task CsAgent_CanCancelAPendingInteraction()
     {
         var (genesys, _) = await ClientForAsync(Roles.CsAgent);
-        var (_, handoffId, departmentId) = await WaitingInteractionAsync(genesys);
+        var (ticketId, handoffId, departmentId) = await WaitingInteractionAsync(genesys);
 
         var (agent, _) = await ClientForAsync(Roles.CsAgent, departmentId);
+        await ConnectAsync(ticketId, agent);
 
         var cancelled = await agent.PostAsJsonAsync(
             $"/api/pending-customer-interactions/{handoffId}/cancel",
@@ -239,15 +249,17 @@ public class PendingCustomerInteractionAuthorizationTests(TigerCsApiFactory fact
     [Fact]
     public async Task ACsAgentOutsideTheTicketsDepartment_Gets422_AndChangesNothing()
     {
-        // A CS Agent is cross-department for visibility, so this one passes
-        // authorization and is stopped by the membership invariant instead —
-        // the distinction the two outcomes exist to draw.
+        // A CS Agent Genesys has connected to the call (so they can see the
+        // ticket) but who belongs to another department passes authorization
+        // and is stopped by the membership invariant instead — the
+        // distinction the two outcomes exist to draw.
         var (genesys, _) = await ClientForAsync(Roles.CsAgent);
         var (ticketId, handoffId, _) = await WaitingInteractionAsync(genesys);
 
         var otherDepartmentId = await _factory.CreateDepartmentAsync(
             "Other CS " + Guid.NewGuid(), Guid.NewGuid().ToString("N")[..8]);
         var (outsideAgent, _) = await ClientForAsync(Roles.CsAgent, otherDepartmentId);
+        await ConnectAsync(ticketId, outsideAgent);
 
         var started = await outsideAgent.PostAsJsonAsync($"/api/pending-customer-interactions/{handoffId}/start", new { });
 
@@ -276,6 +288,7 @@ public class PendingCustomerInteractionAuthorizationTests(TigerCsApiFactory fact
         var newDepartmentId = await _factory.CreateDepartmentAsync(
             "Receiving " + Guid.NewGuid(), Guid.NewGuid().ToString("N")[..8]);
         var (receivingAgent, receivingAgentId) = await ClientForAsync(Roles.CsAgent, newDepartmentId);
+        await ConnectAsync(ticketId, receivingAgent);
 
         // Refused while the ticket is elsewhere.
         Assert.Equal(
@@ -311,10 +324,12 @@ public class PendingCustomerInteractionAuthorizationTests(TigerCsApiFactory fact
     public async Task ASecondAgentStarting_Gets409_NamingTheHolder()
     {
         var (genesys, _) = await ClientForAsync(Roles.CsAgent);
-        var (_, handoffId, departmentId) = await WaitingInteractionAsync(genesys);
+        var (ticketId, handoffId, departmentId) = await WaitingInteractionAsync(genesys);
 
         var (first, firstId) = await ClientForAsync(Roles.CsAgent, departmentId);
         var (second, _) = await ClientForAsync(Roles.CsAgent, departmentId);
+        await ConnectAsync(ticketId, first);
+        await ConnectAsync(ticketId, second);
 
         Assert.Equal(
             HttpStatusCode.OK,
@@ -332,9 +347,10 @@ public class PendingCustomerInteractionAuthorizationTests(TigerCsApiFactory fact
     public async Task TheSameAgentStartingTwice_IsIdempotent()
     {
         var (genesys, _) = await ClientForAsync(Roles.CsAgent);
-        var (_, handoffId, departmentId) = await WaitingInteractionAsync(genesys);
+        var (ticketId, handoffId, departmentId) = await WaitingInteractionAsync(genesys);
 
         var (agent, _) = await ClientForAsync(Roles.CsAgent, departmentId);
+        await ConnectAsync(ticketId, agent);
 
         var first = await agent.PostAsJsonAsync($"/api/pending-customer-interactions/{handoffId}/start", new { });
         var second = await agent.PostAsJsonAsync($"/api/pending-customer-interactions/{handoffId}/start", new { });
@@ -358,6 +374,7 @@ public class PendingCustomerInteractionAuthorizationTests(TigerCsApiFactory fact
         var (ticketId, handoffId, departmentId) = await WaitingInteractionAsync(genesys);
 
         var (agent, agentId) = await ClientForAsync(Roles.CsAgent, departmentId);
+        await ConnectAsync(ticketId, agent);
 
         // While waiting: Open and unowned (confirmed decision 8).
         var waiting = await (await agent.GetAsync($"/api/tickets/{ticketId}"))
@@ -391,6 +408,7 @@ public class PendingCustomerInteractionAuthorizationTests(TigerCsApiFactory fact
         var (ticketId, handoffId, departmentId) = await WaitingInteractionAsync(genesys);
 
         var (agent, _) = await ClientForAsync(Roles.CsAgent, departmentId);
+        await ConnectAsync(ticketId, agent);
         await agent.PostAsJsonAsync($"/api/pending-customer-interactions/{handoffId}/start", new { });
         await agent.PostAsJsonAsync(
             $"/api/pending-customer-interactions/{handoffId}/complete",

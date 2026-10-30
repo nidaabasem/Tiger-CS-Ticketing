@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using TigerCS.Api.Filters;
 using TigerCS.Api.OpenApi;
 using TigerCS.Application.Modules.SlaAndEscalation.Dto;
 using TigerCS.Application.Modules.SlaAndEscalation.Services;
@@ -38,6 +39,7 @@ namespace TigerCS.Api.Controllers;
 [ApiController]
 [Route("api/tickets/{ticketId:long}")]
 [Authorize(Policy = PolicyNames.AuthenticatedStaff)]
+[RequireTicketAccess]
 [Tags(OpenApiTags.SlaAndEscalation)]
 public class TicketSlaController(
     SlaQueryAppService slaQueryAppService,

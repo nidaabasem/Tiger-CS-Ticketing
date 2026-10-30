@@ -62,7 +62,7 @@ public class TicketApprovalAppServiceTests
             tickets, approvals, events, requirements, departmentAssignments, departments,
             unitOfWork, audit,
             nowUtc is { } moment ? new FakeTimeProvider(moment) : TimeProvider.System,
-            new ReopenEligibilityService(statusHistory, requestTypes, workflowTemplates, ReopenPolicy.Default));
+            new ReopenEligibilityService(statusHistory, requestTypes, workflowTemplates, ReopenPolicy.Default), handlerRepository: FakeTicketInteractionHandlerRepository.Permissive());
 
         return new Fixture(
             service, tickets, approvals, events, requirements, departmentAssignments, departments,

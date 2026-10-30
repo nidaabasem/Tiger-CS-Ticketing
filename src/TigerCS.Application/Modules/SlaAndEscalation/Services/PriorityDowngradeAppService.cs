@@ -53,7 +53,9 @@ public sealed class PriorityDowngradeAppService(
     IAuditEntryWriter auditWriter,
     PriorityDowngradeOptions options,
     TimeProvider timeProvider,
-    SlaPauseService? slaPauseService = null)
+    SlaPauseService? slaPauseService = null,
+    ITicketInteractionHandlerRepository? handlerRepository = null,
+    IServiceIdentityRegistry? serviceIdentities = null)
 {
     /// <summary>Roles that may REQUEST a downgrade ("Agent and above"): the ticket's owner always, plus these (department-side roles additionally need membership of the ticket's department).</summary>
     public static readonly IReadOnlyCollection<string> CrossDepartmentRequesterRoles =
@@ -89,7 +91,9 @@ public sealed class PriorityDowngradeAppService(
             || callerRoles.Any(CrossDepartmentRequesterRoles.Contains)
             || (callerRoles.Any(DepartmentRequesterRoles.Contains)
                 && await userDepartmentAssignmentRepository.ExistsAsync(callerEmployeeId, ticket.CurrentDepartmentId, cancellationToken)));
-        if (!authorized)
+        if (!authorized
+            || !await TicketVisibilityRule.PassesAgentScopeAsync(
+                userDepartmentAssignmentRepository, handlerRepository, callerEmployeeId, callerRoles, ticket, serviceIdentities, cancellationToken))
         {
             return Fail<PriorityDowngradeRequestResponseDto>(DowngradeOutcome.Forbidden);
         }
@@ -192,8 +196,8 @@ public sealed class PriorityDowngradeAppService(
             return Fail<IReadOnlyList<PriorityDowngradeRequestResponseDto>>(DowngradeOutcome.NotFound);
         }
 
-        if (!await TicketVisibilityRule.CanViewDepartmentAsync(
-                userDepartmentAssignmentRepository, callerEmployeeId, callerRoles, ticket.CurrentDepartmentId, cancellationToken))
+        if (!await TicketVisibilityRule.CanViewTicketAsync(
+                userDepartmentAssignmentRepository, handlerRepository, callerEmployeeId, callerRoles, ticket, serviceIdentities, cancellationToken))
         {
             return Fail<IReadOnlyList<PriorityDowngradeRequestResponseDto>>(DowngradeOutcome.Forbidden);
         }

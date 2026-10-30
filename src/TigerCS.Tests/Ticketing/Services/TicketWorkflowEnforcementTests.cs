@@ -59,7 +59,7 @@ public class TicketWorkflowEnforcementTests
                 new FakeRequestTypeAssignmentRuleRepository(), departmentSettings, departmentAssignments,
                 new FakeTicketAssignmentRepository(), audit),
             sla.DueDates,
-            new ReopenEligibilityService(statusHistory, requestTypes, workflowTemplates, ReopenPolicy.Default));
+            new ReopenEligibilityService(statusHistory, requestTypes, workflowTemplates, ReopenPolicy.Default), handlerRepository: FakeTicketInteractionHandlerRepository.Permissive());
 
         return new Fixture(
             service, tickets, resolutions, statusHistory, audit, unitOfWork, pendingRecords, requestTypes, workflowTemplates);

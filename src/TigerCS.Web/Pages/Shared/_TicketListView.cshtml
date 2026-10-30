@@ -31,6 +31,7 @@
         backlogAge = Model.BacklogAge,
         pendingApproval = Model.PendingApproval ? "true" : null,
         unclassified = Model.Unclassified ? "true" : null,
+        createdByMe = Model.CreatedByMe ? "true" : null,
         closureCategory = Model.ClosureCategory,
         closedFrom = Model.ClosedFrom?.ToString("yyyy-MM-dd"),
         closedTo = Model.ClosedTo?.ToString("yyyy-MM-dd"),
@@ -137,6 +138,14 @@
         <select class="field-select" id="unclassified" name="unclassified" data-autosubmit>
             <option value="">All</option>
             <option value="true" selected="@Model.Unclassified">Unclassified</option>
+        </select>
+    </div>
+
+    <div class="field-group">
+        <label class="field-label" for="createdByMe">Created by</label>
+        <select class="field-select" id="createdByMe" name="createdByMe" data-autosubmit>
+            <option value="">Anyone</option>
+            <option value="true" selected="@Model.CreatedByMe">Created by me</option>
         </select>
     </div>
 

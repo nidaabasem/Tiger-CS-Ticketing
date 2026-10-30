@@ -59,7 +59,7 @@ public class TicketClassificationAppServiceTests
 
         var service = new TicketClassificationAppService(
             tickets, categories, priorities, requestTypes, workflowTemplates, departmentAssignments,
-            statusHistory, unitOfWork, audit, sla.DueDates, new FakeTimeProvider(ClassifiedAt));
+            statusHistory, unitOfWork, audit, sla.DueDates, new FakeTimeProvider(ClassifiedAt), handlerRepository: FakeTicketInteractionHandlerRepository.Permissive());
 
         return new Fixture(
             service, tickets, categories, priorities, requestTypes, workflowTemplates,

@@ -79,8 +79,7 @@ public sealed class SlaQueryAppService(
             return SlaOperationResult<TicketSlaSummaryResponseDto>.Failure(SlaOperationOutcome.NotFound);
         }
 
-        if (!await ticketQueryAppService.CanViewDepartmentAsync(
-                callerEmployeeId, callerRoles, ticket.CurrentDepartmentId, cancellationToken))
+        if (!await ticketQueryAppService.CanViewTicketAsync(callerEmployeeId, callerRoles, ticket, cancellationToken))
         {
             return SlaOperationResult<TicketSlaSummaryResponseDto>.Failure(SlaOperationOutcome.Forbidden);
         }
@@ -368,8 +367,7 @@ public sealed class SlaQueryAppService(
             return SlaOperationResult<IReadOnlyList<TicketEscalationResponseDto>>.Failure(SlaOperationOutcome.NotFound);
         }
 
-        if (!await ticketQueryAppService.CanViewDepartmentAsync(
-                callerEmployeeId, callerRoles, ticket.CurrentDepartmentId, cancellationToken))
+        if (!await ticketQueryAppService.CanViewTicketAsync(callerEmployeeId, callerRoles, ticket, cancellationToken))
         {
             return SlaOperationResult<IReadOnlyList<TicketEscalationResponseDto>>.Failure(SlaOperationOutcome.Forbidden);
         }

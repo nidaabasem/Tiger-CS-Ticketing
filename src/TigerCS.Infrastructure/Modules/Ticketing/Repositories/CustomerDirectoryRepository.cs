@@ -50,9 +50,9 @@ public sealed class CustomerDirectoryRepository(TigerCsDbContext dbContext) : IC
         public DateTime? LastInteractionAtUtc { get; init; }
     }
 
-    private IQueryable<IdentifiedTicket> Identified(IReadOnlyCollection<int>? visibleDepartmentIds)
+    private IQueryable<IdentifiedTicket> Identified(IReadOnlyCollection<int>? visibleDepartmentIds, Guid? agentScopeEmployeeId = null)
     {
-        var tickets = dbContext.Tickets.AsNoTracking().InScope(visibleDepartmentIds);
+        var tickets = dbContext.Tickets.AsNoTracking().VisibleTo(dbContext, visibleDepartmentIds, agentScopeEmployeeId);
 
         var withPhone = tickets.Select(t => new
         {
@@ -105,7 +105,7 @@ public sealed class CustomerDirectoryRepository(TigerCsDbContext dbContext) : IC
 
     public async Task<CustomerDirectoryPage> ListAsync(CustomerDirectoryQuery query, CancellationToken cancellationToken = default)
     {
-        var identified = Identified(query.VisibleDepartmentIds);
+        var identified = Identified(query.VisibleDepartmentIds, query.AgentScopeEmployeeId);
         var candidates = identified;
 
         // Search and the department filter select CUSTOMERS (any of whose
@@ -272,9 +272,10 @@ public sealed class CustomerDirectoryRepository(TigerCsDbContext dbContext) : IC
     }
 
     public async Task<CustomerDirectoryProfileDto?> GetProfileAsync(
-        CustomerIdentity identity, IReadOnlyCollection<int>? visibleDepartmentIds, CancellationToken cancellationToken = default)
+        CustomerIdentity identity, IReadOnlyCollection<int>? visibleDepartmentIds, CancellationToken cancellationToken = default,
+        Guid? agentScopeEmployeeId = null)
     {
-        var identified = Identified(visibleDepartmentIds);
+        var identified = Identified(visibleDepartmentIds, agentScopeEmployeeId);
         var own = identity.Kind switch
         {
             CustomerIdentityKind.Crm => identified.Where(x => x.Kind == CrmKind && x.CrmId == identity.CrmBuyerCustomerId),

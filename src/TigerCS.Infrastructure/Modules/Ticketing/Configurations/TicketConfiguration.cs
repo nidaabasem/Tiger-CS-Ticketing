@@ -79,6 +79,11 @@ public class TicketConfiguration : IEntityTypeConfiguration<Ticket>
         // increment, which had nothing yet to guard.
         builder.Property(t => t.RowVersion).IsRowVersion();
 
+        // Who created the ticket — the read-only "ticket creator" access and the "Created by Me" filter. No foreign key: it is an audit-style
+        // fact that must never block or cascade, and an index serves the visibility predicate and the filter.
+        builder.Property(t => t.CreatedByEmployeeId);
+        builder.HasIndex(t => t.CreatedByEmployeeId, "IX_Tickets_CreatedByEmployeeId");
+
         builder.HasOne<Department>()
             .WithMany()
             .HasForeignKey(t => t.OriginatingDepartmentId)

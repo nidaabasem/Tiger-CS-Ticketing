@@ -1271,7 +1271,8 @@ public sealed class NewTicketModel(
             ExternalCustomerId: hasExternalSelection ? ExternalCustomerId : null,
             ExternalCustomerName: hasExternalSelection ? ExternalCustomerName : null,
             ExternalCustomerEmail: hasExternalSelection ? ExternalCustomerEmail : null,
-            ExternalUnitId: hasExternalSelection ? ExternalUnitId : null);
+            ExternalUnitId: hasExternalSelection ? ExternalUnitId : null,
+            AssignToDepartmentQueue: CreateStep.AssignToDepartmentQueue ? true : null);
 
         var result = await ticketsClient.CreateAsync(request, cancellationToken);
         if (!result.IsSuccess || result.Value is null)
@@ -1560,6 +1561,9 @@ public sealed class NewTicketModel(
 
         [Required]
         public string RequestSummary { get; set; } = string.Empty;
+
+        /// <summary>The agent explicitly leaves the new ticket in the department queue. Unticked (the default), a CS Agent who is eligible becomes its owner.</summary>
+        public bool AssignToDepartmentQueue { get; set; }
 
         /// <summary>Required together with <see cref="ManualUnitNumber"/> on the manual property path; never used to run another lookup.</summary>
         public string? ManualProjectName { get; set; }
