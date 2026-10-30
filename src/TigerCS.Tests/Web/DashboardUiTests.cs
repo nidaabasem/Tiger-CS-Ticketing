@@ -407,10 +407,14 @@ public sealed class DashboardUiTests
         Assert.True(policyStart > 0, "The Content-Security-Policy header is missing.");
         var policy = programCs[policyStart..(programCs.IndexOf("await next();", policyStart, StringComparison.Ordinal))];
 
-        foreach (var directive in new[] { "default-src 'self'", "script-src 'self'", "style-src 'self'", "object-src 'none'", "base-uri 'none'", "frame-ancestors 'none'" })
+        foreach (var directive in new[] { "default-src 'self'", "script-src 'self'", "style-src 'self'", "object-src 'none'", "base-uri 'none'" })
         {
             Assert.Contains(directive, policy, StringComparison.Ordinal);
         }
+
+        // Framing is the one directive driven by configuration (EmbeddingPolicyTests
+        // pins its values): it must never be a literal wildcard here.
+        Assert.Contains("\"frame-ancestors \" + embedding.FrameAncestors", policy, StringComparison.Ordinal);
 
         Assert.DoesNotContain("unsafe-inline", policy, StringComparison.Ordinal);
         Assert.DoesNotContain("unsafe-eval", policy, StringComparison.Ordinal);

@@ -4,6 +4,7 @@ using TigerCS.Web.Models;
 using TigerCS.Web.Services;
 using TigerCS.Web.Services.Api;
 using TigerCS.Web.Services.Auth;
+using TigerCS.Web.Services.Embedding;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddSingleton(TimeProvider.System);
@@ -34,6 +35,12 @@ builder.Services.AddRazorPages(options =>
     options.Conventions.AuthorizeFolder("/Reports", ReportsPolicy.Name);
 });
 builder.Services.AddHttpContextAccessor();
+
+// Genesys Cloud embedding: only the origins listed in
+// Embedding:AllowedFrameAncestors may frame this site (none by default).
+// Invalid entries (wildcards, http, paths) fail startup rather than widen it.
+var embedding = EmbeddingPolicy.Create(
+    builder.Configuration.GetSection(EmbeddingOptions.SectionName).Get<EmbeddingOptions>()?.AllowedFrameAncestors);
 
 builder.Services.Configure<TigerCsApiOptions>(builder.Configuration.GetSection(TigerCsApiOptions.SectionName));
 var apiBaseUrl = builder.Configuration.GetSection(TigerCsApiOptions.SectionName)["BaseUrl"]
@@ -106,9 +113,13 @@ builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationSc
         // Protection and HttpOnly by default. No prior cookie-auth pattern
         // exists anywhere in this solution (confirmed before writing this),
         // so this is the platform's own mechanism, not a custom scheme.
-        options.Cookie.Name = "TigerCS.Web.Auth";
+        options.Cookie.Name = EmbeddingPolicy.AuthCookieName;
         options.Cookie.HttpOnly = true;
-        options.Cookie.SameSite = SameSiteMode.Strict;
+        // Strict unless embedding is configured: a cross-site frame (Genesys)
+        // never receives a Strict cookie, so sign-in and Screen Pop would
+        // silently fail there. None requires Secure; Partitioned is added below.
+        options.Cookie.SameSite = embedding.CookieSameSite;
+        options.Cookie.SecurePolicy = embedding.CookieSecurePolicy;
         options.LoginPath = "/Login";
         options.AccessDeniedPath = "/AccessDenied";
         options.ExpireTimeSpan = TimeSpan.FromMinutes(60);
@@ -117,6 +128,16 @@ builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationSc
         // the token's exact ExpiresAtUtc) must not silently outlive it.
         options.SlidingExpiration = false;
     });
+
+// The login form's antiforgery cookie must also travel in the frame, or the
+// POST is rejected (400) even though the page rendered.
+builder.Services.AddAntiforgery(options =>
+{
+    options.Cookie.Name = EmbeddingPolicy.AntiforgeryCookieName;
+    options.Cookie.HttpOnly = true;
+    options.Cookie.SameSite = embedding.CookieSameSite;
+    options.Cookie.SecurePolicy = embedding.CookieSecurePolicy;
+});
 
 builder.Services.AddAuthorization(options =>
 {
@@ -131,9 +152,25 @@ if (!app.Environment.IsDevelopment())
     app.UseHsts();
 }
 
-// Strict CSP: same-origin only, no inline scripts/styles, no framing.
+// Strict CSP: same-origin only, no inline scripts/styles. Framing is denied
+// unless Embedding:AllowedFrameAncestors names an exact approved origin.
 app.Use(async (context, next) =>
 {
+    if (embedding.XFrameOptions is { } xFrameOptions)
+    {
+        context.Response.Headers["X-Frame-Options"] = xFrameOptions;
+    }
+
+    if (embedding.IsEmbeddingEnabled)
+    {
+        context.Response.OnStarting(() =>
+        {
+            context.Response.Headers.SetCookie =
+                EmbeddingPolicy.MarkSessionCookiesPartitioned(context.Response.Headers.SetCookie);
+            return Task.CompletedTask;
+        });
+    }
+
     context.Response.Headers.Append(
         "Content-Security-Policy",
         "default-src 'self'; " +
@@ -145,7 +182,7 @@ app.Use(async (context, next) =>
         "object-src 'none'; " +
         "base-uri 'none'; " +
         "form-action 'self'; " +
-        "frame-ancestors 'none'");
+        "frame-ancestors " + embedding.FrameAncestors);
     await next();
 });
 
