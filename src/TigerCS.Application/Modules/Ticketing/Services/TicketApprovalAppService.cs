@@ -597,7 +597,10 @@ public sealed class TicketApprovalAppService(
         return TicketQueryResultDto<TicketApprovalsViewDto>.Success(new TicketApprovalsViewDto(
             approvalDtos,
             requestable,
-            events.Select(e => new TicketWorkflowEventDto(e.EventType.ToString(), e.OccurredAtUtc, e.ActorEmployeeId, e.Note)).ToList(),
+            events.Select(e => new TicketWorkflowEventDto(
+                e.EventType.ToString(), e.OccurredAtUtc, e.ActorEmployeeId, e.Note,
+                e.TransferReasonCode is { } reasonCode ? ((TicketTransferReason)reasonCode).ToString() : null,
+                e.FromDepartmentId, e.ToDepartmentId, e.ToEmployeeId)).ToList(),
             maintenanceState,
             prerequisitesCompletedAt,
             CallerCanRecordEvents: canOperate && ticket.TicketStatus != TicketStatus.Closed));

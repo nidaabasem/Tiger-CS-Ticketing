@@ -28,14 +28,28 @@ public sealed class TicketQueryAppService(
     ITicketInteractionRepository? interactionRepository = null,
     IChannelRepository? channelRepository = null,
     ITicketAgentHandoffRepository? agentHandoffRepository = null,
+    ITicketWorkflowEventRepository? workflowEventRepository = null,
     CustomerNotificationModePolicy? notificationMode = null)
 {
+    /// <summary>Whether the caller may use the supervisor escalation-review filter (<c>escalated=true</c>).</summary>
+    public static bool CanReviewEscalations(IReadOnlyCollection<string> callerRoles) =>
+        AuthorizationGate.Evaluate(callerRoles, () => callerRoles.Any(TicketRoleSets.ReviewEscalations.Contains));
+
     public async Task<TicketListResultDto> GetQueueAsync(
         Guid callerEmployeeId,
         IReadOnlyCollection<string> callerRoles,
         TicketListRequestDto request,
         CancellationToken cancellationToken = default)
     {
+        var page0 = request.Page < 1 ? 1 : request.Page;
+        var pageSize0 = request.PageSize is < 1 or > 200 ? 50 : request.PageSize;
+        if (request.Escalated == true && !CanReviewEscalations(callerRoles))
+        {
+            // Defence in depth: the API answers 403 before getting here. A caller without the review role never
+            // receives an escalation list, and never silently falls back to the unfiltered queue.
+            return new TicketListResultDto([], 0, page0, pageSize0);
+        }
+
         var visibleDepartmentIds = await ResolveVisibleDepartmentIdsAsync(callerEmployeeId, callerRoles, cancellationToken);
 
         var page = request.Page < 1 ? 1 : request.Page;
@@ -82,7 +96,8 @@ public sealed class TicketQueryAppService(
             ClosureCategory: ParseEnum<TicketClosureCategory>(request.ClosureCategory),
             ClosedFromUtc: request.ClosedFrom?.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc),
             ClosedToUtc: request.ClosedTo?.AddDays(1).ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc),
-            ReviewsAreTest: notificationMode?.IsTest == true);
+            ReviewsAreTest: notificationMode?.IsTest == true,
+            Escalated: request.Escalated == true);
 
         var result = await ticketRepository.SearchAsync(query, cancellationToken);
 
@@ -174,6 +189,25 @@ public sealed class TicketQueryAppService(
             }
         }
 
+        // Ticket transfer tracking: the resolver comes from the current resolution row, and the transfer/escalation
+        // counts from the typed TicketTransferred events — nothing is stored on the ticket, so nothing can drift.
+        if (currentResolution is not null)
+        {
+            detail = detail with { ResolvedByEmployeeId = currentResolution.ResolvingEmployeeId };
+        }
+
+        if (workflowEventRepository is not null)
+        {
+            var transfers = (await workflowEventRepository.ListByTicketIdAsync(ticketId, cancellationToken))
+                .Where(e => e.EventType == WorkflowEventType.TicketTransferred)
+                .ToList();
+            detail = detail with
+            {
+                TransferCount = transfers.Count(e => e.TransferReasonCode != (byte)TicketTransferReason.SystemRouting),
+                EscalationCount = transfers.Count(e => e.IsEscalation)
+            };
+        }
+
         // Originating channel (Channel Management phase): the channel the
         // ticket ENTERED the system on, read from its originating
         // interaction and resolved by name — including a channel that has
@@ -188,7 +222,10 @@ public sealed class TicketQueryAppService(
                 detail = detail with
                 {
                     OriginatingChannelId = originating.ChannelId,
-                    OriginatingChannelName = channel?.Name
+                    OriginatingChannelName = channel?.Name,
+                    // The first agent who actually handled the Genesys interaction. Apply-if-absent on the interaction, so
+                    // later transfers of the call or the ticket never move it; null when no mapped agent was ever recorded.
+                    FirstHandledByEmployeeId = originating.HandledByUserId
                 };
             }
         }

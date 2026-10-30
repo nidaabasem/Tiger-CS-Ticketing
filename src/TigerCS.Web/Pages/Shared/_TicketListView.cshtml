@@ -31,6 +31,7 @@
         backlogAge = Model.BacklogAge,
         pendingApproval = Model.PendingApproval ? "true" : null,
         unclassified = Model.Unclassified ? "true" : null,
+        escalated = Model.Escalated ? "true" : null,
         closureCategory = Model.ClosureCategory,
         closedFrom = Model.ClosedFrom?.ToString("yyyy-MM-dd"),
         closedTo = Model.ClosedTo?.ToString("yyyy-MM-dd"),
@@ -139,6 +140,17 @@
             <option value="true" selected="@Model.Unclassified">Unclassified</option>
         </select>
     </div>
+
+    @if (TicketActions.CanReviewEscalations(Model.Viewer?.Roles))
+    {
+        <div class="field-group">
+            <label class="field-label" for="escalated">Escalation</label>
+            <select class="field-select" id="escalated" name="escalated" data-autosubmit>
+                <option value="">All</option>
+                <option value="true" selected="@Model.Escalated">Escalated — unable to resolve</option>
+            </select>
+        </div>
+    }
 
     <div class="field-group">
         <label class="field-label" for="createdFrom">Created from</label>

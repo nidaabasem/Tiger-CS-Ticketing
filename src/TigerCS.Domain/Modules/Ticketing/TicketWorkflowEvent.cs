@@ -92,7 +92,50 @@ public enum WorkflowEventType : byte
     /// previous and the new request type and the source. Stored here for the
     /// same reason as the handoff events, so it needs no schema change.
     /// </summary>
-    RequestTypeReclassified = 16
+    RequestTypeReclassified = 16,
+
+    /// <summary>
+    /// The ticket changed hands: a department transfer, a reassignment from one
+    /// employee to another, or an escalation. The structured facts (reason,
+    /// from/to department, receiving employee) live in the typed columns of
+    /// the event; the acting employee is <see cref="TicketWorkflowEvent.ActorEmployeeId"/>
+    /// (null = the system, e.g. automatic request-type routing). A Genesys
+    /// call transfer never writes this event — that is queue/agent routing of
+    /// the call, recorded on the interaction and the audit trail, and says
+    /// nothing about whether the agent could resolve the issue.
+    /// </summary>
+    TicketTransferred = 17
+}
+
+/// <summary>
+/// Why a ticket changed hands. Only <see cref="UnableToResolve"/> and
+/// <see cref="NeedsEscalation"/> count as escalations; every other reason is a
+/// plain transfer, and <see cref="SystemRouting"/> is the system moving a
+/// ticket to the department its request type is configured for — never an
+/// agent's judgement.
+/// </summary>
+public enum TicketTransferReason : byte
+{
+    /// <summary>The caller gave no structured reason (older clients, pre-tracking data).</summary>
+    Unspecified = 0,
+
+    /// <summary>The handling agent could not resolve the customer's issue.</summary>
+    UnableToResolve = 1,
+
+    /// <summary>The issue needs a more senior or specialist owner.</summary>
+    NeedsEscalation = 2,
+
+    /// <summary>The ticket was in the wrong department.</summary>
+    WrongDepartment = 3,
+
+    /// <summary>The customer asked for a different person or department.</summary>
+    CustomerRequest = 4,
+
+    /// <summary>Automatic request-type routing moved the ticket.</summary>
+    SystemRouting = 5,
+
+    /// <summary>Any other reason; the free-text note says which.</summary>
+    Other = 6
 }
 
 /// <summary>
@@ -125,6 +168,18 @@ public class TicketWorkflowEvent
 
     public Guid CorrelationId { get; private set; }
 
+    /// <summary><see cref="TicketTransferReason"/> as a byte, for <see cref="WorkflowEventType.TicketTransferred"/> only; null for every other event type.</summary>
+    public byte? TransferReasonCode { get; private set; }
+
+    /// <summary>The department the ticket left (<see cref="WorkflowEventType.TicketTransferred"/> only).</summary>
+    public int? FromDepartmentId { get; private set; }
+
+    /// <summary>The department that holds the ticket after the transfer (<see cref="WorkflowEventType.TicketTransferred"/> only).</summary>
+    public int? ToDepartmentId { get; private set; }
+
+    /// <summary>The employee who received the ticket, when one did; null when it went to a department queue (<see cref="WorkflowEventType.TicketTransferred"/> only).</summary>
+    public Guid? ToEmployeeId { get; private set; }
+
     private TicketWorkflowEvent() { }
 
     public TicketWorkflowEvent(
@@ -149,4 +204,37 @@ public class TicketWorkflowEvent
         Note = note;
         CorrelationId = correlationId;
     }
+
+    /// <summary>The one way a <see cref="WorkflowEventType.TicketTransferred"/> event is built, so its structured columns can never be half-filled.</summary>
+    public static TicketWorkflowEvent ForTransfer(
+        long ticketId,
+        DateTime occurredAtUtc,
+        Guid? actorEmployeeId,
+        TicketTransferReason reason,
+        int fromDepartmentId,
+        int toDepartmentId,
+        Guid? toEmployeeId,
+        string? note,
+        Guid correlationId)
+    {
+        if (!Enum.IsDefined(reason))
+        {
+            throw new ArgumentException($"Reason {reason} is not a defined transfer reason.", nameof(reason));
+        }
+
+        return new TicketWorkflowEvent(
+            ticketId, WorkflowEventType.TicketTransferred, occurredAtUtc, actorEmployeeId, ticketApprovalId: null,
+            note is { Length: > 500 } ? note[..500] : note, correlationId)
+        {
+            TransferReasonCode = (byte)reason,
+            FromDepartmentId = fromDepartmentId,
+            ToDepartmentId = toDepartmentId,
+            ToEmployeeId = toEmployeeId
+        };
+    }
+
+    /// <summary>True for the two reasons that mean the handling agent passed the ticket up rather than simply moving it.</summary>
+    public bool IsEscalation =>
+        EventType == WorkflowEventType.TicketTransferred
+        && TransferReasonCode is (byte)TicketTransferReason.UnableToResolve or (byte)TicketTransferReason.NeedsEscalation;
 }

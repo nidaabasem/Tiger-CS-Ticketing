@@ -100,6 +100,16 @@ public sealed class TicketDetailsModel(
     public string? CustomerPhone { get; private set; }
     public string? DepartmentName { get; private set; }
     public string? OwnerName { get; private set; }
+
+    /// <summary>Names for the people the handling summary and transfer entries mention (first handler, resolver, receivers); anyone not resolvable falls back to a short id.</summary>
+    public IReadOnlyDictionary<Guid, string> EmployeeNames { get; private set; } = new Dictionary<Guid, string>();
+
+    public string? FirstHandledByName => NameFor(Ticket?.FirstHandledByEmployeeId);
+
+    public string? ResolvedByName => NameFor(Ticket?.ResolvedByEmployeeId);
+
+    private string? NameFor(Guid? employeeId) =>
+        employeeId is { } id ? (EmployeeNames.TryGetValue(id, out var name) ? name : $"Employee #{id.ToString()[..8]}") : null;
     public IReadOnlyList<DepartmentUserDto> AssignableEmployees { get; private set; } = [];
 
     /// <summary>
@@ -439,7 +449,9 @@ public sealed class TicketDetailsModel(
 
         if (departmentId is null || departmentId == currentDepartmentId)
         {
-            var result = await ticketsApiClient.AssignAsync(id, new AssignTicketRequestDto(employeeId, rowVersion), cancellationToken);
+            var result = await ticketsApiClient.AssignAsync(
+                id, new AssignTicketRequestDto(employeeId, rowVersion, Assign.ReasonCode, string.IsNullOrWhiteSpace(Assign.Reason) ? null : Assign.Reason.Trim()),
+                cancellationToken);
             return await HandleMutationAsync(result, "assign", "Ticket assigned.", cancellationToken);
         }
 
@@ -450,7 +462,7 @@ public sealed class TicketDetailsModel(
         }
 
         var transferred = await ticketsApiClient.TransferAsync(
-            id, new TransferTicketRequestDto(departmentId.Value, Assign.Reason.Trim(), rowVersion, employeeId), cancellationToken);
+            id, new TransferTicketRequestDto(departmentId.Value, Assign.Reason.Trim(), rowVersion, employeeId, Assign.ReasonCode), cancellationToken);
         return await HandleMutationAsync(transferred, "assign", "Ticket transferred and assigned.", cancellationToken);
     }
 
@@ -491,8 +503,13 @@ public sealed class TicketDetailsModel(
             return await ReloadWithErrorAsync("transfer", "Could not read the ticket's current version. Reloading.", cancellationToken);
         }
 
+        if (Transfer.ReasonCode is null or TicketTransferReason.Unspecified or TicketTransferReason.SystemRouting)
+        {
+            return await ReloadWithErrorAsync("transfer", "Choose why the ticket is being transferred.", cancellationToken);
+        }
+
         var result = await ticketsApiClient.TransferAsync(
-            id, new TransferTicketRequestDto(Transfer.TargetDepartmentId, Transfer.Reason, rowVersion), cancellationToken);
+            id, new TransferTicketRequestDto(Transfer.TargetDepartmentId, Transfer.Reason, rowVersion, null, Transfer.ReasonCode), cancellationToken);
         return await HandleMutationAsync(result, "transfer", "Ticket transferred.", cancellationToken);
     }
 
@@ -1037,6 +1054,8 @@ public sealed class TicketDetailsModel(
             ? await nameResolver.ResolveOwnerNameAsync(Ticket.CurrentDepartmentId, ownerId, cancellationToken)
             : null;
 
+        await LoadEmployeeNamesAsync(Ticket, Approvals?.Events ?? [], cancellationToken);
+
         LoadActionAffordances(Ticket);
         await LoadClassifyOptionsAsync(Ticket, cancellationToken);
         await LoadCategoryNameAsync(Ticket, cancellationToken);
@@ -1048,7 +1067,7 @@ public sealed class TicketDetailsModel(
             : [];
 
         ActivityFeed = BuildActivityFeed(
-            Ticket, Notes, Escalations, lifecycleHistory, Approvals?.Events ?? [], Viewer, nameResolver);
+            Ticket, Notes, Escalations, lifecycleHistory, Approvals?.Events ?? [], Viewer, nameResolver, EmployeeNames);
 
         // Pre-fill the RowVersion the forms will post back, and default the
         // employee/status pickers so an untouched form still submits something valid.
@@ -1211,7 +1230,8 @@ public sealed class TicketDetailsModel(
         IReadOnlyList<TicketStatusHistoryEntryDto> lifecycleHistory,
         IReadOnlyList<TicketWorkflowEventDto> workflowEvents,
         CurrentUser? viewer,
-        TicketNameResolver nameResolver)
+        TicketNameResolver nameResolver,
+        IReadOnlyDictionary<Guid, string>? employeeNames = null)
     {
         var entries = new List<ActivityEntry>
         {
@@ -1241,6 +1261,12 @@ public sealed class TicketDetailsModel(
         // would claim the ticket moved when it did not.
         foreach (var approvalEvent in workflowEvents)
         {
+            if (approvalEvent.EventType == nameof(WorkflowEventType.TicketTransferred))
+            {
+                entries.Add(DescribeTransfer(approvalEvent, viewer, nameResolver, employeeNames));
+                continue;
+            }
+
             if (DescribeApprovalEvent(approvalEvent.EventType) is not { } description)
             {
                 continue;
@@ -1299,6 +1325,104 @@ public sealed class TicketDetailsModel(
         }
 
         return [.. entries.OrderBy(e => e.TimestampUtc)];
+    }
+
+    /// <summary>
+    /// A transfer / escalation as the feed reads it: who moved the ticket, to whom or which department, and the recorded
+    /// reason. Escalations (Unable to Resolve / Needs Escalation) get their own kind so they stand out in the timeline.
+    /// </summary>
+    private static ActivityEntry DescribeTransfer(
+        TicketWorkflowEventDto transfer, CurrentUser? viewer, TicketNameResolver nameResolver, IReadOnlyDictionary<Guid, string>? employeeNames)
+    {
+        string NameOf(Guid id) =>
+            TicketNameResolver.ResolveSelfAuthorName(id, viewer)
+            ?? (employeeNames is not null && employeeNames.TryGetValue(id, out var known) ? known : $"Employee #{id.ToString()[..8]}");
+
+        string DepartmentOf(int? id) =>
+            id is { } departmentId ? nameResolver.TryGetDepartmentName(departmentId) ?? $"Department #{departmentId}" : "a department";
+
+        var actor = transfer.ActorEmployeeId is { } actorId ? NameOf(actorId) : "System";
+        var isEscalation = transfer.TransferReason is nameof(TicketTransferReason.UnableToResolve) or nameof(TicketTransferReason.NeedsEscalation);
+        var movedDepartment = transfer.FromDepartmentId != transfer.ToDepartmentId;
+
+        var target = transfer.ToEmployeeId is { } toEmployeeId
+            ? movedDepartment ? $"{NameOf(toEmployeeId)} in {DepartmentOf(transfer.ToDepartmentId)}" : NameOf(toEmployeeId)
+            : $"the {DepartmentOf(transfer.ToDepartmentId)} queue";
+
+        var verb = isEscalation ? "escalated the ticket to" : movedDepartment ? "transferred the ticket to" : "reassigned the ticket to";
+        var detail = movedDepartment ? $"From {DepartmentOf(transfer.FromDepartmentId)} to {DepartmentOf(transfer.ToDepartmentId)}" : null;
+
+        return new ActivityEntry(
+            transfer.OccurredAtUtc,
+            isEscalation ? "escalation" : "transfer",
+            actor,
+            $"{verb} {target} — {TicketDisplay.TransferReasonLabel(transfer.TransferReason)}",
+            transfer.Note,
+            transfer.ActorEmployeeId is not null,
+            detail);
+    }
+
+    /// <summary>
+    /// Resolves the people the page names beyond the ticket's current owner — the first handler, the resolver and anyone who
+    /// received a transfer — through the same department member lists the owner is resolved from. Unresolvable ids keep the
+    /// short-id fallback; a lookup failure never fails the page.
+    /// </summary>
+    private async Task LoadEmployeeNamesAsync(
+        TicketDetailDto ticket, IReadOnlyList<TicketWorkflowEventDto> workflowEvents, CancellationToken cancellationToken)
+    {
+        var wanted = new List<(Guid Id, int DepartmentId)>();
+        if (ticket.FirstHandledByEmployeeId is { } firstHandler)
+        {
+            wanted.Add((firstHandler, ticket.OriginatingDepartmentId));
+            wanted.Add((firstHandler, ticket.CurrentDepartmentId));
+        }
+
+        if (ticket.ResolvedByEmployeeId is { } resolver)
+        {
+            wanted.Add((resolver, ticket.CurrentDepartmentId));
+        }
+
+        foreach (var transfer in workflowEvents.Where(e => e.EventType == nameof(WorkflowEventType.TicketTransferred)))
+        {
+            if (transfer.ToEmployeeId is { } receiver && transfer.ToDepartmentId is { } toDepartment)
+            {
+                wanted.Add((receiver, toDepartment));
+            }
+
+            if (transfer.ActorEmployeeId is { } actor)
+            {
+                wanted.Add((actor, ticket.CurrentDepartmentId));
+            }
+        }
+
+        var names = new Dictionary<Guid, string>();
+        foreach (var (id, departmentId) in wanted)
+        {
+            if (names.ContainsKey(id))
+            {
+                continue;
+            }
+
+            if (TicketNameResolver.ResolveSelfAuthorName(id, Viewer) is { } self)
+            {
+                names[id] = self;
+                continue;
+            }
+
+            try
+            {
+                if (await nameResolver.ResolveOwnerNameAsync(departmentId, id, cancellationToken) is { } resolved)
+                {
+                    names[id] = resolved;
+                }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                // Display-only enrichment: the short-id fallback is shown instead.
+            }
+        }
+
+        EmployeeNames = names;
     }
 
     /// <summary>
@@ -1398,6 +1522,9 @@ public sealed class TicketDetailsModel(
 
         /// <summary>Required only when the chosen department is not the ticket's current one (it becomes the transfer reason).</summary>
         public string? Reason { get; set; }
+
+        /// <summary>Why the ticket changes hands; optional here. Recorded by the Api only when this reassigns a ticket that already has an owner, or transfers it to another department.</summary>
+        public TicketTransferReason? ReasonCode { get; set; }
         public string? RowVersionBase64 { get; set; }
     }
 
@@ -1418,6 +1545,9 @@ public sealed class TicketDetailsModel(
         public int TargetDepartmentId { get; set; }
         [Required]
         public string Reason { get; set; } = string.Empty;
+
+        /// <summary>Required: a manual transfer always says why (Unable to Resolve / Needs Escalation / ...), so escalations can be reviewed.</summary>
+        public TicketTransferReason? ReasonCode { get; set; }
         public string? RowVersionBase64 { get; set; }
     }
 

@@ -111,6 +111,11 @@ public static class TicketActions
         viewerRoles is not null
         && (viewerRoles.Any(TicketRoleSets.Reopen.Contains) || AuthorizationOverride.AppliesTo(viewerRoles));
 
+    /// <summary>Whether the supervisor escalation-review filter is worth offering — the Api's own <see cref="TicketRoleSets.ReviewEscalations"/> plus ADR-0024's override.</summary>
+    public static bool CanReviewEscalations(IReadOnlyCollection<string>? viewerRoles) =>
+        viewerRoles is not null
+        && (viewerRoles.Any(TicketRoleSets.ReviewEscalations.Contains) || AuthorizationOverride.AppliesTo(viewerRoles));
+
     /// <summary>
     /// Whether a Transfer control — and the department picker inside it —
     /// is worth rendering. Reads the Api's own <see cref="TicketRoleSets.Transfer"/>

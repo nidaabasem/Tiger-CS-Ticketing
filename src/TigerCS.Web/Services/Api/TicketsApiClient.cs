@@ -29,6 +29,7 @@ public sealed class TicketsApiClient(HttpClient httpClient, ILogger<TicketsApiCl
         if (!string.IsNullOrWhiteSpace(request.BacklogAge)) query["backlogAge"] = request.BacklogAge;
         if (request.PendingApproval == true) query["pendingApproval"] = "true";
         if (request.Unclassified == true) query["unclassified"] = "true";
+        if (request.Escalated == true) query["escalated"] = "true";
         if (!string.IsNullOrWhiteSpace(request.ClosureCategory)) query["closureCategory"] = request.ClosureCategory;
         if (request.ClosedFrom is DateOnly closedFrom) query["closedFrom"] = closedFrom.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
         if (request.ClosedTo is DateOnly closedTo) query["closedTo"] = closedTo.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);

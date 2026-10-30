@@ -63,7 +63,8 @@ public sealed record TicketQuery(
     TicketClosureCategory? ClosureCategory = null,
     DateTime? ClosedFromUtc = null,
     DateTime? ClosedToUtc = null,
-    bool ReviewsAreTest = false);
+    bool ReviewsAreTest = false,
+    bool Escalated = false);
 
 public sealed record TicketQueryResult(IReadOnlyList<Ticket> Items, int TotalCount);
 

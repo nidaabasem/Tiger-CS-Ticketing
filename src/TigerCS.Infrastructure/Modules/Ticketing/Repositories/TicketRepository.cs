@@ -124,6 +124,17 @@ public sealed class TicketRepository(TigerCsDbContext dbContext) : ITicketReposi
             filtered = filtered.Where(t => t.SlaState == SlaState.Breached);
         }
 
+        // Supervisor review: tickets an agent passed up as "unable to resolve" / "needs escalation". Narrows the
+        // already department-scoped set above; it can never add a ticket the caller could not otherwise see.
+        if (query.Escalated)
+        {
+            filtered = filtered.Where(t => dbContext.TicketWorkflowEvents.Any(e =>
+                e.TicketId == t.TicketId
+                && e.EventType == WorkflowEventType.TicketTransferred
+                && (e.TransferReasonCode == (byte)TicketTransferReason.UnableToResolve
+                    || e.TransferReasonCode == (byte)TicketTransferReason.NeedsEscalation)));
+        }
+
         var nowUtc = query.NowUtc ?? DateTime.UtcNow;
         if (query.DueToday)
         {

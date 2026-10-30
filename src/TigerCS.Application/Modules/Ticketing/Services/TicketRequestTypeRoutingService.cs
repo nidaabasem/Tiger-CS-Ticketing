@@ -272,6 +272,19 @@ public sealed class TicketRequestTypeRoutingService(
             assignedEmployeeId = assignment.AssignedEmployeeId;
         }
 
+        // Ticket transfer tracking: the system moving a ticket to its request type's department is recorded as a
+        // transfer too — but as SystemRouting with no acting employee, so it is visible in the history and the count
+        // while never reading as an agent escalating.
+        if (transferred)
+        {
+            await workflowEventRepository.AddAsync(
+                TicketWorkflowEvent.ForTransfer(
+                    ticket.TicketId, nowUtc, actorEmployeeId: null, TicketTransferReason.SystemRouting,
+                    previousDepartmentId, ticket.CurrentDepartmentId, ticket.CurrentOwnerEmployeeId,
+                    $"Request type '{requestType.Name}' routing ({source})", correlationId),
+                cancellationToken);
+        }
+
         var slaOutcome = await ApplySlaAsync(ticket, defaultPriority, actorEmployeeId, nowUtc, correlationId, cancellationToken);
 
         if (reclassify)

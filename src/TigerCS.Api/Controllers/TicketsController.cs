@@ -100,6 +100,11 @@ public class TicketsController(
             return Unauthorized();
         }
 
+        if (request.Escalated == true && !TicketQueryAppService.CanReviewEscalations(GetRoles()))
+        {
+            return Forbid();
+        }
+
         var result = await ticketQueryAppService.GetQueueAsync(employeeId.Value, GetRoles(), request, cancellationToken);
         return Ok(result);
     }
