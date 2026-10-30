@@ -137,6 +137,89 @@ public class TicketTransferTrackingTests
         Assert.Equal(second, ticket.CurrentOwnerEmployeeId);
     }
 
+    [Theory]
+    [InlineData(null)]
+    [InlineData(TicketTransferReason.Unspecified)]
+    [InlineData(TicketTransferReason.SystemRouting)]
+    public async Task Reassign_OfAnOwnedTicket_WithoutAnExplicitReason_IsRefused_AndChangesNothing(TicketTransferReason? reason)
+    {
+        var f = CreateService();
+        var ticket = await SeedTicketAsync(f.Tickets);
+        var owner = Guid.NewGuid();
+        var next = Guid.NewGuid();
+        var supervisor = Guid.NewGuid();
+        foreach (var id in new[] { owner, next, supervisor })
+        {
+            f.DepartmentAssignments.Assignments.Add(new UserDepartmentAssignment(id, ticket.CurrentDepartmentId, true, DateTime.UtcNow, null));
+        }
+
+        ticket.AssignTo(owner);
+
+        var result = await f.Service.AssignAsync(
+            supervisor, [Roles.CsSupervisor], ticket.TicketId, new AssignTicketRequestDto(next, [], reason));
+
+        Assert.Equal(TicketMutationOutcome.TransferReasonRequired, result.Outcome);
+        Assert.Equal(owner, ticket.CurrentOwnerEmployeeId);
+        Assert.Empty(f.Events.All);
+    }
+
+    [Theory]
+    [InlineData(TicketTransferReason.UnableToResolve)]
+    [InlineData(TicketTransferReason.NeedsEscalation)]
+    [InlineData(TicketTransferReason.WrongDepartment)]
+    [InlineData(TicketTransferReason.CustomerRequest)]
+    [InlineData(TicketTransferReason.Other)]
+    public async Task Reassign_OfAnOwnedTicket_WithAnExplicitReason_Succeeds_AndRecordsIt(TicketTransferReason reason)
+    {
+        var f = CreateService();
+        var ticket = await SeedTicketAsync(f.Tickets);
+        var owner = Guid.NewGuid();
+        var next = Guid.NewGuid();
+        var supervisor = Guid.NewGuid();
+        foreach (var id in new[] { owner, next, supervisor })
+        {
+            f.DepartmentAssignments.Assignments.Add(new UserDepartmentAssignment(id, ticket.CurrentDepartmentId, true, DateTime.UtcNow, null));
+        }
+
+        ticket.AssignTo(owner);
+
+        var result = await f.Service.AssignAsync(
+            supervisor, [Roles.CsSupervisor], ticket.TicketId, new AssignTicketRequestDto(next, [], reason));
+
+        Assert.Equal(TicketMutationOutcome.Success, result.Outcome);
+        Assert.Equal((byte)reason, Assert.Single(f.Events.All).TransferReasonCode);
+    }
+
+    [Fact]
+    public async Task FirstAssignmentOutOfTheQueue_NeedsNoReason_AndRecordsNoTransfer()
+    {
+        var f = CreateService();
+        var ticket = await SeedTicketAsync(f.Tickets);
+        var agent = Guid.NewGuid();
+        var supervisor = Guid.NewGuid();
+        f.DepartmentAssignments.Assignments.Add(new UserDepartmentAssignment(agent, ticket.CurrentDepartmentId, true, DateTime.UtcNow, null));
+        f.DepartmentAssignments.Assignments.Add(new UserDepartmentAssignment(supervisor, ticket.CurrentDepartmentId, true, DateTime.UtcNow, null));
+
+        var result = await f.Service.AssignAsync(supervisor, [Roles.CsSupervisor], ticket.TicketId, new AssignTicketRequestDto(agent, []));
+
+        Assert.Equal(TicketMutationOutcome.Success, result.Outcome);
+        Assert.Equal(agent, ticket.CurrentOwnerEmployeeId);
+        Assert.Empty(f.Events.All);
+    }
+
+    [Fact]
+    public async Task ReassignRefusal_DoesNotLeakToAnUnauthorizedCaller_TheRoleCheckComesFirst()
+    {
+        var f = CreateService();
+        var ticket = await SeedTicketAsync(f.Tickets);
+        ticket.AssignTo(Guid.NewGuid());
+
+        var result = await f.Service.AssignAsync(
+            Guid.NewGuid(), [Roles.CsAgent], ticket.TicketId, new AssignTicketRequestDto(Guid.NewGuid(), []));
+
+        Assert.Equal(TicketMutationOutcome.Forbidden, result.Outcome);
+    }
+
     [Fact]
     public async Task Reassign_ToTheSameOwner_RecordsNothing()
     {

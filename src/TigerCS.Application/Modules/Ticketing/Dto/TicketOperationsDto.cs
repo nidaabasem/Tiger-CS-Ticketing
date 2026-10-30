@@ -135,6 +135,8 @@ public sealed record TicketListResultDto(IReadOnlyList<TicketSummaryDto> Items, 
 /// <param name="ResolvedByEmployeeId">Who recorded the current resolution; null until resolved (and for system closures this is the system actor on the resolution row).</param>
 /// <param name="TransferCount">How many times the ticket changed hands by a person's action (department transfers and reassignments). Automatic request-type routing is not counted.</param>
 /// <param name="EscalationCount">How many of those were recorded as UnableToResolve or NeedsEscalation.</param>
+/// <param name="FirstHandledByName">Display name of <c>FirstHandledByEmployeeId</c>, read from the employee directory itself — so it resolves even when that person has since left the department or been deactivated.</param>
+/// <param name="ResolvedByName">Display name of <c>ResolvedByEmployeeId</c>, resolved the same way.</param>
 /// <param name="HandoffState">
 /// Whether this ticket is waiting on a human agent, <b>derived</b> from the
 /// one open <c>TicketAgentHandoff</c> row: WaitingForAgent, Assigned or
@@ -194,7 +196,9 @@ public sealed record TicketDetailDto(
     Guid? FirstHandledByEmployeeId = null,
     Guid? ResolvedByEmployeeId = null,
     int TransferCount = 0,
-    int EscalationCount = 0);
+    int EscalationCount = 0,
+    string? FirstHandledByName = null,
+    string? ResolvedByName = null);
 
 public enum TicketQueryOutcome
 {
@@ -214,7 +218,7 @@ public sealed record TicketQueryResultDto<T>(TicketQueryOutcome Outcome, T? Resp
 /// <summary>Assign or reassign a ticket (MVP-API-Contracts.md §3.5).</summary>
 /// <param name="AssignedEmployeeId">Required. Must be an active member of the ticket's current department.</param>
 /// <param name="RowVersion">Required. The <c>rowVersion</c> from the ticket you read. A stale value is answered with 409.</param>
-/// <param name="ReasonCode">Optional. Why the ticket is changing hands, recorded when this REASSIGNS a ticket that already has an owner (a first assignment from the queue is not a transfer). Send <c>UnableToResolve</c> or <c>NeedsEscalation</c> to record an escalation.</param>
+/// <param name="ReasonCode">Required (422 <c>transfer-reason-required</c> otherwise) when this REASSIGNS a ticket that already has a different owner: 1=UnableToResolve, 2=NeedsEscalation, 3=WrongDepartment, 4=CustomerRequest, 6=Other. Not needed for the first assignment out of the department queue. 1 and 2 record an escalation.</param>
 /// <param name="Reason">Optional free-text context for <paramref name="ReasonCode"/>.</param>
 public sealed record AssignTicketRequestDto(Guid AssignedEmployeeId, byte[] RowVersion, TicketTransferReason? ReasonCode = null, string? Reason = null);
 
@@ -273,6 +277,9 @@ public enum TicketMutationOutcome
 
     /// <summary>Approved rule: Reopen requires the department that takes the reopened work on.</summary>
     TargetDepartmentRequired,
+
+    /// <summary>Reassigning a ticket that already has a different owner needs an explicit transfer reason (Unable to Resolve, Needs Escalation, Wrong Department, Customer Request or Other). The first assignment out of the department queue needs none.</summary>
+    TransferReasonRequired,
 
     /// <summary>Reconciliation-specific: the session's raw unit context doesn't match the ticket's originating raw unit number.</summary>
     ReconciliationUnitMismatch,

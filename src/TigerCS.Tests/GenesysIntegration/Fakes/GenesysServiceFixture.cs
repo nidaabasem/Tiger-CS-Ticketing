@@ -76,6 +76,7 @@ public sealed class GenesysServiceFixture
 
     /// <summary>The ticket's typed event log — where the handoff story is recorded for Ticket Activity.</summary>
     public FakeTicketWorkflowEventRepository WorkflowEvents { get; } = new();
+    public GenesysAgentHandlingHistory HandlingHistory { get; }
     public FakeTicketStatusHistoryRepository StatusHistory { get; } = new();
     public FakeTicketApprovalRepository Approvals { get; } = new();
 
@@ -178,6 +179,8 @@ public sealed class GenesysServiceFixture
 
         AgentResolution = new GenesysAgentResolutionAppService(AgentMappings, UserRoles, DepartmentAssignments);
 
+        HandlingHistory = new GenesysAgentHandlingHistory(WorkflowEvents, AgentResolution, Clock);
+
         AgentHandoff = new GenesysAgentHandoffAppService(
             Options, Conversations, Handoffs, WorkflowEvents, Tickets, UnitOfWork, Audit, TimeProvider.System);
 
@@ -193,7 +196,7 @@ public sealed class GenesysServiceFixture
             Tickets, intakeRecordAppService, ticketCreationAppService, customerSearch, Audit, UnitOfWork,
             AgentResolution,
             new GenesysDefaultPriorityResolver(Options, new FakePriorityRepository()),
-            RequestTypeClassification);
+            RequestTypeClassification, HandlingHistory);
 
         Classification = new TicketClassificationAppService(
             Tickets, Categories, new FakePriorityRepository(), RequestTypes,
@@ -229,13 +232,13 @@ public sealed class GenesysServiceFixture
         // Contract #3: the one update facade over the two services above.
         TicketUpdate = new GenesysTicketUpdateAppService(
             Options, Conversations, Tickets, Departments, Handoffs, UnitOfWork, ConversationEnd, AgentHandoff, AgentResolution, Audit,
-            WorkflowEvents, Clock, RequestTypeClassification, Lifecycle);
+            WorkflowEvents, Clock, RequestTypeClassification, Lifecycle, HandlingHistory);
 
         InactivityClose = new ChatbotInactivityCloseAppService(
             Options, Conversations, Tickets, Handoffs, Departments, Lifecycle, UnitOfWork, Clock);
 
         AgentContext = new GenesysAgentContextAppService(
-            Options, AgentResolution, Conversations, Tickets, UnitOfWork, Audit);
+            Options, AgentResolution, Conversations, Tickets, UnitOfWork, Audit, HandlingHistory);
     }
 
     /// <summary>

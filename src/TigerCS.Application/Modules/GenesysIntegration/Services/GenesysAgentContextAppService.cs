@@ -41,7 +41,8 @@ public sealed class GenesysAgentContextAppService(
     IGenesysConversationRepository conversationRepository,
     ITicketRepository ticketRepository,
     ITicketingUnitOfWork unitOfWork,
-    IAuditEntryWriter auditWriter)
+    IAuditEntryWriter auditWriter,
+    GenesysAgentHandlingHistory handlingHistory)
 {
     public async Task<GenesysAgentContextResult> ResolveAsync(
         Guid callerEmployeeId, GenesysAgentContextDto request, CancellationToken cancellationToken = default)
@@ -102,6 +103,8 @@ public sealed class GenesysAgentContextAppService(
                     + $"AgentEmail={request.AgentEmail ?? "(none)"}",
                 correlationId: Guid.NewGuid(),
                 cancellationToken);
+
+            await handlingHistory.RecordFirstHandlerAsync(interaction.TicketId, conversationId, agent, cancellationToken);
 
             await unitOfWork.SaveChangesAsync(cancellationToken);
             await transaction.CommitAsync(cancellationToken);

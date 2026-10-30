@@ -200,16 +200,16 @@ else
                                         </div>
                                     }
                                     <div class="field-group">
-                                        <label class="field-label" asp-for="Assign.ReasonCode">Why is it changing hands? (optional)</label>
+                                        <label class="field-label" asp-for="Assign.ReasonCode">Why is it changing hands? (required when the ticket already has an owner)</label>
                                         <select class="field-select" asp-for="Assign.ReasonCode">
-                                            <option value="">— not a hand-over / not specified —</option>
+                                            <option value="">— not needed for a first assignment —</option>
                                             <option value="@((byte)TicketTransferReason.UnableToResolve)">Unable to resolve</option>
                                             <option value="@((byte)TicketTransferReason.NeedsEscalation)">Needs escalation</option>
                                             <option value="@((byte)TicketTransferReason.WrongDepartment)">Wrong department</option>
                                             <option value="@((byte)TicketTransferReason.CustomerRequest)">Customer request</option>
                                             <option value="@((byte)TicketTransferReason.Other)">Other</option>
                                         </select>
-                                        <span class="field-hint">Recorded when this reassigns a ticket that already has an owner.</span>
+                                        <span class="field-hint">Reassigning an owned ticket needs a reason; assigning from the department queue does not.</span>
                                     </div>
                                     <div class="action-form__footer"><button type="submit" class="btn btn-gold btn-sm">Assign</button></div>
                                 </form>

@@ -108,7 +108,8 @@ public sealed class GenesysInquiryIngestionAppService(
     ITicketingUnitOfWork unitOfWork,
     GenesysAgentResolutionAppService agentResolution,
     GenesysDefaultPriorityResolver defaultPriorityResolver,
-    GenesysRequestTypeClassificationAppService classificationAppService)
+    GenesysRequestTypeClassificationAppService classificationAppService,
+    GenesysAgentHandlingHistory handlingHistory)
 {
     public async Task<GenesysIngestionResult> IngestAsync(
         Guid callerEmployeeId, GenesysInquiryDto inquiry, CancellationToken cancellationToken = default)
@@ -319,7 +320,11 @@ public sealed class GenesysInquiryIngestionAppService(
         if (agent is { IsResolved: true }
             && await conversationRepository.GetByConversationAndTicketAsync(conversationId, creation.Response.TicketId, cancellationToken) is { } originating)
         {
-            originating.RecordHandlingAgentIfAbsent(agent.Agent!.GenesysUserId, agent.Agent.UserId);
+            if (originating.RecordHandlingAgentIfAbsent(agent.Agent!.GenesysUserId, agent.Agent.UserId))
+            {
+                // The first handler is also preserved in the ticket's event history, beside any later call transfers.
+                await handlingHistory.RecordFirstHandlerAsync(creation.Response.TicketId, conversationId, agent.Agent, cancellationToken);
+            }
         }
 
         // The integration-level audit entry, written after the ticket's own

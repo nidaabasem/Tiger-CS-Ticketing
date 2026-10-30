@@ -80,6 +80,16 @@ public sealed class TicketAssignmentAppService(
             return TicketMutationResult.Failure(TicketMutationOutcome.DisabledByDepartmentSettings);
         }
 
+        // Taking a ticket out of the department queue stays a plain assignment. Handing an OWNED ticket to someone else
+        // is a hand-over and must say why — the reason is what lets "unable to resolve" be reviewed later, so it is
+        // never defaulted or inferred. (Assigning to the current owner changes nothing and needs no reason.)
+        if (ticket.CurrentOwnerEmployeeId is { } currentOwner
+            && currentOwner != request.AssignedEmployeeId
+            && request.ReasonCode is (null or TicketTransferReason.Unspecified or TicketTransferReason.SystemRouting))
+        {
+            return TicketMutationResult.Failure(TicketMutationOutcome.TransferReasonRequired);
+        }
+
         // MVP-API-Contracts.md §3.5's own validation: AssignedEmployeeId
         // must be an active member of the ticket's CurrentDepartmentId —
         // checked against the department the assignment target actually

@@ -104,9 +104,9 @@ public sealed class TicketDetailsModel(
     /// <summary>Names for the people the handling summary and transfer entries mention (first handler, resolver, receivers); anyone not resolvable falls back to a short id.</summary>
     public IReadOnlyDictionary<Guid, string> EmployeeNames { get; private set; } = new Dictionary<Guid, string>();
 
-    public string? FirstHandledByName => NameFor(Ticket?.FirstHandledByEmployeeId);
+    public string? FirstHandledByName => Ticket?.FirstHandledByName ?? NameFor(Ticket?.FirstHandledByEmployeeId);
 
-    public string? ResolvedByName => NameFor(Ticket?.ResolvedByEmployeeId);
+    public string? ResolvedByName => Ticket?.ResolvedByName ?? NameFor(Ticket?.ResolvedByEmployeeId);
 
     private string? NameFor(Guid? employeeId) =>
         employeeId is { } id ? (EmployeeNames.TryGetValue(id, out var name) ? name : $"Employee #{id.ToString()[..8]}") : null;
@@ -446,6 +446,15 @@ public sealed class TicketDetailsModel(
 
         var current = await ticketsApiClient.GetByIdAsync(id, cancellationToken);
         var currentDepartmentId = current.IsSuccess && current.Value is not null ? current.Value.CurrentDepartmentId : (int?)null;
+
+        // Handing an OWNED ticket to someone else (or to another department) must say why; taking one out of the queue
+        // stays a plain assignment. The Api enforces the same rule — this just asks before posting.
+        var currentOwner = current.IsSuccess ? current.Value?.CurrentOwnerEmployeeId : null;
+        var isHandOver = (currentOwner is { } owner && owner != employeeId) || (departmentId is not null && departmentId != currentDepartmentId);
+        if (isHandOver && Assign.ReasonCode is (null or TicketTransferReason.Unspecified or TicketTransferReason.SystemRouting))
+        {
+            return await ReloadWithErrorAsync("assign", "Choose why the ticket is changing hands (for example Unable to resolve or Needs escalation).", cancellationToken);
+        }
 
         if (departmentId is null || departmentId == currentDepartmentId)
         {
@@ -1054,7 +1063,7 @@ public sealed class TicketDetailsModel(
             ? await nameResolver.ResolveOwnerNameAsync(Ticket.CurrentDepartmentId, ownerId, cancellationToken)
             : null;
 
-        await LoadEmployeeNamesAsync(Ticket, Approvals?.Events ?? [], cancellationToken);
+        EmployeeNames = BuildEmployeeNames(Ticket, Approvals?.Events ?? []);
 
         LoadActionAffordances(Ticket);
         await LoadClassifyOptionsAsync(Ticket, cancellationToken);
@@ -1267,6 +1276,12 @@ public sealed class TicketDetailsModel(
                 continue;
             }
 
+            if (approvalEvent.EventType is nameof(WorkflowEventType.GenesysAgentConnected) or nameof(WorkflowEventType.GenesysCallTransferred))
+            {
+                entries.Add(DescribeGenesysAgentEvent(approvalEvent, viewer, employeeNames));
+                continue;
+            }
+
             if (DescribeApprovalEvent(approvalEvent.EventType) is not { } description)
             {
                 continue;
@@ -1363,66 +1378,60 @@ public sealed class TicketDetailsModel(
     }
 
     /// <summary>
-    /// Resolves the people the page names beyond the ticket's current owner — the first handler, the resolver and anyone who
-    /// received a transfer — through the same department member lists the owner is resolved from. Unresolvable ids keep the
-    /// short-id fallback; a lookup failure never fails the page.
+    /// A Genesys agent taking, or handing on, the customer's conversation. Worded as handling history only — never as an
+    /// escalation: a call transfer says the conversation moved, not that the first agent could not resolve the issue. The
+    /// event note keeps the verbatim Genesys ids and names, including agents with no TigerCS user.
     /// </summary>
-    private async Task LoadEmployeeNamesAsync(
-        TicketDetailDto ticket, IReadOnlyList<TicketWorkflowEventDto> workflowEvents, CancellationToken cancellationToken)
+    private static ActivityEntry DescribeGenesysAgentEvent(
+        TicketWorkflowEventDto agentEvent, CurrentUser? viewer, IReadOnlyDictionary<Guid, string>? employeeNames)
     {
-        var wanted = new List<(Guid Id, int DepartmentId)>();
-        if (ticket.FirstHandledByEmployeeId is { } firstHandler)
+        string NameOf(Guid id) =>
+            TicketNameResolver.ResolveSelfAuthorName(id, viewer)
+            ?? (employeeNames is not null && employeeNames.TryGetValue(id, out var known) ? known : $"Employee #{id.ToString()[..8]}");
+
+        var receiver = agentEvent.ToEmployeeId is { } toId ? NameOf(toId) : null;
+
+        if (agentEvent.EventType == nameof(WorkflowEventType.GenesysAgentConnected))
         {
-            wanted.Add((firstHandler, ticket.OriginatingDepartmentId));
-            wanted.Add((firstHandler, ticket.CurrentDepartmentId));
+            return new ActivityEntry(
+                agentEvent.OccurredAtUtc, "genesys", receiver ?? "A Genesys agent",
+                "was the first agent to handle the customer's conversation", null, true);
         }
 
-        if (ticket.ResolvedByEmployeeId is { } resolver)
-        {
-            wanted.Add((resolver, ticket.CurrentDepartmentId));
-        }
+        var from = agentEvent.ActorEmployeeId is { } fromId ? NameOf(fromId) : "A Genesys agent";
+        return new ActivityEntry(
+            agentEvent.OccurredAtUtc, "genesys", from,
+            $"transferred the customer's call to {receiver ?? "another Genesys agent"}",
+            agentEvent.Note, true);
+    }
 
-        foreach (var transfer in workflowEvents.Where(e => e.EventType == nameof(WorkflowEventType.TicketTransferred)))
-        {
-            if (transfer.ToEmployeeId is { } receiver && transfer.ToDepartmentId is { } toDepartment)
-            {
-                wanted.Add((receiver, toDepartment));
-            }
-
-            if (transfer.ActorEmployeeId is { } actor)
-            {
-                wanted.Add((actor, ticket.CurrentDepartmentId));
-            }
-        }
-
+    /// <summary>
+    /// The people the handling summary and the feed name. The Api resolves every name from the employee directory itself
+    /// (<c>FirstHandledByName</c>, <c>ResolvedByName</c>, and the actor/receiver names on each event), so someone who has
+    /// since left the department or been deactivated is still named; the page does not walk department member lists.
+    /// Anyone the Api could not name keeps the short-id fallback.
+    /// </summary>
+    private static Dictionary<Guid, string> BuildEmployeeNames(TicketDetailDto ticket, IReadOnlyList<TicketWorkflowEventDto> workflowEvents)
+    {
         var names = new Dictionary<Guid, string>();
-        foreach (var (id, departmentId) in wanted)
+
+        void Add(Guid? id, string? name)
         {
-            if (names.ContainsKey(id))
+            if (id is { } known && !string.IsNullOrWhiteSpace(name))
             {
-                continue;
-            }
-
-            if (TicketNameResolver.ResolveSelfAuthorName(id, Viewer) is { } self)
-            {
-                names[id] = self;
-                continue;
-            }
-
-            try
-            {
-                if (await nameResolver.ResolveOwnerNameAsync(departmentId, id, cancellationToken) is { } resolved)
-                {
-                    names[id] = resolved;
-                }
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                // Display-only enrichment: the short-id fallback is shown instead.
+                names[known] = name;
             }
         }
 
-        EmployeeNames = names;
+        Add(ticket.FirstHandledByEmployeeId, ticket.FirstHandledByName);
+        Add(ticket.ResolvedByEmployeeId, ticket.ResolvedByName);
+        foreach (var workflowEvent in workflowEvents)
+        {
+            Add(workflowEvent.ActorEmployeeId, workflowEvent.ActorName);
+            Add(workflowEvent.ToEmployeeId, workflowEvent.ToEmployeeName);
+        }
+
+        return names;
     }
 
     /// <summary>

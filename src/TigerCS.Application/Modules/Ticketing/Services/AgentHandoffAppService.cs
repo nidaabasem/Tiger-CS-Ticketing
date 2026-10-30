@@ -258,13 +258,20 @@ public sealed class AgentHandoffAppService(
         // so a repeated accept by the holder does not append a second line.
         if (claimed)
         {
-            await workflowEventRepository.AddAsync(
-                new TicketWorkflowEvent(
-                    handoff.TicketId, WorkflowEventType.HandoffStarted, now, callerEmployeeId,
-                    ticketApprovalId: null,
-                    note: FormatWaitNote(handoff),
-                    correlationId),
-                cancellationToken);
+            var started = new TicketWorkflowEvent(
+                handoff.TicketId, WorkflowEventType.HandoffStarted, now, callerEmployeeId,
+                ticketApprovalId: null,
+                note: FormatWaitNote(handoff),
+                correlationId);
+
+            // The accepting agent became the owner: carry where ownership landed in the typed columns of this same event.
+            // HandoffStarted already says why; no transfer reason, so it is never an escalation or a counted transfer.
+            if (assignedTicket)
+            {
+                started.WithOwnership(ticket.CurrentDepartmentId, ticket.CurrentDepartmentId, callerEmployeeId);
+            }
+
+            await workflowEventRepository.AddAsync(started, cancellationToken);
         }
 
         await auditWriter.WriteAsync(

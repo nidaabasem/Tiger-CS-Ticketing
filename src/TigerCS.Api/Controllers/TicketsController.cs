@@ -990,6 +990,12 @@ public class TicketsController(
             detail: "The assignee is not an active member of the ticket's resulting department (its current department for Assign; the target department for a transfer with assignToEmployeeId).",
             statusCode: StatusCodes.Status422UnprocessableEntity),
 
+        TicketMutationOutcome.TransferReasonRequired => Problem(
+            type: "https://tigercs.internal/problems/transfer-reason-required",
+            title: "A transfer reason is required",
+            detail: "This ticket already has an owner. Reassigning it needs a reason: Unable to Resolve, Needs Escalation, Wrong Department, Customer Request or Other.",
+            statusCode: StatusCodes.Status422UnprocessableEntity),
+
         TicketMutationOutcome.TargetDepartmentInactive => Problem(
             type: "https://tigercs.internal/problems/department-inactive",
             title: "Target department is inactive",

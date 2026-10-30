@@ -104,7 +104,22 @@ public enum WorkflowEventType : byte
     /// the call, recorded on the interaction and the audit trail, and says
     /// nothing about whether the agent could resolve the issue.
     /// </summary>
-    TicketTransferred = 17
+    TicketTransferred = 17,
+
+    /// <summary>
+    /// A mapped Genesys agent first took the customer's interaction (the first handler). Recorded with the agent in
+    /// <see cref="TicketWorkflowEvent.ToEmployeeId"/> and no transfer reason: this is who answered, not a hand-over.
+    /// </summary>
+    GenesysAgentConnected = 18,
+
+    /// <summary>
+    /// Genesys moved a live conversation from one agent to another. History only: it carries no transfer reason, is
+    /// never an escalation and is not counted as a ticket transfer — whether the first agent could resolve the issue is
+    /// a judgement only an explicit TigerCS transfer or escalation records. The previous agent, when mapped, is the
+    /// actor; the receiving agent, when mapped, is <see cref="TicketWorkflowEvent.ToEmployeeId"/>; unmapped agents
+    /// are preserved verbatim in the note.
+    /// </summary>
+    GenesysCallTransferred = 19
 }
 
 /// <summary>
@@ -231,6 +246,24 @@ public class TicketWorkflowEvent
             ToDepartmentId = toDepartmentId,
             ToEmployeeId = toEmployeeId
         };
+    }
+
+    /// <summary>
+    /// Records where ownership landed for an event whose TYPE already says why it happened (a reopen, a handoff accept,
+    /// a Genesys agent change). Deliberately leaves <see cref="TransferReasonCode"/> null, so such an event can never be
+    /// read as an escalation or counted as a transfer.
+    /// </summary>
+    public TicketWorkflowEvent WithOwnership(int? fromDepartmentId, int? toDepartmentId, Guid? toEmployeeId)
+    {
+        if (EventType == WorkflowEventType.TicketTransferred)
+        {
+            throw new InvalidOperationException("A transfer event is built with ForTransfer, which also carries its reason.");
+        }
+
+        FromDepartmentId = fromDepartmentId;
+        ToDepartmentId = toDepartmentId;
+        ToEmployeeId = toEmployeeId;
+        return this;
     }
 
     /// <summary>True for the two reasons that mean the handling agent passed the ticket up rather than simply moving it.</summary>

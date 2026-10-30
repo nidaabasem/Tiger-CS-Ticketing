@@ -62,7 +62,8 @@ public sealed record RequestableApprovalDto(
 /// <summary>One typed workflow event, for the dependency timeline.</summary>
 public sealed record TicketWorkflowEventDto(
     string EventType, DateTime OccurredAtUtc, Guid? ActorEmployeeId, string? Note,
-    string? TransferReason = null, int? FromDepartmentId = null, int? ToDepartmentId = null, Guid? ToEmployeeId = null);
+    string? TransferReason = null, int? FromDepartmentId = null, int? ToDepartmentId = null, Guid? ToEmployeeId = null,
+    string? ActorName = null, string? ToEmployeeName = null);
 
 /// <summary>
 /// The Approvals / Dependencies section of Ticket Details: approval cycles
