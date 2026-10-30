@@ -80,6 +80,9 @@ public sealed class TicketsModel(
     /// <summary>Only tickets with no request type — the work queue for classifying them from Ticket Details. Raises no handoff.</summary>
     public bool Unclassified { get; set; }
 
+    /// <summary>"Created by Me": only tickets the viewer created — including ones that have moved to another department, which a CS Agent can still open read-only. Narrows the viewer's own scope; never widens it.</summary>
+    public bool CreatedByMe { get; set; }
+
     /// <summary>Supervisor review: only tickets an agent escalated as Unable to Resolve / Needs Escalation. Offered, and accepted by the Api, only for supervisory roles.</summary>
     public bool Escalated { get; set; }
     public DateOnly? CreatedFrom { get; set; }
@@ -211,7 +214,7 @@ public sealed class TicketsModel(
         bool slaBreached = false, bool dueToday = false, string? backlogAge = null, bool pendingApproval = false,
         DateOnly? createdFrom = null, DateOnly? createdTo = null, bool unclassified = false, bool escalated = false, string? closureCategory = null, DateOnly? closedFrom = null, DateOnly? closedTo = null,
         string? view = null, string? sla = null, string? assignee = null,
-        bool mineOnly = false, bool unassignedOnly = false, bool includeResolved = false)
+        bool mineOnly = false, bool unassignedOnly = false, bool includeResolved = false, bool createdByMe = false)
     {
         Viewer = CurrentUser.FromPrincipal(User);
         CanCreateTicket = TicketCreationPolicy.AppliesTo(Viewer);
@@ -267,6 +270,7 @@ public sealed class TicketsModel(
         BacklogAge = backlogAge;
         PendingApproval = pendingApproval;
         Unclassified = unclassified;
+        CreatedByMe = createdByMe;
         // Only a reviewer may filter by it; anyone else's value is dropped here, and the Api refuses it independently.
         Escalated = escalated && TicketActions.CanReviewEscalations(Viewer?.Roles);
         ClosureCategory = Enum.TryParse<TicketClosureCategory>(closureCategory, ignoreCase: true, out var parsedClosure) && Enum.IsDefined(parsedClosure)
@@ -380,7 +384,8 @@ public sealed class TicketsModel(
             Search, SortBy, SortDir, PageNumber, PageSize,
             ChannelId, RequestTypeId,
             ActiveOnly ? true : null, InDepartmentQueue ? true : null, SlaBreached ? true : null, DueToday ? true : null,
-            BacklogAge, PendingApproval ? true : null, CreatedFrom, CreatedTo, Unclassified ? true : null, ClosureCategory, ClosedFrom, ClosedTo, Escalated ? true : null);
+            BacklogAge, PendingApproval ? true : null, CreatedFrom, CreatedTo, Unclassified ? true : null, ClosureCategory, ClosedFrom, ClosedTo,
+            CreatedByMe ? true : null, Escalated ? true : null);
 
         var result = await ticketsApiClient.GetQueueAsync(request, cancellationToken);
         Outcome = result.Outcome;

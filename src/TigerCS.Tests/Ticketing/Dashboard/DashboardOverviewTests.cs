@@ -402,7 +402,6 @@ public sealed class DashboardOverviewTests : IDisposable
     }
 
     [Theory]
-    [InlineData(Roles.CsAgent)]
     [InlineData(Roles.CsSupervisor)]
     [InlineData(Roles.CsManager)]
     [InlineData(Roles.GeneralManager)]

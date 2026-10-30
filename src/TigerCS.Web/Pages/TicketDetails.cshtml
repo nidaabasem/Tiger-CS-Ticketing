@@ -76,6 +76,13 @@ else
             </div>
         }
 
+        @if (Model.IsReadOnlyAccess)
+        {
+            <div class="alert alert-info" role="status" id="read-only-notice">
+                <span>You created this ticket and can follow its progress, but it belongs to another department, so it is read-only for you.</span>
+            </div>
+        }
+
         <section class="ticket-header">
             <div class="ticket-header__top">
                 <div>
@@ -964,7 +971,7 @@ else
                                 </ol>
                             }
 
-                            @if (!isClosed && TicketActions.CanAddNote(Model.Viewer?.Roles))
+                            @if (!isClosed && !Model.IsReadOnlyAccess && TicketActions.CanAddNote(Model.Viewer?.Roles))
                             {
                                 <div class="composer">
                                     <form method="post" asp-page-handler="AddNote">

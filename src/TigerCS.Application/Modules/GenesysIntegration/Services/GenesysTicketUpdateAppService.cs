@@ -67,7 +67,8 @@ public sealed class GenesysTicketUpdateAppService(
     TimeProvider timeProvider,
     GenesysRequestTypeClassificationAppService classificationAppService,
     TicketLifecycleAppService lifecycleAppService,
-    GenesysAgentHandlingHistory handlingHistory)
+    GenesysAgentHandlingHistory handlingHistory,
+    GenesysInteractionHandlerRecorder? handlerRecorder = null)
 {
     /// <summary>The exact closure reason recorded when the AI finishes the conversation.</summary>
     public const string ClosedByAiReason = "Closed by AI";
@@ -359,6 +360,21 @@ public sealed class GenesysTicketUpdateAppService(
             await handlingHistory.RecordFirstHandlerAsync(ticketId, conversationId, agent.Agent!, cancellationToken);
             await unitOfWork.SaveChangesAsync(cancellationToken);
             await ownershipTransaction.CommitAsync(cancellationToken);
+        }
+
+        // Every agent Genesys reports as connected is a handler of the interaction — not only the first. A transfer arrives as a routing
+        // update naming the receiving agent; recording each one is what lets that agent (and the one who transferred away) keep seeing the
+        // ticket. An agent that is merely ringing/assigned is never sent here, a bot or unmapped id resolves to nothing and is skipped.
+        if (handlerRecorder is not null)
+        {
+            await handlerRecorder.RecordAsync(
+                callerEmployeeId, interaction, NullIfBlank(request.Routing?.AgentId),
+                InteractionHandlerSource.Routing, request.Routing?.ConnectedAtUtc, cancellationToken);
+
+            await handlerRecorder.RecordAsync(
+                callerEmployeeId, interaction, NullIfBlank(request.AgentId),
+                request.Ended is not null ? InteractionHandlerSource.ConversationEnd : InteractionHandlerSource.Update,
+                connectedAtUtc: null, cancellationToken);
         }
 
         if (request.CustomerConfirmation is { } confirmation)

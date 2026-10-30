@@ -109,7 +109,8 @@ public sealed class GenesysInquiryIngestionAppService(
     GenesysAgentResolutionAppService agentResolution,
     GenesysDefaultPriorityResolver defaultPriorityResolver,
     GenesysRequestTypeClassificationAppService classificationAppService,
-    GenesysAgentHandlingHistory handlingHistory)
+    GenesysAgentHandlingHistory handlingHistory,
+    GenesysInteractionHandlerRecorder? handlerRecorder = null)
 {
     public async Task<GenesysIngestionResult> IngestAsync(
         Guid callerEmployeeId, GenesysInquiryDto inquiry, CancellationToken cancellationToken = default)
@@ -322,8 +323,15 @@ public sealed class GenesysInquiryIngestionAppService(
         {
             if (originating.RecordHandlingAgentIfAbsent(agent.Agent!.GenesysUserId, agent.Agent.UserId))
             {
-                // The first handler is also preserved in the ticket's event history, beside any later call transfers.
+                // The first handler is also preserved in the ticket's event timeline, beside any later call transfers.
                 await handlingHistory.RecordFirstHandlerAsync(creation.Response.TicketId, conversationId, agent.Agent, cancellationToken);
+            }
+
+            // Also the per-agent history ticket visibility rests on (TicketInteractionHandlers). Staged here and saved with the audit entry below.
+            if (handlerRecorder is not null)
+            {
+                await handlerRecorder.StageAsync(
+                    originating, agent.Agent, InteractionHandlerSource.Inquiry, inquiry.StartedAtUtc, cancellationToken);
             }
         }
 
@@ -639,6 +647,9 @@ public static class GenesysAuditActions
 
     /// <summary>A Genesys agent was resolved to a Ticketing user and recorded as the handler of an interaction.</summary>
     public const string InteractionHandlerRecorded = "GenesysInteractionHandlerRecorded";
+
+    /// <summary>A further Genesys agent was recorded as having handled an interaction (a transfer, or a second agent joining) — the per-agent history ticket visibility rests on.</summary>
+    public const string InteractionHandlerAdded = "GenesysInteractionHandlerAdded";
 
     /// <summary>
     /// TigerCS raised pending human work on its own initiative, because an

@@ -68,8 +68,9 @@ public class SlaAndEscalationEndpointsTests : IClassFixture<TigerCsApiFactory>
         // failing later on an empty response body.
         Assert.Equal(HttpStatusCode.Created, createResponse.StatusCode);
         var created = await createResponse.Content.ReadFromJsonAsync<TicketResponseDto>();
+        await _factory.RecordHandlerAsync(created!.TicketId, client);
 
-        return (await (await client.GetAsync($"/api/tickets/{created!.TicketId}"))
+        return (await (await client.GetAsync($"/api/tickets/{created.TicketId}"))
             .Content.ReadFromJsonAsync<TicketDetailDto>())!;
     }
 

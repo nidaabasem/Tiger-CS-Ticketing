@@ -41,6 +41,30 @@ public class Ticket
     public int OriginatingDepartmentId { get; private set; }
     public int CurrentDepartmentId { get; private set; }
     public Guid? CurrentOwnerEmployeeId { get; private set; }
+
+    /// <summary>
+    /// The employee who created the ticket (the account that called ticket creation — for a Genesys inquiry that is the integration
+    /// account). Write-once and never moved by assignment or department transfer, which is what lets a creator keep following their ticket
+    /// <b>read-only</b> after it has been handed to another department. Null on tickets that predate the column and have no creation audit.
+    /// </summary>
+    public Guid? CreatedByEmployeeId { get; private set; }
+
+    /// <summary>Records who created the ticket. Write-once: a second, different creator is ignored (returns false).</summary>
+    public bool RecordCreator(Guid employeeId)
+    {
+        if (employeeId == Guid.Empty)
+        {
+            throw new ArgumentException("CreatedByEmployeeId must be a real employee.", nameof(employeeId));
+        }
+
+        if (CreatedByEmployeeId is not null)
+        {
+            return false;
+        }
+
+        CreatedByEmployeeId = employeeId;
+        return true;
+    }
     public int? UnitReferenceId { get; private set; }
     public int? ContactReferenceId { get; private set; }
     /// <summary>

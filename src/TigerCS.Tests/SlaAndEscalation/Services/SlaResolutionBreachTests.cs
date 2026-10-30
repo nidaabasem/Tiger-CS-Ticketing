@@ -1,3 +1,4 @@
+using TigerCS.Tests.Ticketing.Fakes;
 using TigerCS.Application.Modules.SlaAndEscalation.Services;
 using TigerCS.Application.Modules.Ticketing.Dto;
 using TigerCS.Application.Modules.Ticketing.Services;
@@ -69,7 +70,7 @@ public class SlaResolutionBreachTests
             sla.DueDates,
             new ReopenEligibilityService(
                 sla.StatusHistory, new Ticketing.Fakes.FakeRequestTypeRepository(),
-                new Ticketing.Fakes.FakeWorkflowTemplateRepository(), ReopenPolicy.Default));
+                new Ticketing.Fakes.FakeWorkflowTemplateRepository(), ReopenPolicy.Default), handlerRepository: FakeTicketInteractionHandlerRepository.Permissive());
 
         return new Harness(sla, service, ticket, ownerId);
     }

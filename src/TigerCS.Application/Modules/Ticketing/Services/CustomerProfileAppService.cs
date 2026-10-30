@@ -85,7 +85,7 @@ public sealed class CustomerProfileAppService(
             return CustomerProfileResult.Failure(CustomerProfileOutcome.NotFound);
         }
 
-        if (!await ticketQueryAppService.CanViewDepartmentAsync(callerEmployeeId, callerRoles, ticket.CurrentDepartmentId, cancellationToken))
+        if (!await ticketQueryAppService.CanViewTicketAsync(callerEmployeeId, callerRoles, ticket, cancellationToken))
         {
             return CustomerProfileResult.Failure(CustomerProfileOutcome.Forbidden);
         }

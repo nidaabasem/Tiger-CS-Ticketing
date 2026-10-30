@@ -1150,4 +1150,172 @@ public class TicketCreationAppServiceTests
         Assert.Equal(TicketCreationOutcome.DepartmentOrCategoryRequired, result.Outcome);
         Assert.Empty(f.Tickets.All);
     }
+
+    // ---- Manual creation by a CS Agent: self-assignment ----
+
+    private static readonly string[] AgentRoles = [TigerCS.Domain.Modules.IdentityAndAccess.Roles.CsAgent];
+
+    private static void JoinDepartment(Fixture f, Guid employee, int departmentId) =>
+        f.DepartmentAssignments.Assignments.Add(new TigerCS.Domain.Modules.IdentityAndAccess.UserDepartmentAssignment(
+            employee, departmentId, isPrimary: true, DateTime.UtcNow, assignedByEmployeeId: null));
+
+    private static CreateTicketRequestDto Request(long intakeId, int categoryId, int? requestTypeId = null, bool? queue = null) =>
+        new(intakeId, null, null, categoryId, (byte)PriorityLevel.Medium, "AC not cooling",
+            RequestTypeId: requestTypeId, AssignToDepartmentQueue: queue);
+
+    [Fact]
+    public async Task CreateAsync_ByAnEligibleCsAgent_AssignsTheTicketToThem_AsTheirOwnAct()
+    {
+        var f = CreateService();
+        var department = f.Departments.AddDepartment("Customer Service", "CS");
+        var category = f.Categories.Seed(department.DepartmentId);
+        var (intake, agentId) = await SeedIntakeAsync(f.IntakeRecords, isUnitRelated: false, rawUnitNumberEntered: null);
+        JoinDepartment(f, agentId, department.DepartmentId);
+
+        var result = await f.Service.CreateAsync(agentId, Request(intake.IntakeRecordId, category.CategoryId), callerRoles: AgentRoles);
+
+        Assert.Equal(TicketCreationOutcome.Success, result.Outcome);
+        var ticket = Assert.Single(f.Tickets.All);
+        Assert.Equal(agentId, ticket.CurrentOwnerEmployeeId);
+        Assert.Equal(TicketStatus.Open, ticket.TicketStatus);
+        var assignment = Assert.Single(f.TicketAssignments.Added);
+        Assert.Equal(agentId, assignment.AssignedEmployeeId);
+        Assert.Equal(agentId, assignment.AssigningActorEmployeeId); // the creator's own act, not a system action
+        Assert.Contains(f.Audit.Entries, e => e.Action == "SelfAssign" && e.ActorEmployeeId == agentId);
+        Assert.Equal(1, f.UnitOfWork.TransactionsCommitted);
+    }
+
+    [Fact]
+    public async Task CreateAsync_WhenTheAgentChoosesTheDepartmentQueue_TheChoiceIsRespected()
+    {
+        var f = CreateService();
+        var department = f.Departments.AddDepartment("Customer Service", "CS");
+        var category = f.Categories.Seed(department.DepartmentId);
+        var (intake, agentId) = await SeedIntakeAsync(f.IntakeRecords, isUnitRelated: false, rawUnitNumberEntered: null);
+        JoinDepartment(f, agentId, department.DepartmentId);
+
+        await f.Service.CreateAsync(agentId, Request(intake.IntakeRecordId, category.CategoryId, queue: true), callerRoles: AgentRoles);
+
+        Assert.Null(Assert.Single(f.Tickets.All).CurrentOwnerEmployeeId);
+        Assert.Empty(f.TicketAssignments.Added);
+    }
+
+    [Fact]
+    public async Task CreateAsync_ByAnAgentWhoIsNotAMemberOfTheTicketsDepartment_IsNotSelfAssigned()
+    {
+        var f = CreateService();
+        var department = f.Departments.AddDepartment("Facility Management", "FM");
+        var category = f.Categories.Seed(department.DepartmentId);
+        var (intake, agentId) = await SeedIntakeAsync(f.IntakeRecords, isUnitRelated: false, rawUnitNumberEntered: null);
+
+        await f.Service.CreateAsync(agentId, Request(intake.IntakeRecordId, category.CategoryId), callerRoles: AgentRoles);
+
+        Assert.Null(Assert.Single(f.Tickets.All).CurrentOwnerEmployeeId); // the assignee invariant is not relaxed
+    }
+
+    [Fact]
+    public async Task CreateAsync_NeverOverwritesAnAssignmentTheConfiguredRuleMade()
+    {
+        var f = CreateService();
+        var department = f.Departments.AddDepartment("Facility Management", "FM");
+        var category = f.Categories.Seed(department.DepartmentId);
+        var (intake, agentId) = await SeedIntakeAsync(f.IntakeRecords, isUnitRelated: false, rawUnitNumberEntered: null);
+        var requestType = SeedRequestType(f, department.DepartmentId);
+        var technician = Guid.NewGuid();
+        JoinDepartment(f, agentId, department.DepartmentId);
+        JoinDepartment(f, technician, department.DepartmentId);
+        f.AssignmentRules.Add(TigerCS.Domain.Modules.WorkflowConfiguration.RequestTypeAssignmentRule.ForSpecificEmployee(
+            requestType.RequestTypeId, technician));
+
+        await f.Service.CreateAsync(
+            agentId, Request(intake.IntakeRecordId, category.CategoryId, requestType.RequestTypeId), callerRoles: AgentRoles);
+
+        Assert.Equal(technician, Assert.Single(f.Tickets.All).CurrentOwnerEmployeeId);
+        Assert.Null(Assert.Single(f.TicketAssignments.Added).AssigningActorEmployeeId); // still the rule's system assignment
+        Assert.DoesNotContain(f.Audit.Entries, e => e.Action == "SelfAssign");
+    }
+
+    [Fact]
+    public async Task CreateAsync_RespectsARuleThatExplicitlyRoutesToTheDepartmentQueue()
+    {
+        var f = CreateService();
+        var department = f.Departments.AddDepartment("Facility Management", "FM");
+        var category = f.Categories.Seed(department.DepartmentId);
+        var (intake, agentId) = await SeedIntakeAsync(f.IntakeRecords, isUnitRelated: false, rawUnitNumberEntered: null);
+        var requestType = SeedRequestType(f, department.DepartmentId);
+        JoinDepartment(f, agentId, department.DepartmentId);
+        f.AssignmentRules.Add(TigerCS.Domain.Modules.WorkflowConfiguration.RequestTypeAssignmentRule.ForDepartmentQueue(requestType.RequestTypeId));
+
+        await f.Service.CreateAsync(
+            agentId, Request(intake.IntakeRecordId, category.CategoryId, requestType.RequestTypeId), callerRoles: AgentRoles);
+
+        Assert.Null(Assert.Single(f.Tickets.All).CurrentOwnerEmployeeId);
+    }
+
+    [Fact]
+    public async Task CreateAsync_RespectsADepartmentThatDisablesAssignment()
+    {
+        var f = CreateService();
+        var department = f.Departments.AddDepartment("Facility Management", "FM");
+        var category = f.Categories.Seed(department.DepartmentId);
+        var (intake, agentId) = await SeedIntakeAsync(f.IntakeRecords, isUnitRelated: false, rawUnitNumberEntered: null);
+        var requestType = SeedRequestType(f, department.DepartmentId);
+        JoinDepartment(f, agentId, department.DepartmentId);
+        f.WorkflowSettings.Add(new TigerCS.Domain.Modules.WorkflowConfiguration.DepartmentWorkflowSettings(
+            department.DepartmentId, allowAssignment: false, allowInternalReassignment: true, allowTransferToOtherDepartments: true));
+
+        await f.Service.CreateAsync(
+            agentId, Request(intake.IntakeRecordId, category.CategoryId, requestType.RequestTypeId), callerRoles: AgentRoles);
+        var (secondIntake, _) = await SeedIntakeAsync(f.IntakeRecords, isUnitRelated: false, rawUnitNumberEntered: null);
+        await f.Service.CreateAsync(agentId, Request(secondIntake.IntakeRecordId, category.CategoryId), callerRoles: AgentRoles); // no request type either
+
+        Assert.All(f.Tickets.All, t => Assert.Null(t.CurrentOwnerEmployeeId));
+    }
+
+    [Fact]
+    public async Task CreateAsync_WithARequestTypeButNoRule_TheAgentOwnsIt()
+    {
+        var f = CreateService();
+        var department = f.Departments.AddDepartment("Facility Management", "FM");
+        var category = f.Categories.Seed(department.DepartmentId);
+        var (intake, agentId) = await SeedIntakeAsync(f.IntakeRecords, isUnitRelated: false, rawUnitNumberEntered: null);
+        var requestType = SeedRequestType(f, department.DepartmentId);
+        JoinDepartment(f, agentId, department.DepartmentId);
+
+        await f.Service.CreateAsync(
+            agentId, Request(intake.IntakeRecordId, category.CategoryId, requestType.RequestTypeId), callerRoles: AgentRoles);
+
+        Assert.Equal(agentId, Assert.Single(f.Tickets.All).CurrentOwnerEmployeeId);
+    }
+
+    [Theory]
+    [InlineData("CS Supervisor")]
+    [InlineData("CS Manager")]
+    [InlineData("System Administrator")]
+    public async Task CreateAsync_ByAnyoneButARestrictedCsAgent_BehavesExactlyAsBefore(string role)
+    {
+        var f = CreateService();
+        var department = f.Departments.AddDepartment("Customer Service", "CS");
+        var category = f.Categories.Seed(department.DepartmentId);
+        var (intake, creator) = await SeedIntakeAsync(f.IntakeRecords, isUnitRelated: false, rawUnitNumberEntered: null);
+        JoinDepartment(f, creator, department.DepartmentId);
+
+        await f.Service.CreateAsync(creator, Request(intake.IntakeRecordId, category.CategoryId), callerRoles: [role]);
+
+        Assert.Null(Assert.Single(f.Tickets.All).CurrentOwnerEmployeeId);
+    }
+
+    [Fact]
+    public async Task CreateAsync_WithNoCallerRoles_AsTheGenesysIngestionCalls_NeverSelfAssigns()
+    {
+        var f = CreateService();
+        var department = f.Departments.AddDepartment("Customer Service", "CS");
+        var category = f.Categories.Seed(department.DepartmentId);
+        var (intake, creator) = await SeedIntakeAsync(f.IntakeRecords, isUnitRelated: false, rawUnitNumberEntered: null);
+        JoinDepartment(f, creator, department.DepartmentId);
+
+        await f.Service.CreateAsync(creator, Request(intake.IntakeRecordId, category.CategoryId));
+
+        Assert.Null(Assert.Single(f.Tickets.All).CurrentOwnerEmployeeId);
+    }
 }

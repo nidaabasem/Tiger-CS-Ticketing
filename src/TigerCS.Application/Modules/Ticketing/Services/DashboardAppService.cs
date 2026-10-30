@@ -61,6 +61,7 @@ public sealed class DashboardAppService(
     {
         var visibleDepartmentIds = await ticketQueryAppService.ResolveVisibleDepartmentIdsAsync(
             callerEmployeeId, callerRoles, cancellationToken);
+        var agentScope = ticketQueryAppService.ResolveAgentScope(callerEmployeeId, callerRoles);
 
         var nowUtc = timeProvider.GetUtcNow().UtcDateTime;
         var snapshot = await ticketRepository.GetDashboardSnapshotAsync(
@@ -73,7 +74,8 @@ public sealed class DashboardAppService(
                 // approved requirement.
                 nowUtc.Date,
                 AtRiskWindow,
-                AttentionLimit),
+                AttentionLimit,
+                agentScope),
             cancellationToken);
 
         return new DashboardSummaryDto(
@@ -97,6 +99,7 @@ public sealed class DashboardAppService(
     {
         var visibleDepartmentIds = await ticketQueryAppService.ResolveVisibleDepartmentIdsAsync(
             callerEmployeeId, callerRoles, cancellationToken);
+        var agentScope = ticketQueryAppService.ResolveAgentScope(callerEmployeeId, callerRoles);
 
         // The approver scope needs the caller's actual memberships even for a
         // cross-department view role: a department-targeted approval is
@@ -110,7 +113,9 @@ public sealed class DashboardAppService(
         // it, the scope collapses to nothing — the filter never widens what
         // the caller may see, and it never errors in a way that would reveal
         // whether the department exists.
-        var scope = ResolveScope(visibleDepartmentIds, request.DepartmentId);
+        // A restricted CS Agent's scope is "assigned to / handled by me", which a department can only narrow, never define: the department
+        // filter is then applied as a filter (DashboardOverviewQuery.DepartmentId) instead of by collapsing the scope.
+        var scope = agentScope is null ? ResolveScope(visibleDepartmentIds, request.DepartmentId) : visibleDepartmentIds;
 
         var nowUtc = timeProvider.GetUtcNow().UtcDateTime;
         var today = DateOnly.FromDateTime(nowUtc);
@@ -134,7 +139,9 @@ public sealed class DashboardAppService(
             nowUtc.Date,
             AtRiskWindow,
             RecentLimit,
-            ReviewsAreTest: notificationMode?.IsTest == true);
+            ReviewsAreTest: notificationMode?.IsTest == true,
+            AgentScopeEmployeeId: agentScope,
+            DepartmentId: request.DepartmentId);
 
         var snapshot = await dashboardQueryRepository.GetOverviewAsync(query, cancellationToken);
 
@@ -144,7 +151,10 @@ public sealed class DashboardAppService(
         // the queue beside it.
         var awaitingHumanAgent = agentHandoffRepository is null
             ? new AwaitingHumanAgentSnapshot(0, null)
-            : await agentHandoffRepository.GetAwaitingHumanAgentSnapshotAsync(visibleDepartmentIds, cancellationToken);
+            : await agentHandoffRepository.GetAwaitingHumanAgentSnapshotAsync(
+                visibleDepartmentIds, cancellationToken, agentScope,
+                // A restricted agent's tile also counts waiting work they may claim — their own departments' (the list shows the same).
+                agentScope is null ? null : [.. memberships.Select(m => m.DepartmentId)]);
 
         var oldestHumanWaitSeconds = awaitingHumanAgent.OldestRequestedAtUtc is { } oldestWaitStart
             ? (int)Math.Max(0, (nowUtc - oldestWaitStart).TotalSeconds)
@@ -153,10 +163,13 @@ public sealed class DashboardAppService(
         // Agent and request-type pickers follow the department picker: with
         // a department selected they offer only that department's people
         // and request types; otherwise the whole visible scope's.
+        // The pickers list master data (departments, request types) and people. A restricted CS Agent's ticket scope is not a department
+        // set, so for them the master-data pickers are unrestricted — choosing one only narrows tickets they can already see — and the
+        // agent picker is empty: they have no use for other agents' ids.
         var options = await dashboardQueryRepository.GetFilterOptionsAsync(
-            visibleDepartmentIds,
-            agentDepartmentIds: scope,
-            requestTypeDepartmentIds: scope,
+            agentScope is null ? visibleDepartmentIds : null,
+            agentDepartmentIds: agentScope is null ? scope : [],
+            requestTypeDepartmentIds: agentScope is null ? scope : null,
             cancellationToken);
 
         return new DashboardOverviewDto(

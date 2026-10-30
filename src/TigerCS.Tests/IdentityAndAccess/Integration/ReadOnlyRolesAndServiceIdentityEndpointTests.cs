@@ -90,8 +90,9 @@ public class ReadOnlyRolesAndServiceIdentityEndpointTests : IClassFixture<ReadOn
                 new CreateTicketRequestDto(
                     intake.IntakeRecordId, crmUnit.UnitReferenceId, crmUnit.ContactReferenceId, categoryId, (byte)PriorityLevel.High, "AC unit not cooling")))
             .Content.ReadFromJsonAsync<TicketResponseDto>();
+        await _factory.RecordHandlerAsync(created!.TicketId, client);
 
-        return (await (await client.GetAsync($"/api/tickets/{created!.TicketId}")).Content.ReadFromJsonAsync<TicketDetailDto>())!;
+        return (await (await client.GetAsync($"/api/tickets/{created.TicketId}")).Content.ReadFromJsonAsync<TicketDetailDto>())!;
     }
 
     private static readonly object EmptyBody = new { };

@@ -66,9 +66,20 @@ public sealed class DashboardSqliteFixture : IDisposable
     /// <summary>The owner a non-Open seed ticket gets when a test names none: the lifecycle requires an owner before work starts, and this employee is never a KPI subject.</summary>
     public Guid LifecycleWorkerId { get; } = Guid.NewGuid();
 
-    public DashboardSqliteFixture()
+    /// <param name="enforceForeignKeys">
+    /// False lets a test record Genesys handlers for employees that only exist as ids (the fixture seeds no identity users), exactly as the
+    /// fixture already treats ticket owners. Nothing under test depends on those foreign keys.
+    /// </param>
+    public DashboardSqliteFixture(bool enforceForeignKeys = true)
     {
         _connection.Open();
+        if (!enforceForeignKeys)
+        {
+            using var pragma = _connection.CreateCommand();
+            pragma.CommandText = "PRAGMA foreign_keys = OFF;";
+            pragma.ExecuteNonQuery();
+        }
+
         using var context = CreateContext();
         context.Database.EnsureCreated();
         SeedReferenceData(context);
@@ -93,7 +104,9 @@ public sealed class DashboardSqliteFixture : IDisposable
         var time = new FixedTimeProvider(nowUtc ?? Now);
         var assignments = new UserDepartmentAssignmentRepository(context);
         var tickets = new TicketRepository(context);
-        var queries = new TicketQueryAppService(tickets, assignments, new FakeTicketResolutionRepository(), new FakeTicketStatusHistoryRepository(), ReopenPolicy.Default, time);
+        var queries = new TicketQueryAppService(
+            tickets, assignments, new FakeTicketResolutionRepository(), new FakeTicketStatusHistoryRepository(), ReopenPolicy.Default, time,
+            handlerRepository: new TicketInteractionHandlerRepository(context));
         return new DashboardAppService(tickets, queries, time, new DashboardQueryRepository(context), assignments, notificationMode: mode);
     }
 
@@ -101,7 +114,38 @@ public sealed class DashboardSqliteFixture : IDisposable
     {
         var time = new FixedTimeProvider(nowUtc ?? Now);
         var assignments = new UserDepartmentAssignmentRepository(context);
-        return new TicketQueryAppService(new TicketRepository(context), assignments, new FakeTicketResolutionRepository(), new FakeTicketStatusHistoryRepository(), ReopenPolicy.Default, time, notificationMode: mode);
+        return new TicketQueryAppService(
+            new TicketRepository(context), assignments, new FakeTicketResolutionRepository(), new FakeTicketStatusHistoryRepository(),
+            ReopenPolicy.Default, time, notificationMode: mode, handlerRepository: new TicketInteractionHandlerRepository(context));
+    }
+
+    /// <summary>
+    /// Records <paramref name="userId"/> as having handled a Genesys interaction on the ticket, on the ticket's own interaction (created
+    /// here as a Phone interaction when the ticket has none) or on <paramref name="interactionNumber"/>-th additional one.
+    /// </summary>
+    public TicketInteractionHandler AddHandler(TigerCsDbContext context, Ticket ticket, Guid userId, bool additionalInteraction = false)
+    {
+        var interaction = additionalInteraction
+            ? null
+            : context.TicketInteractions.FirstOrDefault(i => i.TicketId == ticket.TicketId);
+        if (interaction is null)
+        {
+            interaction = TicketInteraction.CreateFromGenesys(
+                ticket.TicketId, WellKnownChannels.Phone, "+971500000000", "conv-" + Guid.NewGuid().ToString("N")[..12],
+                calledNumber: null, genesysQueueId: null, genesysQueueName: null, genesysAgentId: null, genesysAgentName: null,
+                interactionStartedAtUtc: Now.AddHours(-1), direction: "Inbound", createdAtUtc: Now.AddHours(-1),
+                isOriginatingInteraction: !context.TicketInteractions.Any(i => i.TicketId == ticket.TicketId && i.IsOriginatingInteraction),
+                genesysServiceRequestId: Guid.NewGuid().ToString("N")[..8]);
+            context.TicketInteractions.Add(interaction);
+            context.SaveChanges();
+        }
+
+        var handler = TicketInteractionHandler.Create(
+            interaction.TicketInteractionId, ticket.TicketId, userId, $"genesys-{userId:N}",
+            InteractionHandlerSource.Routing, connectedAtUtc: null, Now.AddMinutes(-30));
+        context.TicketInteractionHandlers.Add(handler);
+        context.SaveChanges();
+        return handler;
     }
 
     private void SeedReferenceData(TigerCsDbContext context)

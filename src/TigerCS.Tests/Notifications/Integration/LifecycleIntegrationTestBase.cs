@@ -54,7 +54,9 @@ public abstract class LifecycleIntegrationTestBase
                 intake!.IntakeRecordId, unit!.UnitReferenceId, contacts![contactIndex].ContactReferenceId, categoryId,
                 (byte)PriorityLevel.High, "AC unit not cooling"));
         Assert.Equal(HttpStatusCode.Created, createResponse.StatusCode);
-        return ((await createResponse.Content.ReadFromJsonAsync<TicketResponseDto>())!, departmentId);
+        var created = (await createResponse.Content.ReadFromJsonAsync<TicketResponseDto>())!;
+        await _factory.RecordHandlerAsync(created.TicketId, client);
+        return (created, departmentId);
     }
 
     protected async Task<(TicketResponseDto Ticket, HttpClient Worker, HttpClient Agent, TicketDetailDto AfterResolve)> CreateAndResolveAsync(int contactIndex = 0)

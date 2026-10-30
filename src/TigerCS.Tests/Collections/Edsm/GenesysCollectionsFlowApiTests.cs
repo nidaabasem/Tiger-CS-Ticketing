@@ -54,7 +54,7 @@ public sealed class GenesysCollectionsFlowApiTests : IDisposable
     [Fact]
     public async Task UnverifiedCustomer_HasNoPaymentData_UntilAnAgentVerifiesThemThroughPact()
     {
-        var serviceAccount = await ClientAsync(Roles.CsAgent);    // what TigerGroupWeb signs in as
+        var serviceAccount = await ServiceAccountAsync();    // what TigerGroupWeb signs in as
         _factory.CrmBuyerLookupGateway.Returns(CrmBuyerLookupResult.NotFound());   // a PACT-only caller
         await _factory.SeedPrioritiesAsync();
         var departmentId = await _factory.CreateDepartmentAsync("Customer Service " + Guid.NewGuid(), Guid.NewGuid().ToString("N")[..8]);
@@ -140,6 +140,21 @@ public sealed class GenesysCollectionsFlowApiTests : IDisposable
         db.GenesysQueueMappings.Add(new GenesysQueueMapping(queueId, "Customer Service", departmentId, DateTime.UtcNow));
         await db.SaveChangesAsync();
         return queueId;
+    }
+
+    /// <summary>
+    /// The Genesys integration account: a CS Agent by permission set that production lists in
+    /// <c>Collections:Authorization:IntegrationEmployeeIds</c>, which makes it a service identity — confined to the integration surface and
+    /// exempt from the CS Agent's per-ticket visibility, because it is not a person who handled any call.
+    /// </summary>
+    private async Task<HttpClient> ServiceAccountAsync()
+    {
+        var (username, password, employeeId) = await _factory.SeedEmployeeAsync(Roles.CsAgent);
+        _factory.Services.GetRequiredService<CollectionsOptions>().Authorization.IntegrationEmployeeIds.Add(employeeId);
+        var client = _factory.CreateClient();
+        var login = await (await client.PostAsJsonAsync("/api/auth/login", new LoginRequestDto(username, password))).Content.ReadFromJsonAsync<LoginResponseDto>();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", login!.AccessToken);
+        return client;
     }
 
     private async Task<HttpClient> ClientAsync(string role)

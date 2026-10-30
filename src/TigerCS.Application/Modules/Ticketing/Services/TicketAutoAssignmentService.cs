@@ -162,6 +162,58 @@ public sealed class TicketAutoAssignmentService(
         return new AutoAssignmentResult(AutoAssignmentOutcome.AssignedToPrimary, primaryEmployeeId, teamMembers);
     }
 
+    /// <summary>
+    /// Self-assignment at manual creation: the CS Agent who created the ticket owns it, so they can see and work it.
+    ///
+    /// <para>
+    /// It only ever fills a gap. It does nothing when the ticket already has an owner, when the configured request-type rule made a decision
+    /// (<see cref="AutoAssignmentOutcome.AssignedToPrimary"/>, or an explicit <see cref="AutoAssignmentOutcome.DepartmentQueueByRule"/>),
+    /// when the department's workflow settings disable assignment, or when the creator is not an active member of the ticket's current
+    /// department (the same invariant every assignment honours). A request type with no rule, no request type at all, or a rule whose
+    /// configured assignee went stale degrade to the department queue today; those are the cases it fills. Written as the creator's own act
+    /// (assignment row and audit actor), unlike rule assignment which is a system action.
+    /// </para>
+    /// </summary>
+    public async Task<bool> TrySelfAssignAsync(
+        Ticket ticket,
+        Guid creatorEmployeeId,
+        AutoAssignmentOutcome automaticOutcome,
+        DateTime nowUtc,
+        Guid correlationId,
+        CancellationToken cancellationToken = default)
+    {
+        if (ticket.CurrentOwnerEmployeeId is not null
+            || automaticOutcome is not (AutoAssignmentOutcome.NoRequestType
+                or AutoAssignmentOutcome.NoRuleConfigured
+                or AutoAssignmentOutcome.ConfiguredAssigneeNotInDepartment))
+        {
+            return false;
+        }
+
+        var settings = await departmentWorkflowSettingsRepository.GetByDepartmentIdAsync(ticket.CurrentDepartmentId, cancellationToken);
+        if (settings is { AllowAssignment: false }
+            || !await userDepartmentAssignmentRepository.ExistsAsync(creatorEmployeeId, ticket.CurrentDepartmentId, cancellationToken))
+        {
+            return false;
+        }
+
+        ticket.AssignTo(creatorEmployeeId);
+
+        var currentAssignment = await ticketAssignmentRepository.GetCurrentAsync(ticket.TicketId, cancellationToken);
+        currentAssignment?.MarkSuperseded();
+        await ticketAssignmentRepository.AddAsync(
+            new TicketAssignment(ticket.TicketId, creatorEmployeeId, ticket.CurrentDepartmentId, nowUtc, assigningActorEmployeeId: creatorEmployeeId),
+            cancellationToken);
+
+        await auditWriter.WriteAsync(
+            creatorEmployeeId, "SelfAssign", "Ticket", ticket.TicketId.ToString(),
+            beforeValue: "DepartmentQueue",
+            afterValue: $"AssignedEmployeeId={creatorEmployeeId};DepartmentId={ticket.CurrentDepartmentId};Trigger={AutoAssignmentTrigger.TicketCreated};Reason=Created by this agent",
+            correlationId, cancellationToken);
+
+        return true;
+    }
+
     /// <summary>The safe fallback — the ticket stays unassigned in its department queue, and the why is audited as a system action so the queue outcome is as traceable as an assignment.</summary>
     private async Task<AutoAssignmentResult> QueueAsync(
         Ticket ticket,

@@ -561,6 +561,14 @@
                             <span class="field-hint">Describe the issue, relevant details, and what the customer is requesting.</span>
                         </div>
 
+                        <div class="form-group">
+                            <label class="form-check">
+                                <input type="checkbox" asp-for="CreateStep.AssignToDepartmentQueue" />
+                                Leave in the department queue
+                            </label>
+                            <span class="field-hint">By default a ticket you create is assigned to you. Tick this to leave it unassigned in its department's queue.</span>
+                        </div>
+
                         <div class="wizard-actions">
                             <a class="btn" asp-page="/NewTicket" asp-all-route-data="@StepRoute(NewTicketModel.StepProperty)">Back</a>
                             <button type="submit" class="btn btn-gold" asp-page-handler="Review">Review Ticket</button>
@@ -631,6 +639,7 @@
                         <input type="hidden" asp-for="CreateStep.RequestTypeId" />
                         <input type="hidden" asp-for="CreateStep.PriorityId" />
                         <input type="hidden" asp-for="CreateStep.RequestSummary" />
+                        <input type="hidden" asp-for="CreateStep.AssignToDepartmentQueue" />
                         <input type="hidden" asp-for="CreateStep.ManualProjectName" />
                         <input type="hidden" asp-for="CreateStep.ManualUnitNumber" />
                         <div class="wizard-actions">

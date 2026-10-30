@@ -76,6 +76,7 @@ public class ReopenApprovalEndpointsTests(TigerCsApiFactory factory) : IClassFix
             .Content.ReadFromJsonAsync<TicketResponseDto>();
 
         var ticketId = created!.TicketId;
+        await _factory.RecordHandlerAsync(ticketId, csClient);
         var detail = await (await csClient.GetAsync($"/api/tickets/{ticketId}")).Content.ReadFromJsonAsync<TicketDetailDto>();
 
         var workerClient = await ClientForAsync(Roles.DepartmentEmployee, departmentId);
@@ -222,6 +223,12 @@ public class ReopenApprovalEndpointsTests(TigerCsApiFactory factory) : IClassFix
         foreach (var role in new[] { Roles.CsAgent, Roles.CsSupervisor, Roles.CsManager, Roles.SystemAdministrator })
         {
             var csClient = await ClientForAsync(role);
+            if (role == Roles.CsAgent)
+            {
+                // A CS Agent sees a ticket's approvals only if the ticket is theirs to see: this one took the call too.
+                await _factory.RecordHandlerAsync(ticketId, csClient);
+            }
+
             var view = await (await csClient.GetAsync($"/api/tickets/{ticketId}/approvals"))
                 .Content.ReadFromJsonAsync<TicketApprovalsViewDto>();
             Assert.False(Assert.Single(view!.RequestableApprovals).CallerCanRequest);

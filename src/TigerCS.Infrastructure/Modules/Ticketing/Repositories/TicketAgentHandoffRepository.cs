@@ -40,15 +40,13 @@ public sealed class TicketAgentHandoffRepository(TigerCsDbContext dbContext) : I
     /// this ordering.
     /// </summary>
     public async Task<AwaitingHumanAgentSnapshot> GetAwaitingHumanAgentSnapshotAsync(
-        IReadOnlyCollection<int>? visibleDepartmentIds, CancellationToken cancellationToken = default)
+        IReadOnlyCollection<int>? visibleDepartmentIds, CancellationToken cancellationToken = default,
+        Guid? agentScopeEmployeeId = null,
+        IReadOnlyCollection<int>? claimableDepartmentIds = null)
     {
-        var waiting = dbContext.TicketAgentHandoffs
-            .Where(h => h.ResolvedAtUtc == null && h.Status == AgentHandoffStatus.WaitingForAgent);
-
-        if (visibleDepartmentIds is not null)
-        {
-            waiting = waiting.Where(h => visibleDepartmentIds.Contains(h.DepartmentId));
-        }
+        var waiting = ScopedHandoffs(
+            dbContext.TicketAgentHandoffs.Where(h => h.ResolvedAtUtc == null && h.Status == AgentHandoffStatus.WaitingForAgent),
+            visibleDepartmentIds, agentScopeEmployeeId, claimableDepartmentIds);
 
         var count = await waiting.CountAsync(cancellationToken);
         var oldest = count == 0
@@ -56,6 +54,36 @@ public sealed class TicketAgentHandoffRepository(TigerCsDbContext dbContext) : I
             : await waiting.MinAsync(h => h.RequestedAtUtc, cancellationToken);
 
         return new AwaitingHumanAgentSnapshot(count, oldest);
+    }
+
+    /// <summary>
+    /// Department scoping for pending human work. A restricted CS Agent (<paramref name="agentScopeEmployeeId"/>) sees a work item only when
+    /// they can see its TICKET — assigned to them, or one they handled on Genesys — exactly as the ticket queue decides; everyone else is
+    /// scoped by the work item's own department, unchanged.
+    ///
+    /// <para>
+    /// The one exception, for the claim flow: a restricted agent also gets work that is <b>waiting and unclaimed</b> in a department in
+    /// <paramref name="claimableDepartmentIds"/> (their own memberships). It exposes the work item only; the ticket behind it stays
+    /// invisible to them until they claim it, which assigns it to them.
+    /// </para>
+    /// </summary>
+    private IQueryable<TicketAgentHandoff> ScopedHandoffs(
+        IQueryable<TicketAgentHandoff> handoffs, IReadOnlyCollection<int>? visibleDepartmentIds, Guid? agentScopeEmployeeId,
+        IReadOnlyCollection<int>? claimableDepartmentIds = null)
+    {
+        if (agentScopeEmployeeId is null)
+        {
+            return visibleDepartmentIds is null ? handoffs : handoffs.Where(h => visibleDepartmentIds.Contains(h.DepartmentId));
+        }
+
+        var visibleTickets = dbContext.Tickets.VisibleTo(dbContext, visibleDepartmentIds, agentScopeEmployeeId, includeCreated: false).Select(t => t.TicketId);
+        var claimable = claimableDepartmentIds?.ToList() ?? [];
+        return handoffs.Where(h =>
+            visibleTickets.Contains(h.TicketId)
+            || (h.ResolvedAtUtc == null
+                && h.Status == AgentHandoffStatus.WaitingForAgent
+                && h.AssignedEmployeeId == null
+                && claimable.Contains(h.DepartmentId)));
     }
 
     public async Task<AgentHandoffQueryResult> SearchAsync(AgentHandoffQuery query, CancellationToken cancellationToken = default)
@@ -69,10 +97,7 @@ public sealed class TicketAgentHandoffRepository(TigerCsDbContext dbContext) : I
             filtered = filtered.Where(h => h.ResolvedAtUtc == null);
         }
 
-        if (query.VisibleDepartmentIds is not null)
-        {
-            filtered = filtered.Where(h => query.VisibleDepartmentIds.Contains(h.DepartmentId));
-        }
+        filtered = ScopedHandoffs(filtered, query.VisibleDepartmentIds, query.AgentScopeEmployeeId, query.ClaimableDepartmentIds);
 
         if (query.DepartmentId is { } departmentId)
         {

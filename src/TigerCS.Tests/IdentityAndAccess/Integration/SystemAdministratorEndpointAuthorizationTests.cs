@@ -88,8 +88,9 @@ public class SystemAdministratorEndpointAuthorizationTests : IClassFixture<Tiger
                 intake.IntakeRecordId, crmUnit.UnitReferenceId, crmUnit.ContactReferenceId, categoryId, (byte)PriorityLevel.High, "AC unit not cooling"));
         Assert.Equal(HttpStatusCode.Created, ticketResponse.StatusCode);
         var created = await ticketResponse.Content.ReadFromJsonAsync<TicketResponseDto>();
+        await _factory.RecordHandlerAsync(created!.TicketId, client);
 
-        var detailResponse = await client.GetAsync($"/api/tickets/{created!.TicketId}");
+        var detailResponse = await client.GetAsync($"/api/tickets/{created.TicketId}");
         detailResponse.EnsureSuccessStatusCode();
         return (await detailResponse.Content.ReadFromJsonAsync<TicketDetailDto>())!;
     }

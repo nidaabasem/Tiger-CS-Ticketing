@@ -355,9 +355,31 @@ public sealed class TicketDetailsModel(
             ClassifyNotice: ClassifyNotice));
     }
 
+    /// <summary>
+    /// True when the viewer created this ticket but it belongs to another department and they hold no other grant on it: they may follow it
+    /// and change nothing. Every action control is hidden — the Api refuses each modification (403) regardless; this only keeps the page
+    /// from offering what would be refused.
+    /// </summary>
+    public bool IsReadOnlyAccess => Ticket?.IsReadOnlyAccess == true;
+
+    private void ApplyReadOnlyAccess(TicketDetailDto ticket)
+    {
+        if (!ticket.IsReadOnlyAccess)
+        {
+            return;
+        }
+
+        CanAssign = CanAssignAcrossDepartments = CanChangeStatus = CanResolve = CanClose = CanEscalate = CanEscalateToLevel4 = false;
+        CanRequestDowngrade = CanDecideDowngrade = CanClassify = CanTransfer = CanReopen = false;
+        StatusTargets = [];
+        DowngradeTargets = [];
+        TransferTargets = [];
+        ReopenTargets = [];
+    }
+
     /// <summary>The existing condition for the "Record first response" button: the clock is running, no human has replied, and the viewer may resolve or escalate.</summary>
     public bool CanRecordFirstResponse =>
-        Sla is { FirstHumanResponseAtUtc: null } sla && sla.Explanation is not { HasActivePeriod: false } && (CanResolve || CanEscalate);
+        !IsReadOnlyAccess && Sla is { FirstHumanResponseAtUtc: null } sla && sla.Explanation is not { HasActivePeriod: false } && (CanResolve || CanEscalate);
 
     public CurrentUser? Viewer { get; private set; }
     public TicketNameResolver NameResolver => nameResolver;
@@ -1070,6 +1092,7 @@ public sealed class TicketDetailsModel(
         await LoadCategoryNameAsync(Ticket, cancellationToken);
         await LoadTransferTargetsAsync(Ticket, cancellationToken);
         await LoadReopenTargetsAsync(Ticket, cancellationToken);
+        ApplyReadOnlyAccess(Ticket);
 
         var lifecycleHistory = historyTask.Result.IsSuccess && historyTask.Result.Value is not null
             ? historyTask.Result.Value.Entries
