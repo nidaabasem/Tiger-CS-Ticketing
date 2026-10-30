@@ -160,7 +160,7 @@
                                 <td class="col-actions">
                                     @if (user.IsLockedOut)
                                     {
-                                        <form method="post" asp-page-handler="Unlock" asp-route-id="@user.EmployeeId" asp-route-search="@Model.Search" asp-route-includeInactive="@Model.IncludeInactive" asp-route-page="@Model.PageNumber"
+                                        <form method="post" asp-page-handler="Unlock" asp-route-id="@user.EmployeeId" asp-route-search="@Model.Search" asp-route-includeInactive="@Model.IncludeInactive" asp-route-pageNo="@Model.PageNumber"
                                               class="admin-actions" data-unlock-form data-confirm="Unlock @user.DisplayName? Their failed sign-in attempts will be cleared and they can sign in again.">
                                             <button type="submit" class="btn btn-sm">Unlock</button>
                                         </form>

@@ -37,7 +37,7 @@ public sealed class UsersModel(AdminApiClient adminApi) : AdminPageModel
     /// row from the JSON; without JS it is a plain form post that redirects back
     /// with the outcome message. The Api enforces the Admin policy and audits it.
     /// </summary>
-    public async Task<IActionResult> OnPostUnlockAsync(Guid id, string? search, bool includeInactive, int page, CancellationToken cancellationToken)
+    public async Task<IActionResult> OnPostUnlockAsync(Guid id, string? search, bool includeInactive, int pageNo, CancellationToken cancellationToken)
     {
         var result = await adminApi.UnlockUserAsync(id, cancellationToken);
         var message = result.IsSuccess
@@ -50,6 +50,7 @@ public sealed class UsersModel(AdminApiClient adminApi) : AdminPageModel
         }
 
         if (result.IsSuccess) StatusMessage = message; else ErrorMessage = message;
-        return RedirectToPage("/Admin/Users", new { search, includeInactive, page });
+        var back = $"/Admin/Users?search={Uri.EscapeDataString(search ?? string.Empty)}&includeInactive={(includeInactive ? "true" : "false")}&page={Math.Max(pageNo, 1)}";
+        return LocalRedirect(back);
     }
 }
