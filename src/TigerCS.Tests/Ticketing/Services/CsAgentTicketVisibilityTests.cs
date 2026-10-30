@@ -340,6 +340,7 @@ public class CsAgentTicketVisibilityTests
         var integration = Guid.NewGuid();
         var f = CreateService(integration);
         var ticket = await SeedAsync(f);
+        ticket.RecordCreator(integration); // its visibility is the Genesys-created tickets (TicketVisibilityByRoleTests covers the rest)
 
         Assert.False(f.Query.IsRestrictedAgent(integration, Agent));
         Assert.Equal([ticket.TicketId], await QueueIdsAsync(f, integration, Roles.CsAgent));

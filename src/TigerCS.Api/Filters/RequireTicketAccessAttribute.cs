@@ -37,21 +37,23 @@ internal sealed class RequireTicketAccessFilter(TicketQueryAppService ticketQuer
         }
 
         var roles = context.HttpContext.User.FindAll(ClaimTypes.Role).Select(c => c.Value).ToArray();
-        if (!TicketVisibilityRule.IsRestrictedCsAgent(roles))
-        {
-            await next();
-            return;
-        }
-
         var idValue = context.HttpContext.User.FindFirstValue(ClaimTypes.NameIdentifier);
         if (idValue is null || !Guid.TryParse(idValue, out var employeeId))
         {
+            if (!TicketVisibilityRule.IsRestrictedCsAgent(roles))
+            {
+                await next();
+                return;
+            }
+
             context.Result = new UnauthorizedResult();
             return;
         }
 
-        // The Genesys integration account is a "CS Agent" by permission set but not a person, and is already confined to the integration surface.
-        if (!ticketQueryAppService.IsRestrictedAgent(employeeId, roles))
+        // Only a human CS Agent (per-ticket rule) and the Genesys integration account (Genesys-created tickets only) are scoped here;
+        // everyone else passes straight through without a database read.
+        if (!ticketQueryAppService.IsRestrictedAgent(employeeId, roles)
+            && !ticketQueryAppService.IsGenesysIntegration(employeeId, roles))
         {
             await next();
             return;
@@ -62,7 +64,7 @@ internal sealed class RequireTicketAccessFilter(TicketQueryAppService ticketQuer
         {
             context.Result = Forbidden(
                 "Ticket not accessible.",
-                "You can only access tickets assigned to you, tickets on which you handled a Genesys interaction, or tickets you created.");
+                "You can only access tickets assigned to you, tickets on which you handled a Genesys interaction, or tickets you created (the Genesys integration account: Genesys-created tickets).");
             return;
         }
 

@@ -66,6 +66,25 @@ public static class TicketVisibilityRule
         IsRestrictedCsAgent(callerRoles) && serviceIdentities?.IsServiceIdentity(callerEmployeeId) != true;
 
     /// <summary>
+    /// True for the Genesys integration account (a configured service identity) acting without System Administrator or any other
+    /// cross-department role. Its ticket <b>visibility</b> is the Genesys-created tickets only — those it created (<c>CreatedByEmployeeId</c> is
+    /// write-once, so a transfer or reassignment never takes the ticket away), plus any it owns or handled an interaction on — across every
+    /// department. Same shape as the CS Agent rule, so the set-based <c>TicketQueryFilters.VisibleTo</c> serves both. This is visibility only: it
+    /// grants no modification right, and the integration account stays confined to the integration surface by
+    /// <c>ServiceIdentityRestrictionHandler</c>.
+    /// </summary>
+    public static bool IsGenesysIntegration(
+        IReadOnlyCollection<string> callerRoles, Guid callerEmployeeId, IServiceIdentityRegistry? serviceIdentities)
+    {
+        ArgumentNullException.ThrowIfNull(callerRoles);
+
+        return serviceIdentities?.IsServiceIdentity(callerEmployeeId) == true
+            && !AuthorizationOverride.AppliesTo(callerRoles)
+            && !callerRoles.Any(role => !string.Equals(role, Roles.CsAgent, StringComparison.Ordinal)
+                && TicketRoleSets.CrossDepartmentView.Contains(role));
+    }
+
+    /// <summary>
     /// A restricted CS Agent who ALSO holds a department role (Department Employee / Head) keeps that role's own department scope —
     /// it is granted by the other role, not by CS Agent. CS Agent alone grants nothing by department.
     /// </summary>
@@ -105,7 +124,10 @@ public static class TicketVisibilityRule
         ArgumentNullException.ThrowIfNull(userDepartmentAssignmentRepository);
 
         return AuthorizationGate.EvaluateAsync(callerRoles, async () =>
-            IsRestrictedCsAgent(callerRoles, callerEmployeeId, serviceIdentities)
+            IsGenesysIntegration(callerRoles, callerEmployeeId, serviceIdentities)
+                ? HoldsDepartmentRole(callerRoles)
+                    && await userDepartmentAssignmentRepository.ExistsAsync(callerEmployeeId, departmentId, cancellationToken)
+                : IsRestrictedCsAgent(callerRoles, callerEmployeeId, serviceIdentities)
                 ? HoldsDepartmentRole(callerRoles)
                     && await userDepartmentAssignmentRepository.ExistsAsync(callerEmployeeId, departmentId, cancellationToken)
                 : callerRoles.Any(TicketRoleSets.CrossDepartmentView.Contains)
@@ -145,6 +167,18 @@ public static class TicketVisibilityRule
 
         async Task<TicketAccessLevel> ResolveAsync()
         {
+            if (IsGenesysIntegration(callerRoles, callerEmployeeId, serviceIdentities))
+            {
+                // Genesys-created (or Genesys-owned/-handled) tickets in any department; nothing else. Full, not ReadOnly, so what the
+                // integration account could already do on its own tickets (e.g. reconciliation) is unchanged.
+                return ticket.CreatedByEmployeeId == callerEmployeeId
+                    || ticket.CurrentOwnerEmployeeId == callerEmployeeId
+                    || (handlerRepository is not null
+                        && await handlerRepository.HasHandledAsync(ticket.TicketId, callerEmployeeId, cancellationToken))
+                    ? TicketAccessLevel.Full
+                    : TicketAccessLevel.None;
+            }
+
             if (!IsRestrictedCsAgent(callerRoles, callerEmployeeId, serviceIdentities))
             {
                 return await CanViewDepartmentAsync(

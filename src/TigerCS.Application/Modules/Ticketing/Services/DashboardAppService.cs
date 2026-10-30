@@ -59,9 +59,9 @@ public sealed class DashboardAppService(
         IReadOnlyCollection<string> callerRoles,
         CancellationToken cancellationToken = default)
     {
-        var visibleDepartmentIds = await ticketQueryAppService.ResolveVisibleDepartmentIdsAsync(
+        var visibleDepartmentIds = await ticketQueryAppService.ResolveTicketViewDepartmentIdsAsync(
             callerEmployeeId, callerRoles, cancellationToken);
-        var agentScope = ticketQueryAppService.ResolveAgentScope(callerEmployeeId, callerRoles);
+        var agentScope = ticketQueryAppService.ResolveTicketViewAgentScope(callerEmployeeId, callerRoles);
 
         var nowUtc = timeProvider.GetUtcNow().UtcDateTime;
         var snapshot = await ticketRepository.GetDashboardSnapshotAsync(
@@ -97,9 +97,9 @@ public sealed class DashboardAppService(
         DashboardOverviewRequestDto request,
         CancellationToken cancellationToken = default)
     {
-        var visibleDepartmentIds = await ticketQueryAppService.ResolveVisibleDepartmentIdsAsync(
+        var visibleDepartmentIds = await ticketQueryAppService.ResolveTicketViewDepartmentIdsAsync(
             callerEmployeeId, callerRoles, cancellationToken);
-        var agentScope = ticketQueryAppService.ResolveAgentScope(callerEmployeeId, callerRoles);
+        var agentScope = ticketQueryAppService.ResolveTicketViewAgentScope(callerEmployeeId, callerRoles);
 
         // The approver scope needs the caller's actual memberships even for a
         // cross-department view role: a department-targeted approval is
