@@ -572,4 +572,47 @@ public sealed class CsAgentTicketVisibilitySqliteTests : IDisposable
         Assert.Equal(original, CreatorOf(alreadySet));
         Assert.Equal(_agentA, CreatorOf(doubleAudited));
     }
+
+    // =====================================================================
+    // Genesys integration account: created tickets only, as real SQL
+    // =====================================================================
+
+    private sealed class IntegrationRegistry(Guid id) : TigerCS.Application.Authorization.IServiceIdentityRegistry
+    {
+        public IReadOnlyCollection<Guid> ServiceIdentityIds => [id];
+
+        public bool IsServiceIdentity(Guid employeeId) => employeeId == id;
+    }
+
+    [Fact]
+    public async Task GenesysIntegration_SeesOnlyTheTicketsItCreated_AcrossDepartments_NotManualOnesItOwnsOrHandled()
+    {
+        var integration = Guid.NewGuid();
+        long created, createdThenTransferred, createdThenReassigned, manualOwned, manualHandled, manualPlain;
+        using (var context = _db.CreateContext())
+        {
+            created = AddCreatedTicket(context, integration, _db.CustomerServiceId).TicketId;
+            var moved = AddCreatedTicket(context, integration, _db.CustomerServiceId);
+            moved.TransferToDepartment(_db.CollectionsId);
+            context.SaveChanges();
+            createdThenTransferred = moved.TicketId;
+            createdThenReassigned = AddCreatedTicket(context, integration, _db.CollectionsId, owner: _agentB).TicketId;
+            manualOwned = AddCreatedTicket(context, _agentA, _db.CustomerServiceId, owner: integration).TicketId;
+            var handled = AddCreatedTicket(context, _agentA, _db.CollectionsId);
+            _db.AddHandler(context, handled, integration);
+            manualHandled = handled.TicketId;
+            manualPlain = AddCreatedTicket(context, _agentA, _db.CollectionsId).TicketId;
+        }
+
+        using var queryContext = _db.CreateContext();
+        var service = _db.CreateQueryService(queryContext, serviceIdentities: new IntegrationRegistry(integration));
+        var seen = (await service.GetQueueAsync(integration, Agent, Everything())).Items.Select(i => i.TicketId).Order().ToArray();
+
+        Assert.Equal(new[] { created, createdThenTransferred, createdThenReassigned }.Order(), seen);
+        Assert.DoesNotContain(manualOwned, seen);
+        Assert.DoesNotContain(manualHandled, seen);
+        Assert.DoesNotContain(manualPlain, seen);
+        Assert.Equal(TicketQueryOutcome.Forbidden, (await service.GetDetailAsync(integration, Agent, manualHandled)).Outcome);
+        Assert.Equal(TicketQueryOutcome.Success, (await service.GetDetailAsync(integration, Agent, createdThenTransferred)).Outcome);
+    }
 }

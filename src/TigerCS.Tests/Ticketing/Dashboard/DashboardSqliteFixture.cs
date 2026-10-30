@@ -110,13 +110,16 @@ public sealed class DashboardSqliteFixture : IDisposable
         return new DashboardAppService(tickets, queries, time, new DashboardQueryRepository(context), assignments, notificationMode: mode);
     }
 
-    public TicketQueryAppService CreateQueryService(TigerCsDbContext context, DateTime? nowUtc = null, CustomerNotificationModePolicy? mode = null)
+    public TicketQueryAppService CreateQueryService(
+        TigerCsDbContext context, DateTime? nowUtc = null, CustomerNotificationModePolicy? mode = null,
+        TigerCS.Application.Authorization.IServiceIdentityRegistry? serviceIdentities = null)
     {
         var time = new FixedTimeProvider(nowUtc ?? Now);
         var assignments = new UserDepartmentAssignmentRepository(context);
         return new TicketQueryAppService(
             new TicketRepository(context), assignments, new FakeTicketResolutionRepository(), new FakeTicketStatusHistoryRepository(),
-            ReopenPolicy.Default, time, notificationMode: mode, handlerRepository: new TicketInteractionHandlerRepository(context));
+            ReopenPolicy.Default, time, notificationMode: mode, handlerRepository: new TicketInteractionHandlerRepository(context),
+            serviceIdentities: serviceIdentities);
     }
 
     /// <summary>

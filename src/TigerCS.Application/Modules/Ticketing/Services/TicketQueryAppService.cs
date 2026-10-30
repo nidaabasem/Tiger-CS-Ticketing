@@ -103,7 +103,8 @@ public sealed class TicketQueryAppService(
             ReviewsAreTest: notificationMode?.IsTest == true,
             Escalated: request.Escalated == true,
             AgentScopeEmployeeId: agentScope,
-            CreatedByEmployeeId: request.CreatedByMe == true ? callerEmployeeId : null);
+            CreatedByEmployeeId: request.CreatedByMe == true ? callerEmployeeId : null,
+            CreatedOnlyScope: IsGenesysIntegration(callerEmployeeId, callerRoles));
 
         var result = await ticketRepository.SearchAsync(query, cancellationToken);
 

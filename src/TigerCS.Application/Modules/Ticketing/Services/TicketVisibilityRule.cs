@@ -68,8 +68,8 @@ public static class TicketVisibilityRule
     /// <summary>
     /// True for the Genesys integration account (a configured service identity) acting without System Administrator or any other
     /// cross-department role. Its ticket <b>visibility</b> is the Genesys-created tickets only — those it created (<c>CreatedByEmployeeId</c> is
-    /// write-once, so a transfer or reassignment never takes the ticket away), plus any it owns or handled an interaction on — across every
-    /// department. Same shape as the CS Agent rule, so the set-based <c>TicketQueryFilters.VisibleTo</c> serves both. This is visibility only: it
+    /// write-once, so a transfer or reassignment never takes the ticket away) — across every department. Owning or handling an interaction on a
+    /// manually created ticket does not expose it. The set-based form is <c>TicketQueryFilters.VisibleTo(createdOnly: true)</c>. This is visibility only: it
     /// grants no modification right, and the integration account stays confined to the integration surface by
     /// <c>ServiceIdentityRestrictionHandler</c>.
     /// </summary>
@@ -169,14 +169,9 @@ public static class TicketVisibilityRule
         {
             if (IsGenesysIntegration(callerRoles, callerEmployeeId, serviceIdentities))
             {
-                // Genesys-created (or Genesys-owned/-handled) tickets in any department; nothing else. Full, not ReadOnly, so what the
-                // integration account could already do on its own tickets (e.g. reconciliation) is unchanged.
-                return ticket.CreatedByEmployeeId == callerEmployeeId
-                    || ticket.CurrentOwnerEmployeeId == callerEmployeeId
-                    || (handlerRepository is not null
-                        && await handlerRepository.HasHandledAsync(ticket.TicketId, callerEmployeeId, cancellationToken))
-                    ? TicketAccessLevel.Full
-                    : TicketAccessLevel.None;
+                // Genesys-created tickets in any department; nothing else. Owning or handling an interaction on a manually created ticket
+                // grants nothing. Full, not ReadOnly, so what the account could already do on its own tickets is unchanged.
+                return ticket.CreatedByEmployeeId == callerEmployeeId ? TicketAccessLevel.Full : TicketAccessLevel.None;
             }
 
             if (!IsRestrictedCsAgent(callerRoles, callerEmployeeId, serviceIdentities))

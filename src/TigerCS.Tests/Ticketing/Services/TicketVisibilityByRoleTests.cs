@@ -82,6 +82,15 @@ public class TicketVisibilityByRoleTests
         return (genesys, transferred, reassigned, manual);
     }
 
+    /// <summary>A manually created ticket the integration account nevertheless owns and handled an interaction on.</summary>
+    private static async Task<Ticket> SeedManualTouchedByGenesysAsync(Fixture f)
+    {
+        var ticket = await SeedAsync(f, Facilities, createdBy: Guid.NewGuid(), assignedTo: f.Genesys);
+        await f.Tickets.Handlers.AddIfAbsentAsync(TicketInteractionHandler.Create(
+            ticket.TicketId, ticket.TicketId, f.Genesys, "genesys-x", InteractionHandlerSource.Routing, connectedAtUtc: null, DateTime.UtcNow));
+        return ticket;
+    }
+
     private static TicketListRequestDto AllTickets(string? search = null) =>
         new(null, null, null, null, null, null, null, search, null, 1, 50);
 
@@ -175,6 +184,21 @@ public class TicketVisibilityByRoleTests
         Assert.Equal(TicketQueryOutcome.Success, (await f.Query.GetDetailAsync(f.Genesys, Agent, reassigned.TicketId)).Outcome);
         Assert.Equal(TicketQueryOutcome.Forbidden, (await f.Query.GetDetailAsync(f.Genesys, Agent, manual.TicketId)).Outcome);
         Assert.Equal(TicketAccess.Denied, await f.Query.CheckAccessAsync(f.Genesys, Agent, manual.TicketId));
+    }
+
+    [Fact]
+    public async Task GenesysIntegration_DoesNotSeeAManualTicket_EvenWhenItOwnsOrHandledAnInteractionOnIt()
+    {
+        var f = CreateService();
+        var (genesys, transferred, reassigned, _) = await SeedMixAsync(f);
+        var touched = await SeedManualTouchedByGenesysAsync(f);
+
+        Assert.Equal([genesys.TicketId, transferred.TicketId, reassigned.TicketId], await QueueIdsAsync(f, f.Genesys, Roles.CsAgent));
+        Assert.Equal(TicketQueryOutcome.Forbidden, (await f.Query.GetDetailAsync(f.Genesys, Agent, touched.TicketId)).Outcome);
+        Assert.Equal(TicketAccess.Denied, await f.Query.CheckAccessAsync(f.Genesys, Agent, touched.TicketId));
+        Assert.Equal(3, (await f.Dashboard.GetSummaryAsync(f.Genesys, Agent)).OpenTickets);
+        // The same ticket is still fully visible to CS Manager.
+        Assert.Contains(touched.TicketId, await QueueIdsAsync(f, Guid.NewGuid(), Roles.CsManager));
     }
 
     [Fact]

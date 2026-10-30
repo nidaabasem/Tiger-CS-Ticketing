@@ -75,7 +75,8 @@ public sealed class DashboardAppService(
                 nowUtc.Date,
                 AtRiskWindow,
                 AttentionLimit,
-                agentScope),
+                agentScope,
+                ticketQueryAppService.IsGenesysIntegration(callerEmployeeId, callerRoles)),
             cancellationToken);
 
         return new DashboardSummaryDto(
@@ -141,7 +142,8 @@ public sealed class DashboardAppService(
             RecentLimit,
             ReviewsAreTest: notificationMode?.IsTest == true,
             AgentScopeEmployeeId: agentScope,
-            DepartmentId: request.DepartmentId);
+            DepartmentId: request.DepartmentId,
+            CreatedOnlyScope: ticketQueryAppService.IsGenesysIntegration(callerEmployeeId, callerRoles));
 
         var snapshot = await dashboardQueryRepository.GetOverviewAsync(query, cancellationToken);
 
