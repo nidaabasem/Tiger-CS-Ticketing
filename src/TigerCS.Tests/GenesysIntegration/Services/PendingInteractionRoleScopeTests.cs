@@ -46,7 +46,6 @@ public class PendingInteractionRoleScopeTests
     [Theory]
     [InlineData(Roles.CsManager)]
     [InlineData(Roles.CsSupervisor)]
-    [InlineData(Roles.CsAgent)]
     [InlineData(Roles.GeneralManager)]
     [InlineData(Roles.ChairmanCeo)]
     public async Task CrossDepartmentRoles_SeeCallCenterWork_WithoutBelongingToTheCallCenter(string role)

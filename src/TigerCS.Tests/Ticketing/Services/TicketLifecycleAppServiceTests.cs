@@ -75,7 +75,7 @@ public class TicketLifecycleAppServiceTests
             timeProvider ?? TimeProvider.System,
             pendingRecords, requestTypes, workflowTemplates, outbox,
             departments, departmentSettings, workflowEvents, autoAssignment, sla.DueDates,
-            new ReopenEligibilityService(statusHistory, requestTypes, workflowTemplates, reopenPolicy ?? ReopenPolicy.Default));
+            new ReopenEligibilityService(statusHistory, requestTypes, workflowTemplates, reopenPolicy ?? ReopenPolicy.Default), handlerRepository: FakeTicketInteractionHandlerRepository.Permissive());
 
         return new Fixture(
             service, tickets, resolutions, statusHistory, departmentAssignments, audit, unitOfWork, sla,

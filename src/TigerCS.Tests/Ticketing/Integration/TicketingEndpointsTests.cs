@@ -128,8 +128,9 @@ public class TicketingEndpointsTests : IClassFixture<TigerCsApiFactory>
             new CreateTicketRequestDto(intake.IntakeRecordId, null, null, categoryId, (byte)PriorityLevel.Low, "Walk-in question"));
         Assert.Equal(HttpStatusCode.Created, ticketResponse.StatusCode);
         var ticket = await ticketResponse.Content.ReadFromJsonAsync<TicketResponseDto>();
+        await _factory.RecordHandlerAsync(ticket!.TicketId, agent);
 
-        var detail = await (await agent.GetAsync($"/api/tickets/{ticket!.TicketId}")).Content.ReadFromJsonAsync<TicketDetailDto>();
+        var detail = await (await agent.GetAsync($"/api/tickets/{ticket.TicketId}")).Content.ReadFromJsonAsync<TicketDetailDto>();
         Assert.Equal(channel.ChannelId, detail!.OriginatingChannelId);
         Assert.Equal("Lobby Kiosk " + code, detail.OriginatingChannelName);
 
@@ -387,6 +388,8 @@ public class TicketingEndpointsTests : IClassFixture<TigerCsApiFactory>
         Assert.Equal(departmentId, ticket.OriginatingDepartmentId);
         Assert.StartsWith("TG-", ticket.TicketNumber);
 
+        // The agent who took the call is a handler of the ticket's interaction, so it stays visible to them.
+        await _factory.RecordHandlerAsync(ticket.TicketId, client);
         var detailResponse = await client.GetAsync($"/api/tickets/{ticket.TicketId}");
         Assert.Equal(HttpStatusCode.OK, detailResponse.StatusCode);
     }
@@ -433,7 +436,10 @@ public class TicketingEndpointsTests : IClassFixture<TigerCsApiFactory>
                 intake.IntakeRecordId, crmUnit.UnitReferenceId, crmUnit.ContactReferenceId, categoryId, (byte)PriorityLevel.High, "AC unit not cooling"));
         var ticket = await ticketResponse.Content.ReadFromJsonAsync<TicketResponseDto>();
 
-        return (ticket!.TicketId, departmentId, Convert.FromBase64String(ticket.RowVersion));
+        // The creating agent took the call: they handled the ticket's interaction, which is what keeps it visible to them.
+        await _factory.RecordHandlerAsync(ticket!.TicketId, creatorClient);
+
+        return (ticket.TicketId, departmentId, Convert.FromBase64String(ticket.RowVersion));
     }
 
     [Fact]
@@ -721,6 +727,13 @@ public class TicketingEndpointsTests : IClassFixture<TigerCsApiFactory>
         var (ticketId, departmentId, closedRowVersion) = await DriveTicketToClosedAsync(setupClient);
 
         var client = await CreateAuthenticatedClientAsync(role);
+
+        // A CS Agent reopens only a ticket they can see: this one took the call too.
+        if (role == Roles.CsAgent)
+        {
+            await _factory.RecordHandlerAsync(ticketId, client);
+        }
+
         var response = await client.PostAsJsonAsync(
             $"/api/tickets/{ticketId}/reopen",
             new ReopenTicketRequestDto("Customer called back.", departmentId, closedRowVersion));

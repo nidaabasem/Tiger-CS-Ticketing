@@ -45,7 +45,9 @@ public sealed class TicketLifecycleAppService(
     TicketAutoAssignmentService autoAssignmentService,
     SlaDueDateService slaDueDateService,
     ReopenEligibilityService reopenEligibilityService,
-    SlaPauseService? slaPauseService = null)
+    SlaPauseService? slaPauseService = null,
+    ITicketInteractionHandlerRepository? handlerRepository = null,
+    IServiceIdentityRegistry? serviceIdentities = null)
 {
     /// <summary>Matches the <c>TicketStatusHistory.Note</c> column, so a long reason is never lost to a database truncation error mid-transaction.</summary>
     public const int ReopenReasonMaxLength = 1000;
@@ -373,6 +375,13 @@ public sealed class TicketLifecycleAppService(
             return TicketMutationResult.Failure(TicketMutationOutcome.Forbidden);
         }
 
+        // Close is a cross-department right of the CS layer; a CS Agent may use it only on a ticket they can see.
+        if (!await TicketVisibilityRule.PassesAgentScopeAsync(
+                userDepartmentAssignmentRepository, handlerRepository, callerEmployeeId, callerRoles, ticket, serviceIdentities, cancellationToken))
+        {
+            return TicketMutationResult.Failure(TicketMutationOutcome.Forbidden);
+        }
+
         // Closed-ticket immutability (PR correction): closing an
         // already-Closed ticket is this condition, not NotYetResolved
         // (checked next) — a Closed ticket always has a current resolution,
@@ -509,8 +518,8 @@ public sealed class TicketLifecycleAppService(
 
         // ...and the resource-level half: an agent may only reopen a ticket
         // they have access to under the existing visibility rules.
-        if (!await TicketVisibilityRule.CanViewDepartmentAsync(
-                userDepartmentAssignmentRepository, callerEmployeeId, callerRoles, ticket.CurrentDepartmentId, cancellationToken))
+        if (!await TicketVisibilityRule.CanViewTicketAsync(
+                userDepartmentAssignmentRepository, handlerRepository, callerEmployeeId, callerRoles, ticket, serviceIdentities, cancellationToken))
         {
             return TicketMutationResult.Failure(TicketMutationOutcome.Forbidden);
         }

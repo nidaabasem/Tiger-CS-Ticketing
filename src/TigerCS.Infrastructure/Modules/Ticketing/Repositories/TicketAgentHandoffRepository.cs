@@ -40,15 +40,12 @@ public sealed class TicketAgentHandoffRepository(TigerCsDbContext dbContext) : I
     /// this ordering.
     /// </summary>
     public async Task<AwaitingHumanAgentSnapshot> GetAwaitingHumanAgentSnapshotAsync(
-        IReadOnlyCollection<int>? visibleDepartmentIds, CancellationToken cancellationToken = default)
+        IReadOnlyCollection<int>? visibleDepartmentIds, CancellationToken cancellationToken = default,
+        Guid? agentScopeEmployeeId = null)
     {
-        var waiting = dbContext.TicketAgentHandoffs
-            .Where(h => h.ResolvedAtUtc == null && h.Status == AgentHandoffStatus.WaitingForAgent);
-
-        if (visibleDepartmentIds is not null)
-        {
-            waiting = waiting.Where(h => visibleDepartmentIds.Contains(h.DepartmentId));
-        }
+        var waiting = ScopedHandoffs(
+            dbContext.TicketAgentHandoffs.Where(h => h.ResolvedAtUtc == null && h.Status == AgentHandoffStatus.WaitingForAgent),
+            visibleDepartmentIds, agentScopeEmployeeId);
 
         var count = await waiting.CountAsync(cancellationToken);
         var oldest = count == 0
@@ -56,6 +53,23 @@ public sealed class TicketAgentHandoffRepository(TigerCsDbContext dbContext) : I
             : await waiting.MinAsync(h => h.RequestedAtUtc, cancellationToken);
 
         return new AwaitingHumanAgentSnapshot(count, oldest);
+    }
+
+    /// <summary>
+    /// Department scoping for pending human work. A restricted CS Agent (<paramref name="agentScopeEmployeeId"/>) sees a work item only when
+    /// they can see its TICKET — assigned to them, or one they handled on Genesys — exactly as the ticket queue decides; everyone else is
+    /// scoped by the work item's own department, unchanged.
+    /// </summary>
+    private IQueryable<TicketAgentHandoff> ScopedHandoffs(
+        IQueryable<TicketAgentHandoff> handoffs, IReadOnlyCollection<int>? visibleDepartmentIds, Guid? agentScopeEmployeeId)
+    {
+        if (agentScopeEmployeeId is null)
+        {
+            return visibleDepartmentIds is null ? handoffs : handoffs.Where(h => visibleDepartmentIds.Contains(h.DepartmentId));
+        }
+
+        var visibleTickets = dbContext.Tickets.VisibleTo(dbContext, visibleDepartmentIds, agentScopeEmployeeId).Select(t => t.TicketId);
+        return handoffs.Where(h => visibleTickets.Contains(h.TicketId));
     }
 
     public async Task<AgentHandoffQueryResult> SearchAsync(AgentHandoffQuery query, CancellationToken cancellationToken = default)
@@ -69,10 +83,7 @@ public sealed class TicketAgentHandoffRepository(TigerCsDbContext dbContext) : I
             filtered = filtered.Where(h => h.ResolvedAtUtc == null);
         }
 
-        if (query.VisibleDepartmentIds is not null)
-        {
-            filtered = filtered.Where(h => query.VisibleDepartmentIds.Contains(h.DepartmentId));
-        }
+        filtered = ScopedHandoffs(filtered, query.VisibleDepartmentIds, query.AgentScopeEmployeeId);
 
         if (query.DepartmentId is { } departmentId)
         {

@@ -178,6 +178,21 @@ public sealed class FakeTicketRepository : ITicketRepository
     /// <summary>Test assertion helper — every ticket added so far, in insertion order.</summary>
     public IReadOnlyCollection<Ticket> All => _tickets.Values;
 
+    /// <summary>The handlers the CS Agent visibility rule reads. Share this instance with the <c>TicketQueryAppService</c> under test.</summary>
+    public FakeTicketInteractionHandlerRepository Handlers { get; } = new();
+
+    /// <summary>Whether the ticket is inside the scope — the join the real handoff repository does against <c>Tickets</c>.</summary>
+    public bool IsVisibleTo(long ticketId, IReadOnlyCollection<int>? departmentIds, Guid? agentEmployeeId) =>
+        _tickets.TryGetValue(ticketId, out var ticket) && IsVisible(ticket, departmentIds, agentEmployeeId);
+
+    /// <summary>Mirrors <c>TicketQueryFilters.VisibleTo</c>: department scope for everyone; for a restricted CS Agent, assigned-to-me OR handled-by-me OR a department their other role grants.</summary>
+    private bool IsVisible(Ticket t, IReadOnlyCollection<int>? departmentIds, Guid? agentEmployeeId) =>
+        agentEmployeeId is not { } agentId
+            ? departmentIds is null || departmentIds.Contains(t.CurrentDepartmentId)
+            : t.CurrentOwnerEmployeeId == agentId
+                || Handlers.HasHandledSync(t.TicketId, agentId)
+                || (departmentIds?.Contains(t.CurrentDepartmentId) ?? false);
+
     public Task<Ticket?> GetByIdAsync(long ticketId, CancellationToken cancellationToken = default) =>
         Task.FromResult(_tickets.GetValueOrDefault(ticketId));
 
@@ -195,10 +210,7 @@ public sealed class FakeTicketRepository : ITicketRepository
     {
         var filtered = _tickets.Values.AsEnumerable();
 
-        if (query.VisibleDepartmentIds is not null)
-        {
-            filtered = filtered.Where(t => query.VisibleDepartmentIds.Contains(t.CurrentDepartmentId));
-        }
+        filtered = filtered.Where(t => IsVisible(t, query.VisibleDepartmentIds, query.AgentScopeEmployeeId));
 
         if (query.DepartmentId is { } departmentId)
         {
@@ -313,10 +325,7 @@ public sealed class FakeTicketRepository : ITicketRepository
             return Task.FromResult(new CustomerHistoryQueryResult([], 0, 0, 0));
         }
 
-        if (query.VisibleDepartmentIds is not null)
-        {
-            filtered = filtered.Where(t => query.VisibleDepartmentIds.Contains(t.CurrentDepartmentId));
-        }
+        filtered = filtered.Where(t => IsVisible(t, query.VisibleDepartmentIds, query.AgentScopeEmployeeId));
 
         if (query.ExcludeTicketId is { } excludeTicketId)
         {
@@ -351,10 +360,7 @@ public sealed class FakeTicketRepository : ITicketRepository
         DashboardSnapshotQuery query, CancellationToken cancellationToken = default)
     {
         var visible = _tickets.Values.AsEnumerable();
-        if (query.VisibleDepartmentIds is not null)
-        {
-            visible = visible.Where(t => query.VisibleDepartmentIds.Contains(t.CurrentDepartmentId));
-        }
+        visible = visible.Where(t => IsVisible(t, query.VisibleDepartmentIds, query.AgentScopeEmployeeId));
 
         var visibleList = visible.ToList();
         var active = visibleList

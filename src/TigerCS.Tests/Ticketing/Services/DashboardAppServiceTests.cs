@@ -94,10 +94,17 @@ public class DashboardAppServiceTests
         await SeedTicketAsync(f.Tickets, departmentId: 1, owner: Guid.NewGuid());
         await SeedTicketAsync(f.Tickets, departmentId: 1);
 
-        var result = await f.Service.GetSummaryAsync(caller, [Roles.CsAgent]);
+        // A supervisor sees every open ticket; MyTickets is still only the caller's own.
+        var result = await f.Service.GetSummaryAsync(caller, [Roles.CsSupervisor]);
 
         Assert.Equal(2, result.MyTickets);
         Assert.Equal(4, result.OpenTickets);
+
+        // A CS Agent's whole dashboard is the tickets assigned to them (nothing here was handled on Genesys).
+        var agentResult = await f.Service.GetSummaryAsync(caller, [Roles.CsAgent]);
+
+        Assert.Equal(2, agentResult.MyTickets);
+        Assert.Equal(2, agentResult.OpenTickets);
     }
 
     [Fact]

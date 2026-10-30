@@ -32,8 +32,7 @@ public sealed class TicketReviewQueryAppService(
             return TicketQueryResultDto<TicketReviewsDto>.Failure(TicketQueryOutcome.NotFound);
         }
 
-        if (!await ticketQueryAppService.CanViewDepartmentAsync(
-                callerEmployeeId, callerRoles, ticket.CurrentDepartmentId, cancellationToken))
+        if (!await ticketQueryAppService.CanViewTicketAsync(callerEmployeeId, callerRoles, ticket, cancellationToken))
         {
             return TicketQueryResultDto<TicketReviewsDto>.Failure(TicketQueryOutcome.Forbidden);
         }

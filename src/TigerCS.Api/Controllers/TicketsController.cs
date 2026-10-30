@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using TigerCS.Api.Filters;
 using TigerCS.Api.OpenApi;
 using TigerCS.Application.Modules.Ticketing.Dto;
 using TigerCS.Application.Modules.Ticketing.Services;
@@ -22,6 +23,7 @@ namespace TigerCS.Api.Controllers;
 [ApiController]
 [Route("api/tickets")]
 [Authorize(Policy = PolicyNames.AuthenticatedStaff)]
+[RequireTicketAccess]
 [Tags(OpenApiTags.Tickets)]
 public class TicketsController(
     TicketCreationAppService ticketCreationAppService,

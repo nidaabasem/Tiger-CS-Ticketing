@@ -20,10 +20,7 @@ public sealed class TicketRepository(TigerCsDbContext dbContext) : ITicketReposi
     {
         var filtered = dbContext.Tickets.AsQueryable();
 
-        if (query.VisibleDepartmentIds is not null)
-        {
-            filtered = filtered.Where(t => query.VisibleDepartmentIds.Contains(t.CurrentDepartmentId));
-        }
+        filtered = filtered.VisibleTo(dbContext, query.VisibleDepartmentIds, query.AgentScopeEmployeeId);
 
         if (query.DepartmentId is { } departmentId)
         {
@@ -219,10 +216,7 @@ public sealed class TicketRepository(TigerCsDbContext dbContext) : ITicketReposi
             return new CustomerHistoryQueryResult([], 0, 0, 0);
         }
 
-        if (query.VisibleDepartmentIds is not null)
-        {
-            filtered = filtered.Where(t => query.VisibleDepartmentIds.Contains(t.CurrentDepartmentId));
-        }
+        filtered = filtered.VisibleTo(dbContext, query.VisibleDepartmentIds, query.AgentScopeEmployeeId);
 
         if (query.ExcludeTicketId is { } excludeTicketId)
         {
@@ -263,11 +257,7 @@ public sealed class TicketRepository(TigerCsDbContext dbContext) : ITicketReposi
     public async Task<DashboardSnapshot> GetDashboardSnapshotAsync(
         DashboardSnapshotQuery query, CancellationToken cancellationToken = default)
     {
-        var visible = dbContext.Tickets.AsQueryable();
-        if (query.VisibleDepartmentIds is not null)
-        {
-            visible = visible.Where(t => query.VisibleDepartmentIds.Contains(t.CurrentDepartmentId));
-        }
+        var visible = dbContext.Tickets.AsQueryable().VisibleTo(dbContext, query.VisibleDepartmentIds, query.AgentScopeEmployeeId);
 
         // Same "active" set as TicketQueryFilters.Active, legacy
         // PendingThirdParty included — see its remark for why.

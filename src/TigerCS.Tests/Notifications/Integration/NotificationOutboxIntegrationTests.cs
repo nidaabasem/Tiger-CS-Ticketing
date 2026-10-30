@@ -74,7 +74,9 @@ public class NotificationOutboxIntegrationTests : IClassFixture<TigerCsApiFactor
                 (byte)PriorityLevel.High, "AC unit not cooling"));
 
         Assert.Equal(HttpStatusCode.Created, createResponse.StatusCode);
-        return (await createResponse.Content.ReadFromJsonAsync<TicketResponseDto>())!;
+        var created = (await createResponse.Content.ReadFromJsonAsync<TicketResponseDto>())!;
+        await _factory.RecordHandlerAsync(created.TicketId, client);
+        return created;
     }
 
     [Fact]

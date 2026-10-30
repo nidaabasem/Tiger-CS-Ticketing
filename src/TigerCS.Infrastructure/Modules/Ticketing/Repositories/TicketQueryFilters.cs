@@ -19,6 +19,30 @@ internal static class TicketQueryFilters
         departmentIds is null ? tickets : tickets.Where(t => departmentIds.Contains(t.CurrentDepartmentId));
 
     /// <summary>
+    /// The full visibility scope as one predicate — the set-based form of <c>TicketVisibilityRule.CanViewTicketAsync</c>; keep them in step.
+    /// With no <paramref name="agentEmployeeId"/> this is exactly <see cref="InScope"/>. With one (a restricted CS Agent) a ticket is
+    /// visible when it is <b>currently assigned</b> to that employee, or that employee <b>handled a Genesys interaction</b> on it
+    /// (<c>TicketInteractionHandlers</c>), or — only for a caller whose other role grants it — it sits in one of
+    /// <paramref name="departmentIds"/>. A null/empty department set grants nothing here: department or queue membership alone never
+    /// shows a CS Agent a ticket. The handler test is a correlated EXISTS on (HandledByUserId, TicketId), so a ticket handled by several
+    /// agents is still one row.
+    /// </summary>
+    public static IQueryable<Ticket> VisibleTo(
+        this IQueryable<Ticket> tickets, TigerCsDbContext dbContext, IReadOnlyCollection<int>? departmentIds, Guid? agentEmployeeId)
+    {
+        if (agentEmployeeId is not { } agentId)
+        {
+            return tickets.InScope(departmentIds);
+        }
+
+        var departments = departmentIds?.ToList() ?? [];
+        return tickets.Where(t =>
+            t.CurrentOwnerEmployeeId == agentId
+            || dbContext.TicketInteractionHandlers.Any(h => h.TicketId == t.TicketId && h.HandledByUserId == agentId)
+            || departments.Contains(t.CurrentDepartmentId));
+    }
+
+    /// <summary>
     /// "Active" throughout: the non-terminal lifecycle statuses — Open,
     /// InProgress, PendingCustomer, and the legacy PendingThirdParty.
     /// Resolved and Closed are the terminal ones.

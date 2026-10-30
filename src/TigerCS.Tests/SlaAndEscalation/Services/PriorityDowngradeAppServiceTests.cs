@@ -110,7 +110,7 @@ public class PriorityDowngradeAppServiceTests
         var requests = new FakePriorityDowngradeRequestRepository(sla.Tickets);
         var service = new PriorityDowngradeAppService(
             sla.Tickets, new FakePriorityRepository(), requests, sla.DepartmentAssignments, sla.DueDates,
-            sla.UnitOfWork, sla.Audit, new PriorityDowngradeOptions(), clock);
+            sla.UnitOfWork, sla.Audit, new PriorityDowngradeOptions(), clock, handlerRepository: FakeTicketInteractionHandlerRepository.Permissive());
 
         var harness = new Harness { Sla = sla, Requests = requests, Service = service, Ticket = ticket, Clock = clock, OwnerId = ownerId };
         sla.DepartmentAssignments.Assignments.Add(

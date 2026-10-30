@@ -24,7 +24,12 @@ public sealed class DashboardQueryRepository(TigerCsDbContext dbContext) : IDash
     {
         // The dimension filters apply to everything; the date range only to
         // the volume breakdowns; "active" only to the backlog side.
-        var scoped = dbContext.Tickets.AsNoTracking().InScope(query.ScopeDepartmentIds);
+        var scoped = dbContext.Tickets.AsNoTracking().VisibleTo(dbContext, query.ScopeDepartmentIds, query.AgentScopeEmployeeId);
+
+        if (query.DepartmentId is { } departmentFilterId)
+        {
+            scoped = scoped.Where(t => t.CurrentDepartmentId == departmentFilterId);
+        }
 
         if (query.OwnerEmployeeId is { } ownerEmployeeId)
         {

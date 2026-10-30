@@ -73,8 +73,9 @@ public class UnauthorizedRolesStillDeniedTests : IClassFixture<TigerCsApiFactory
                 new CreateTicketRequestDto(
                     intake.IntakeRecordId, crmUnit.UnitReferenceId, crmUnit.ContactReferenceId, categoryId, (byte)PriorityLevel.High, "AC unit not cooling")))
             .Content.ReadFromJsonAsync<TicketResponseDto>();
+        await _factory.RecordHandlerAsync(created!.TicketId, client);
 
-        var detail = await (await client.GetAsync($"/api/tickets/{created!.TicketId}"))
+        var detail = await (await client.GetAsync($"/api/tickets/{created.TicketId}"))
             .Content.ReadFromJsonAsync<TicketDetailDto>();
         return detail!;
     }

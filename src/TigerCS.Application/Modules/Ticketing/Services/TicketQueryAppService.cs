@@ -28,7 +28,9 @@ public sealed class TicketQueryAppService(
     ITicketInteractionRepository? interactionRepository = null,
     IChannelRepository? channelRepository = null,
     ITicketAgentHandoffRepository? agentHandoffRepository = null,
-    CustomerNotificationModePolicy? notificationMode = null)
+    CustomerNotificationModePolicy? notificationMode = null,
+    ITicketInteractionHandlerRepository? handlerRepository = null,
+    IServiceIdentityRegistry? serviceIdentities = null)
 {
     public async Task<TicketListResultDto> GetQueueAsync(
         Guid callerEmployeeId,
@@ -37,6 +39,7 @@ public sealed class TicketQueryAppService(
         CancellationToken cancellationToken = default)
     {
         var visibleDepartmentIds = await ResolveVisibleDepartmentIdsAsync(callerEmployeeId, callerRoles, cancellationToken);
+        var agentScope = ResolveAgentScope(callerEmployeeId, callerRoles);
 
         var page = request.Page < 1 ? 1 : request.Page;
         var pageSize = request.PageSize is < 1 or > 200 ? 50 : request.PageSize;
@@ -82,7 +85,8 @@ public sealed class TicketQueryAppService(
             ClosureCategory: ParseEnum<TicketClosureCategory>(request.ClosureCategory),
             ClosedFromUtc: request.ClosedFrom?.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc),
             ClosedToUtc: request.ClosedTo?.AddDays(1).ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc),
-            ReviewsAreTest: notificationMode?.IsTest == true);
+            ReviewsAreTest: notificationMode?.IsTest == true,
+            AgentScopeEmployeeId: agentScope);
 
         var result = await ticketRepository.SearchAsync(query, cancellationToken);
 
@@ -101,7 +105,7 @@ public sealed class TicketQueryAppService(
             return TicketQueryResultDto<TicketDetailDto>.Failure(TicketQueryOutcome.NotFound);
         }
 
-        if (!await CanViewDepartmentAsync(callerEmployeeId, callerRoles, ticket.CurrentDepartmentId, cancellationToken))
+        if (!await CanViewTicketAsync(callerEmployeeId, callerRoles, ticket, cancellationToken))
         {
             return TicketQueryResultDto<TicketDetailDto>.Failure(TicketQueryOutcome.Forbidden);
         }
@@ -196,10 +200,31 @@ public sealed class TicketQueryAppService(
         return TicketQueryResultDto<TicketDetailDto>.Success(detail);
     }
 
-    /// <summary>Null means "no restriction" (cross-department view role, or the ADR-0024 override) — never client-supplied, always resolved from the caller's own roles/department membership.</summary>
+    /// <summary>
+    /// Null means "no restriction" (cross-department view role, or the ADR-0024 override) — never client-supplied, always resolved from the
+    /// caller's own roles/department membership.
+    ///
+    /// <para>
+    /// A restricted CS Agent (<see cref="TicketVisibilityRule.IsRestrictedCsAgent(IReadOnlyCollection{string})"/>) is <b>never</b> null: CS Agent grants no department
+    /// access, so this is empty (or only the memberships a second, department role grants). That makes every caller that has not yet been
+    /// taught the agent's per-ticket rule fail closed — it shows the agent nothing rather than everything. Callers that do apply the rule
+    /// pass <see cref="ResolveAgentScope"/> alongside this set.
+    /// </para>
+    /// </summary>
     internal async Task<IReadOnlyCollection<int>?> ResolveVisibleDepartmentIdsAsync(
         Guid callerEmployeeId, IReadOnlyCollection<string> callerRoles, CancellationToken cancellationToken)
     {
+        if (IsRestrictedAgent(callerEmployeeId, callerRoles))
+        {
+            if (!TicketVisibilityRule.HoldsDepartmentRole(callerRoles))
+            {
+                return Array.Empty<int>();
+            }
+
+            var departmentRoleAssignments = await userDepartmentAssignmentRepository.GetByEmployeeIdAsync(callerEmployeeId, cancellationToken);
+            return departmentRoleAssignments.Select(a => a.DepartmentId).ToList();
+        }
+
         if (AuthorizationGate.Evaluate(callerRoles, () => callerRoles.Any(TicketRoleSets.CrossDepartmentView.Contains)))
         {
             return null;
@@ -236,7 +261,7 @@ public sealed class TicketQueryAppService(
             return TicketQueryResultDto<TicketLifecycleHistoryDto>.Failure(TicketQueryOutcome.NotFound);
         }
 
-        if (!await CanViewDepartmentAsync(callerEmployeeId, callerRoles, ticket.CurrentDepartmentId, cancellationToken))
+        if (!await CanViewTicketAsync(callerEmployeeId, callerRoles, ticket, cancellationToken))
         {
             return TicketQueryResultDto<TicketLifecycleHistoryDto>.Failure(TicketQueryOutcome.Forbidden);
         }
@@ -276,10 +301,51 @@ public sealed class TicketQueryAppService(
     private static string NameOf<TEnum>(byte value) where TEnum : struct, Enum =>
         Enum.IsDefined(typeof(TEnum), value) ? ((TEnum)Enum.ToObject(typeof(TEnum), value)).ToString() : value.ToString();
 
+    /// <summary>
+    /// The employee whose assigned/handled tickets a restricted CS Agent may see, or null when the caller is not one (their visibility is
+    /// then entirely <see cref="ResolveVisibleDepartmentIdsAsync"/>). Always the caller themselves — never client-supplied.
+    /// </summary>
+    public Guid? ResolveAgentScope(Guid callerEmployeeId, IReadOnlyCollection<string> callerRoles) =>
+        IsRestrictedAgent(callerEmployeeId, callerRoles) ? callerEmployeeId : null;
+
+    /// <summary>True when the caller is a human CS Agent whose ticket visibility is the narrow per-ticket rule (never a service identity, never Admin/Supervisor/Manager).</summary>
+    public bool IsRestrictedAgent(Guid callerEmployeeId, IReadOnlyCollection<string> callerRoles) =>
+        TicketVisibilityRule.IsRestrictedCsAgent(callerRoles, callerEmployeeId, serviceIdentities);
+
+    /// <summary>May the caller see this ticket — by department, or (CS Agent) because it is assigned to them or they handled one of its Genesys interactions.</summary>
+    internal Task<bool> CanViewTicketAsync(
+        Guid callerEmployeeId, IReadOnlyCollection<string> callerRoles, Ticket ticket, CancellationToken cancellationToken) =>
+        TicketVisibilityRule.CanViewTicketAsync(
+            userDepartmentAssignmentRepository, handlerRepository, callerEmployeeId, callerRoles, ticket, serviceIdentities, cancellationToken);
+
+    /// <summary>
+    /// The server-side gate for an id-addressed request (a direct URL or API call): is this ticket visible to the caller? Used by the API's
+    /// ticket-access filter to refuse a restricted CS Agent before any action runs, so no endpoint that takes a ticket id has to remember to.
+    /// </summary>
+    public async Task<TicketAccess> CheckAccessAsync(
+        Guid callerEmployeeId, IReadOnlyCollection<string> callerRoles, long ticketId, CancellationToken cancellationToken = default)
+    {
+        var ticket = await ticketRepository.GetByIdAsync(ticketId, cancellationToken);
+        if (ticket is null)
+        {
+            return TicketAccess.NotFound;
+        }
+
+        return await CanViewTicketAsync(callerEmployeeId, callerRoles, ticket, cancellationToken) ? TicketAccess.Allowed : TicketAccess.Denied;
+    }
+
+    /// <summary>Ticket-level visibility for a caller holding only a ticket id: loads the ticket and applies <see cref="CanViewTicketAsync(Guid, IReadOnlyCollection{string}, Ticket, CancellationToken)"/>. A ticket that does not exist is reported as not visible.</summary>
+    internal async Task<bool> CanViewTicketAsync(
+        Guid callerEmployeeId, IReadOnlyCollection<string> callerRoles, long ticketId, CancellationToken cancellationToken)
+    {
+        var ticket = await ticketRepository.GetByIdAsync(ticketId, cancellationToken);
+        return ticket is not null && await CanViewTicketAsync(callerEmployeeId, callerRoles, ticket, cancellationToken);
+    }
+
     internal Task<bool> CanViewDepartmentAsync(
         Guid callerEmployeeId, IReadOnlyCollection<string> callerRoles, int departmentId, CancellationToken cancellationToken) =>
         TicketVisibilityRule.CanViewDepartmentAsync(
-            userDepartmentAssignmentRepository, callerEmployeeId, callerRoles, departmentId, cancellationToken);
+            userDepartmentAssignmentRepository, callerEmployeeId, callerRoles, departmentId, serviceIdentities, cancellationToken);
 
     private static TEnum? ParseEnum<TEnum>(string? value) where TEnum : struct, Enum =>
         value is not null && Enum.TryParse<TEnum>(value, ignoreCase: true, out var parsed) ? parsed : null;
@@ -331,4 +397,17 @@ public sealed class TicketQueryAppService(
         RequestTypeId: ticket.RequestTypeId,
         WorkflowTemplateId: ticket.WorkflowTemplateId,
         IsClassified: ticket.IsClassified);
+}
+
+/// <summary>The answer to <see cref="TicketQueryAppService.CheckAccessAsync"/>.</summary>
+public enum TicketAccess
+{
+    /// <summary>The caller may see the ticket.</summary>
+    Allowed,
+
+    /// <summary>No such ticket — the endpoint answers it as it always has.</summary>
+    NotFound,
+
+    /// <summary>The ticket exists and the caller may not see it.</summary>
+    Denied
 }

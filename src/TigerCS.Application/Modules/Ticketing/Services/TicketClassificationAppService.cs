@@ -62,7 +62,9 @@ public sealed class TicketClassificationAppService(
     ITicketingUnitOfWork unitOfWork,
     IAuditEntryWriter auditWriter,
     SlaDueDateService slaDueDateService,
-    TimeProvider timeProvider)
+    TimeProvider timeProvider,
+    ITicketInteractionHandlerRepository? handlerRepository = null,
+    IServiceIdentityRegistry? serviceIdentities = null)
 {
     public async Task<TicketMutationResult> ClassifyAsync(
         Guid callerEmployeeId,
@@ -88,7 +90,10 @@ public sealed class TicketClassificationAppService(
             || callerRoles.Contains(Domain.Modules.IdentityAndAccess.Roles.CsAgent)
             || await userDepartmentAssignmentRepository.ExistsAsync(callerEmployeeId, ticket.CurrentDepartmentId, cancellationToken)));
 
-        if (!authorized)
+        // CS Agent is cross-department for this action; a restricted agent may classify only a ticket they can see.
+        if (!authorized
+            || !await TicketVisibilityRule.PassesAgentScopeAsync(
+                userDepartmentAssignmentRepository, handlerRepository, callerEmployeeId, callerRoles, ticket, serviceIdentities, cancellationToken))
         {
             return TicketMutationResult.Failure(TicketMutationOutcome.Forbidden);
         }

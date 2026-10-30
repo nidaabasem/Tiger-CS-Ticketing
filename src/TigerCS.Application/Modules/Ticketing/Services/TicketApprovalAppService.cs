@@ -71,7 +71,9 @@ public sealed class TicketApprovalAppService(
     ITicketingUnitOfWork unitOfWork,
     IAuditEntryWriter auditWriter,
     TimeProvider timeProvider,
-    ReopenEligibilityService reopenEligibilityService)
+    ReopenEligibilityService reopenEligibilityService,
+    ITicketInteractionHandlerRepository? handlerRepository = null,
+    IServiceIdentityRegistry? serviceIdentities = null)
 {
     /// <summary>Provisional: which department-side roles may decide a department-targeted approval when the requirement names no narrowing role. Deliberately the two department-scoped roles only — never CS-layer, never broad.</summary>
     public static readonly IReadOnlyCollection<string> DepartmentTargetDefaultApproverRoles =
@@ -516,9 +518,8 @@ public sealed class TicketApprovalAppService(
         // member of the Collections department that owns the ticket).
         // Nothing broader: it grants this view only, only while a cycle
         // addressed to the caller is pending.
-        var canView = await AuthorizationGate.EvaluateAsync(callerRoles, async () =>
-            callerRoles.Any(TicketRoleSets.CrossDepartmentView.Contains)
-            || await userDepartmentAssignmentRepository.ExistsAsync(callerEmployeeId, ticket.CurrentDepartmentId, cancellationToken));
+        var canView = await TicketVisibilityRule.CanViewTicketAsync(
+            userDepartmentAssignmentRepository, handlerRepository, callerEmployeeId, callerRoles, ticket, serviceIdentities, cancellationToken);
         if (!canView)
         {
             var isPendingApprover = false;

@@ -45,8 +45,7 @@ public sealed class TicketInteractionQueryAppService(
             return TicketQueryResultDto<TicketInteractionHistoryDto>.Failure(TicketQueryOutcome.NotFound);
         }
 
-        if (!await ticketQueryAppService.CanViewDepartmentAsync(
-                callerEmployeeId, callerRoles, ticket.CurrentDepartmentId, cancellationToken))
+        if (!await ticketQueryAppService.CanViewTicketAsync(callerEmployeeId, callerRoles, ticket, cancellationToken))
         {
             return TicketQueryResultDto<TicketInteractionHistoryDto>.Failure(TicketQueryOutcome.Forbidden);
         }

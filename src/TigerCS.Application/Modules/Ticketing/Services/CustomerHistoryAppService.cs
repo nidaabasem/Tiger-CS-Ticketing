@@ -80,7 +80,7 @@ public sealed class CustomerHistoryAppService(
         var result = await ticketRepository.SearchCustomerHistoryAsync(
             new CustomerHistoryQuery(
                 visibleDepartmentIds, crmBuyerCustomerId, TicketIds: null, excludeTicketId, NormalizeLimit(limit),
-                UnitNumber: NormalizeUnitNumber(unitNumber), OrderActiveFirst: orderActiveFirst),
+                UnitNumber: NormalizeUnitNumber(unitNumber), OrderActiveFirst: orderActiveFirst, AgentScopeEmployeeId: ticketQueryAppService.ResolveAgentScope(callerEmployeeId, callerRoles)),
             cancellationToken);
 
         return await ToDtoAsync("Verified", crmBuyerCustomerId, phoneNumberSnapshot: null, result,
@@ -114,7 +114,7 @@ public sealed class CustomerHistoryAppService(
             new CustomerHistoryQuery(
                 visibleDepartmentIds, CrmBuyerCustomerId: null, TicketIds: null, excludeTicketId, NormalizeLimit(limit),
                 ExternalSource: externalSource, ExternalCustomerId: externalCustomerId,
-                UnitNumber: NormalizeUnitNumber(unitNumber), OrderActiveFirst: orderActiveFirst),
+                UnitNumber: NormalizeUnitNumber(unitNumber), OrderActiveFirst: orderActiveFirst, AgentScopeEmployeeId: ticketQueryAppService.ResolveAgentScope(callerEmployeeId, callerRoles)),
             cancellationToken);
 
         return await ToDtoAsync("ExternalVerified", crmBuyerCustomerId: null, phoneNumberSnapshot: null, result,
@@ -143,7 +143,7 @@ public sealed class CustomerHistoryAppService(
             return CustomerHistoryResult.Failure(CustomerHistoryOutcome.NotFound);
         }
 
-        if (!await ticketQueryAppService.CanViewDepartmentAsync(callerEmployeeId, callerRoles, ticket.CurrentDepartmentId, cancellationToken))
+        if (!await ticketQueryAppService.CanViewTicketAsync(callerEmployeeId, callerRoles, ticket, cancellationToken))
         {
             return CustomerHistoryResult.Failure(CustomerHistoryOutcome.Forbidden);
         }
@@ -155,7 +155,7 @@ public sealed class CustomerHistoryAppService(
         if (ticket.CrmBuyerCustomerId is { } crmBuyerCustomerId)
         {
             var verifiedResult = await ticketRepository.SearchCustomerHistoryAsync(
-                new CustomerHistoryQuery(visibleDepartmentIds, crmBuyerCustomerId, TicketIds: null, ticketId, boundedLimit),
+                new CustomerHistoryQuery(visibleDepartmentIds, crmBuyerCustomerId, TicketIds: null, ticketId, boundedLimit, AgentScopeEmployeeId: ticketQueryAppService.ResolveAgentScope(callerEmployeeId, callerRoles)),
                 cancellationToken);
 
             return CustomerHistoryResult.Success(
@@ -171,7 +171,7 @@ public sealed class CustomerHistoryAppService(
             var externalResult = await ticketRepository.SearchCustomerHistoryAsync(
                 new CustomerHistoryQuery(
                     visibleDepartmentIds, CrmBuyerCustomerId: null, TicketIds: null, ticketId, boundedLimit,
-                    ExternalSource: anchorSource, ExternalCustomerId: anchorExternalId),
+                    ExternalSource: anchorSource, ExternalCustomerId: anchorExternalId, AgentScopeEmployeeId: ticketQueryAppService.ResolveAgentScope(callerEmployeeId, callerRoles)),
                 cancellationToken);
 
             return CustomerHistoryResult.Success(
@@ -194,7 +194,7 @@ public sealed class CustomerHistoryAppService(
 
         var linkedTicketIds = await intakeRecordRepository.ListLinkedTicketIdsByPhoneNumberAsync(intakeRecord.PhoneNumber, cancellationToken);
         var unverifiedResult = await ticketRepository.SearchCustomerHistoryAsync(
-            new CustomerHistoryQuery(visibleDepartmentIds, CrmBuyerCustomerId: null, linkedTicketIds, ticketId, boundedLimit),
+            new CustomerHistoryQuery(visibleDepartmentIds, CrmBuyerCustomerId: null, linkedTicketIds, ticketId, boundedLimit, AgentScopeEmployeeId: ticketQueryAppService.ResolveAgentScope(callerEmployeeId, callerRoles)),
             cancellationToken);
 
         return CustomerHistoryResult.Success(
@@ -211,7 +211,7 @@ public sealed class CustomerHistoryAppService(
         var visible = await ticketQueryAppService.ResolveVisibleDepartmentIdsAsync(callerEmployeeId, callerRoles, cancellationToken);
         var result = await ticketRepository.SearchCustomerHistoryAsync(new CustomerHistoryQuery(
             visible, crmCustomerId, null, null, NormalizeLimit(limit), "Pact", pactCustomerId,
-            NormalizeUnitNumber(unitNumber), orderActiveFirst, IncludeLinkedExternalIdentity: true), cancellationToken);
+            NormalizeUnitNumber(unitNumber), orderActiveFirst, IncludeLinkedExternalIdentity: true, AgentScopeEmployeeId: ticketQueryAppService.ResolveAgentScope(callerEmployeeId, callerRoles)), cancellationToken);
         return await ToDtoAsync("LinkedVerified", crmCustomerId, null, result,
             externalSource: "Pact", externalCustomerId: pactCustomerId, cancellationToken: cancellationToken);
     }

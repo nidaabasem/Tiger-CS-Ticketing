@@ -262,6 +262,16 @@ public sealed class TigerCsApiFactory : WebApplicationFactory<Program>
         return (username, password, user.Id);
     }
 
+    /// <summary>Gives an existing test employee a further role (a person may hold several).</summary>
+    public async Task AddRoleAsync(Guid employeeId, string roleName)
+    {
+        using var scope = Services.CreateScope();
+        var userManager = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
+        var user = await userManager.FindByIdAsync(employeeId.ToString())
+            ?? throw new InvalidOperationException("No such test employee.");
+        await userManager.AddToRoleAsync(user, roleName);
+    }
+
     /// <summary>
     /// Records a confirmed, <b>agent-asserted</b> verification session (method Otp, but without the server-recorded proof the OTP
     /// service attaches) for <paramref name="employeeId"/> and the CRM unit — the shape a forged or merely asserted session has.
@@ -598,6 +608,37 @@ public sealed class TigerCsApiFactory : WebApplicationFactory<Program>
         using var scope = Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<TigerCsDbContext>();
         return await db.IdempotencyRecords.Where(r => r.Scope == scopeName).ToListAsync();
+    }
+
+    /// <summary>
+    /// Records <paramref name="userId"/> as having handled the ticket's (first) interaction — what a Genesys connect event does in
+    /// production — which is what lets a CS Agent see a ticket they neither own nor were assigned. Tests whose subject is something other
+    /// than visibility use it to say "this agent took the call".
+    /// </summary>
+    public async Task RecordHandlerAsync(long ticketId, Guid userId)
+    {
+        using var scope = Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<TigerCsDbContext>();
+        var interactionId = await db.TicketInteractions.Where(i => i.TicketId == ticketId)
+            .OrderBy(i => i.TicketInteractionId).Select(i => i.TicketInteractionId).FirstAsync();
+        db.TicketInteractionHandlers.Add(TicketInteractionHandler.Create(
+            interactionId, ticketId, userId, "test-genesys-" + userId.ToString("N")[..8],
+            InteractionHandlerSource.Routing, connectedAtUtc: null, DateTime.UtcNow));
+        await db.SaveChangesAsync();
+    }
+
+    /// <summary>Same, for the user a logged-in test client authenticates as (read from its bearer token).</summary>
+    public Task RecordHandlerAsync(long ticketId, HttpClient authenticatedClient) =>
+        RecordHandlerAsync(ticketId, UserIdOf(authenticatedClient));
+
+    /// <summary>The employee id inside a test client's bearer token.</summary>
+    public static Guid UserIdOf(HttpClient authenticatedClient)
+    {
+        var token = authenticatedClient.DefaultRequestHeaders.Authorization?.Parameter
+            ?? throw new InvalidOperationException("The client is not authenticated.");
+        var jwt = new Microsoft.IdentityModel.JsonWebTokens.JsonWebTokenHandler().ReadJsonWebToken(token);
+        var id = jwt.Claims.First(c => c.Type is System.Security.Claims.ClaimTypes.NameIdentifier or "nameid" or "sub").Value;
+        return Guid.Parse(id);
     }
 
     public async Task<Ticket?> GetTicketAsync(long ticketId)

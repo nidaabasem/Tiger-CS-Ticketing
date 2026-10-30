@@ -89,13 +89,15 @@ public sealed record GenesysCustomerConfirmationUpdateDto(
 /// </summary>
 /// <param name="QueueId">The Genesys queue the conversation is now in.</param>
 /// <param name="QueueName">That queue's display name.</param>
-/// <param name="AgentId">The Genesys User ID of the agent now connected. Resolved to the mapped Ticketing user when the interaction has no handler yet.</param>
+/// <param name="AgentId">The Genesys User ID of the agent now <b>connected</b> (answered / accepted — never one that is merely ringing or assigned). Resolved to the mapped Ticketing user and recorded as a handler of the interaction, so every agent a transfer passes through is kept.</param>
 /// <param name="AgentName">That agent's display name. Display only — never an identity key.</param>
+/// <param name="ConnectedAtUtc">When that agent connected, as Genesys reports it (the participant's connected time). Optional; stored on the handler record when supplied.</param>
 public sealed record GenesysRoutingUpdateDto(
     string? QueueId = null,
     string? QueueName = null,
     string? AgentId = null,
-    string? AgentName = null);
+    string? AgentName = null,
+    DateTime? ConnectedAtUtc = null);
 
 /// <summary>
 /// The conversation has finished. Recording this stores the transcript and

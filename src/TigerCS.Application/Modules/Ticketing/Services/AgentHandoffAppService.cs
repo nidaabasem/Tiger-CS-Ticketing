@@ -60,6 +60,7 @@ public sealed class AgentHandoffAppService(
 
         var visibleDepartmentIds = await ticketQueryAppService.ResolveVisibleDepartmentIdsAsync(
             callerEmployeeId, callerRoles, cancellationToken);
+        var agentScope = ticketQueryAppService.ResolveAgentScope(callerEmployeeId, callerRoles);
 
         var page = request.Page < 1 ? 1 : request.Page;
         var pageSize = request.PageSize is < 1 or > 200 ? 50 : request.PageSize;
@@ -67,7 +68,7 @@ public sealed class AgentHandoffAppService(
         var result = await handoffRepository.SearchAsync(
             new AgentHandoffQuery(
                 visibleDepartmentIds, request.DepartmentId, request.ChannelId, request.AssignedEmployeeId,
-                request.UnassignedOnly, request.IncludeResolved, page, pageSize),
+                request.UnassignedOnly, request.IncludeResolved, page, pageSize, agentScope),
             cancellationToken);
 
         return new AgentHandoffListResultDto(
@@ -161,8 +162,7 @@ public sealed class AgentHandoffAppService(
         // override through AuthorizationGate.
         // Read-only roles (Chairman/CEO, Reporting User) view the work list but never act on it.
         if (Roles.IsReadOnlyCaller(callerRoles)
-            || !await ticketQueryAppService.CanViewDepartmentAsync(
-                callerEmployeeId, callerRoles, handoff.DepartmentId, cancellationToken))
+            || !await CanViewHandoffAsync(callerEmployeeId, callerRoles, handoff, cancellationToken))
         {
             return AgentHandoffResult.Failure(AgentHandoffOutcome.Forbidden);
         }
@@ -373,8 +373,7 @@ public sealed class AgentHandoffAppService(
         // new privilege tier.
         // Read-only roles (Chairman/CEO, Reporting User) view the work list but never act on it.
         if (Roles.IsReadOnlyCaller(callerRoles)
-            || !await ticketQueryAppService.CanViewDepartmentAsync(
-                callerEmployeeId, callerRoles, handoff.DepartmentId, cancellationToken))
+            || !await CanViewHandoffAsync(callerEmployeeId, callerRoles, handoff, cancellationToken))
         {
             return AgentHandoffResult.Failure(AgentHandoffOutcome.Forbidden);
         }
@@ -466,4 +465,14 @@ public sealed class AgentHandoffAppService(
             ticketIsClassified,
             interactionEnded,
             handoff.ExternalWorkItemId);
+
+    /// <summary>
+    /// May the caller see (and so act on) this work item. By its department for everyone except a restricted CS Agent, who sees it only
+    /// when they can see its ticket — assigned to them, or handled by them on Genesys.
+    /// </summary>
+    private Task<bool> CanViewHandoffAsync(
+        Guid callerEmployeeId, IReadOnlyCollection<string> callerRoles, TicketAgentHandoff handoff, CancellationToken cancellationToken) =>
+        ticketQueryAppService.IsRestrictedAgent(callerEmployeeId, callerRoles)
+            ? ticketQueryAppService.CanViewTicketAsync(callerEmployeeId, callerRoles, handoff.TicketId, cancellationToken)
+            : ticketQueryAppService.CanViewDepartmentAsync(callerEmployeeId, callerRoles, handoff.DepartmentId, cancellationToken);
 }

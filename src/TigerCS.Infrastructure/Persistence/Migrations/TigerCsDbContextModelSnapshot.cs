@@ -2849,6 +2849,49 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                     b.ToTable("TicketInteractions", (string)null);
                 });
 
+            modelBuilder.Entity("TigerCS.Domain.Modules.Ticketing.TicketInteractionHandler", b =>
+                {
+                    b.Property<long>("TicketInteractionHandlerId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("TicketInteractionHandlerId"));
+
+                    b.Property<DateTime?>("ConnectedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("GenesysAgentUserId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<Guid>("HandledByUserId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("RecordedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<byte>("Source")
+                        .HasColumnType("tinyint");
+
+                    b.Property<long>("TicketId")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("TicketInteractionId")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("TicketInteractionHandlerId");
+
+                    b.HasIndex("TicketId");
+
+                    b.HasIndex(new[] { "HandledByUserId", "TicketId" }, "IX_TicketInteractionHandlers_HandledByUserId_TicketId");
+
+                    b.HasIndex(new[] { "TicketInteractionId", "HandledByUserId" }, "UX_TicketInteractionHandlers_InteractionId_UserId")
+                        .IsUnique();
+
+                    b.ToTable("TicketInteractionHandlers", (string)null);
+                });
+
             modelBuilder.Entity("TigerCS.Domain.Modules.Ticketing.TicketInteractionMessage", b =>
                 {
                     b.Property<long>("TicketInteractionMessageId")
@@ -4255,6 +4298,27 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                     b.HasOne("TigerCS.Domain.Modules.Ticketing.Ticket", null)
                         .WithMany()
                         .HasForeignKey("TicketId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("TigerCS.Domain.Modules.Ticketing.TicketInteractionHandler", b =>
+                {
+                    b.HasOne("TigerCS.Infrastructure.Identity.ApplicationUser", null)
+                        .WithMany()
+                        .HasForeignKey("HandledByUserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("TigerCS.Domain.Modules.Ticketing.Ticket", null)
+                        .WithMany()
+                        .HasForeignKey("TicketId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("TigerCS.Domain.Modules.Ticketing.TicketInteraction", null)
+                        .WithMany()
+                        .HasForeignKey("TicketInteractionId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });

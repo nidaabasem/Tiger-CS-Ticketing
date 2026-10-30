@@ -108,7 +108,8 @@ public sealed class GenesysInquiryIngestionAppService(
     ITicketingUnitOfWork unitOfWork,
     GenesysAgentResolutionAppService agentResolution,
     GenesysDefaultPriorityResolver defaultPriorityResolver,
-    GenesysRequestTypeClassificationAppService classificationAppService)
+    GenesysRequestTypeClassificationAppService classificationAppService,
+    GenesysInteractionHandlerRecorder? handlerRecorder = null)
 {
     public async Task<GenesysIngestionResult> IngestAsync(
         Guid callerEmployeeId, GenesysInquiryDto inquiry, CancellationToken cancellationToken = default)
@@ -320,6 +321,13 @@ public sealed class GenesysInquiryIngestionAppService(
             && await conversationRepository.GetByConversationAndTicketAsync(conversationId, creation.Response.TicketId, cancellationToken) is { } originating)
         {
             originating.RecordHandlingAgentIfAbsent(agent.Agent!.GenesysUserId, agent.Agent.UserId);
+
+            // Also the per-agent history ticket visibility rests on. Staged here and saved with the audit entry below.
+            if (handlerRecorder is not null)
+            {
+                await handlerRecorder.StageAsync(
+                    originating, agent.Agent, InteractionHandlerSource.Inquiry, inquiry.StartedAtUtc, cancellationToken);
+            }
         }
 
         // The integration-level audit entry, written after the ticket's own
@@ -634,6 +642,9 @@ public static class GenesysAuditActions
 
     /// <summary>A Genesys agent was resolved to a Ticketing user and recorded as the handler of an interaction.</summary>
     public const string InteractionHandlerRecorded = "GenesysInteractionHandlerRecorded";
+
+    /// <summary>A further Genesys agent was recorded as having handled an interaction (a transfer, or a second agent joining) — the per-agent history ticket visibility rests on.</summary>
+    public const string InteractionHandlerAdded = "GenesysInteractionHandlerAdded";
 
     /// <summary>
     /// TigerCS raised pending human work on its own initiative, because an

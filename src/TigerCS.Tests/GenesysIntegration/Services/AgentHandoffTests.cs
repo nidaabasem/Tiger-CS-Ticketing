@@ -30,6 +30,13 @@ public class AgentHandoffTests
     private static readonly Guid ServiceAccount = Guid.NewGuid();
     private static readonly string[] AgentRoles = [Roles.CsAgent];
 
+    /// <summary>
+    /// For tests whose subject is the SHAPE of the work list (ordering, columns, channels), not who may see it: a CS Supervisor sees all
+    /// work. A CS Agent sees only work on tickets assigned to them or that they handled on Genesys — that is covered by
+    /// <c>CsAgentTicketVisibilityTests</c>.
+    /// </summary>
+    private static readonly string[] SupervisorRoles = [Roles.CsSupervisor];
+
     private static GenesysInquiryDto Inquiry(
         string conversationId, GenesysChannel channel, int departmentId, string? customerName = null) =>
         new(conversationId, channel,
@@ -249,7 +256,7 @@ public class AgentHandoffTests
 
         // And it shows up on the work list unclassified — often the agent
         // classifies it BECAUSE they picked it up from there.
-        var list = await f.PendingWork.ListAsync(Guid.NewGuid(), AgentRoles, new AgentHandoffListRequestDto());
+        var list = await f.PendingWork.ListAsync(Guid.NewGuid(), SupervisorRoles, new AgentHandoffListRequestDto());
         var row = Assert.Single(list.Items);
         Assert.Equal(ticketId, row.TicketId);
         Assert.False(row.TicketIsClassified);
@@ -311,7 +318,7 @@ public class AgentHandoffTests
         Assert.True(handoff.IsOpen);
         Assert.Equal(AgentHandoffStatus.WaitingForAgent, handoff.Status);
 
-        var list = await f.PendingWork.ListAsync(Guid.NewGuid(), AgentRoles, new AgentHandoffListRequestDto());
+        var list = await f.PendingWork.ListAsync(Guid.NewGuid(), SupervisorRoles, new AgentHandoffListRequestDto());
         var row = Assert.Single(list.Items);
         Assert.True(row.InteractionEnded);
         Assert.Equal("WaitingForAgent", row.Status);
@@ -334,7 +341,7 @@ public class AgentHandoffTests
         await f.AgentHandoff.RequestAsync(
             ServiceAccount, new GenesysHandoffRequestDto("conv-c", Mode: "ReplyInChannel", RequestedAtUtc: DateTime.UtcNow.AddHours(-2)));
 
-        var list = await f.PendingWork.ListAsync(Guid.NewGuid(), AgentRoles, new AgentHandoffListRequestDto());
+        var list = await f.PendingWork.ListAsync(Guid.NewGuid(), SupervisorRoles, new AgentHandoffListRequestDto());
 
         Assert.Equal(3, list.TotalCount);
         // The customer waiting longest is surfaced first.
