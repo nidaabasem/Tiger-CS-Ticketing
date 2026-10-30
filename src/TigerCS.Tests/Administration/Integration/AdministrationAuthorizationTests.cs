@@ -36,6 +36,8 @@ public class AdministrationAuthorizationTests : IClassFixture<TigerCsApiFactory>
     [
         ("GET", "/api/admin/users"),
         ("GET", "/api/admin/users/password-policy"),
+        ("GET", $"/api/admin/users/{Guid.NewGuid()}/activity"),
+        ("GET", $"/api/admin/users/{Guid.NewGuid()}/lockout"),
         ("POST", $"/api/admin/users/{Guid.NewGuid()}/unlock"),
         ("GET", $"/api/admin/users/{Guid.NewGuid()}"),
         ("POST", "/api/admin/users"),

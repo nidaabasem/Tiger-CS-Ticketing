@@ -20,6 +20,12 @@ public sealed class UserEditModel(AdminApiClient adminApi, DepartmentsApiClient 
     public IReadOnlyCollection<DepartmentDto> ActiveDepartments { get; private set; } = [];
     public string? LoadError { get; private set; }
 
+    /// <summary>Lock-out facts and Activity History; null when they could not be loaded (the rest of the page still works).</summary>
+    public UserLockoutDto? Lockout { get; private set; }
+    public UserActivityPageDto? Activity { get; private set; }
+    public bool ActivityUnavailable { get; private set; }
+    public const int ActivityPageSize = 10;
+
     /// <summary>Identity's configured password rules; null if they could not be loaded (the server still validates).</summary>
     public PasswordPolicyDto? PasswordPolicy { get; private set; }
 
@@ -34,7 +40,7 @@ public sealed class UserEditModel(AdminApiClient adminApi, DepartmentsApiClient 
     public const string PasswordPolicyText =
         "At least 8 characters, with an uppercase letter, a lowercase letter, a digit and a symbol.";
 
-    public async Task<IActionResult> OnGetAsync(Guid? id, CancellationToken cancellationToken)
+    public async Task<IActionResult> OnGetAsync(Guid? id, int activityPage, CancellationToken cancellationToken)
     {
         EmployeeId = id;
         await LoadReferenceDataAsync(cancellationToken);
@@ -59,6 +65,7 @@ public sealed class UserEditModel(AdminApiClient adminApi, DepartmentsApiClient 
 
             UserRecord = result.Value;
             await LoadPasswordPolicyAsync(cancellationToken);
+            await LoadLockoutAndActivityAsync(employeeId, activityPage < 1 ? 1 : activityPage, cancellationToken);
             Profile = new ProfileInput
             {
                 DisplayName = UserRecord!.DisplayName,
@@ -174,6 +181,32 @@ public sealed class UserEditModel(AdminApiClient adminApi, DepartmentsApiClient 
         }
 
         return RedirectToPage("/Admin/UserEdit", new { id });
+    }
+
+    /// <summary>Unlock from the Manage User page (the Users list has its own fetch-based button). The Api enforces the Admin policy and audits it.</summary>
+    public async Task<IActionResult> OnPostUnlockAsync(Guid id, CancellationToken cancellationToken)
+    {
+        var result = await adminApi.UnlockUserAsync(id, cancellationToken);
+        if (result.IsSuccess)
+        {
+            StatusMessage = $"{result.Value!.DisplayName} has been unlocked.";
+        }
+        else
+        {
+            ErrorMessage = DescribeFailure(result, "The user could not be unlocked.");
+        }
+
+        return RedirectToPage("/Admin/UserEdit", new { id });
+    }
+
+    private async Task LoadLockoutAndActivityAsync(Guid employeeId, int activityPage, CancellationToken cancellationToken)
+    {
+        var lockout = adminApi.GetUserLockoutAsync(employeeId, cancellationToken);
+        var activity = adminApi.GetUserActivityAsync(employeeId, activityPage, ActivityPageSize, cancellationToken);
+        await Task.WhenAll(lockout, activity);
+        Lockout = lockout.Result.IsSuccess ? lockout.Result.Value : null;
+        Activity = activity.Result.IsSuccess ? activity.Result.Value : null;
+        ActivityUnavailable = Activity is null;
     }
 
     private async Task LoadPasswordPolicyAsync(CancellationToken cancellationToken)

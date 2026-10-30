@@ -2294,3 +2294,12 @@ a.ticket-header__customer-name:hover { text-decoration: underline; }
   .convo-group__summary { padding: var(--space-2); }
   .convo-group__body { padding: var(--space-2); }
 }
+
+/* Manage User: lock-out facts and activity history. */
+.lockout-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: var(--space-3) var(--space-4); margin: 0; padding: var(--space-3) var(--space-4); }
+.lockout-facts dt { font-size: var(--text-xs); color: var(--color-text-secondary); font-weight: var(--weight-strong); }
+.lockout-facts dd { margin: 2px 0 0; }
+.inline-form { display: inline; margin: 0; }
+.activity-table .nowrap { white-space: nowrap; }
+.activity-details summary { cursor: pointer; }
+.activity-details div { margin-top: 3px; overflow-wrap: anywhere; }

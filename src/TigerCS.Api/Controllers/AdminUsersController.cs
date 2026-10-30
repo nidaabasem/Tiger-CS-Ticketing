@@ -26,6 +26,21 @@ public class AdminUsersController(AdminUserAppService users) : AdminControllerBa
     [ProducesResponseType<PasswordPolicyDto>(StatusCodes.Status200OK)]
     public IActionResult GetPasswordPolicy() => Ok(users.GetPasswordPolicy());
 
+    /// <summary>The user's Activity History from the audit trail, newest first (user-administration actions only).</summary>
+    [HttpGet("{employeeId:guid}/activity")]
+    [ProducesResponseType<UserActivityPageDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> Activity(
+        Guid employeeId, [FromQuery] int page = 1, [FromQuery] int pageSize = 10, CancellationToken cancellationToken = default) =>
+        FromResult(await users.GetActivityAsync(employeeId, page, pageSize, cancellationToken));
+
+    /// <summary>Lock-out status: Identity's end time and failed count, plus the recorded cause and last unlock (or "Unknown" / null).</summary>
+    [HttpGet("{employeeId:guid}/lockout")]
+    [ProducesResponseType<UserLockoutDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> Lockout(Guid employeeId, CancellationToken cancellationToken) =>
+        FromResult(await users.GetLockoutAsync(employeeId, cancellationToken));
+
     /// <summary>One user with roles, department memberships and whether ticket history references them.</summary>
     [HttpGet("{employeeId:guid}")]
     [ProducesResponseType<AdminUserDto>(StatusCodes.Status200OK)]

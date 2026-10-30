@@ -194,6 +194,8 @@ public class ProtectedEndpointInventoryTests : IClassFixture<TigerCsApiFactory>
         ["DELETE /api/admin/users/{employeeId:guid}/departments/{departmentId:int}"] = nameof(Administration.Integration.AdministrationEndpointsTests.Users_CreateListGetEditRolesMembershipAndDeactivate),
         ["POST /api/admin/users/{employeeId:guid}/password"] = nameof(PasswordManagementEndpointsTests.AdminReset_GoodPassword_Returns204_InvalidatesEveryEarlierToken_LiftsLockout_AndAuditsWithoutTheSecret),
         ["POST /api/admin/users/{employeeId:guid}/unlock"] = nameof(PasswordManagementEndpointsTests.AdminUnlock_ClearsLockoutEndAndFailedCount_LetsTheUserSignInAgain_AndAudits),
+        ["GET /api/admin/users/{employeeId:guid}/activity"] = nameof(Administration.Integration.UserAuditTrailEndpointsTests.EveryUserAdministrationAction_IsInTheActivityHistory_WithTheAdministratorsId_AndNoCredentials),
+        ["GET /api/admin/users/{employeeId:guid}/lockout"] = nameof(Administration.Integration.UserAuditTrailEndpointsTests.RepeatedFailedSignIns_RecordOneAutomaticLockout_WithThePolicy_AndNoActor_ThenUnlockIsAttributedToTheAdmin),
         ["GET /api/admin/users/password-policy"] = nameof(PasswordManagementEndpointsTests.PasswordPolicyEndpoint_ReturnsTheConfiguredIdentityOptions_ToAnAdministratorOnly),
         ["GET /api/channels"] = nameof(SystemAdministratorEndpointAuthorizationTests.ListChannels_Returns200),
         ["GET /api/admin/channels"] = nameof(Administration.Integration.AdministrationEndpointsTests.Channels_ListAddEditActivationAndDuplicateCode_ThroughTheRealHost),

@@ -27,6 +27,7 @@ public sealed class AdminUserAppService(
     UserActivationAppService activationService,
     IIdentityUnitOfWork unitOfWork,
     IAuditEntryWriter auditWriter,
+    IAuditEntryReader auditReader,
     TimeProvider timeProvider)
 {
     public async Task<AdminUserListDto> ListAsync(
@@ -167,7 +168,8 @@ public sealed class AdminUserAppService(
             return AdminResult<AdminUserDto>.Invalid("Display name is required.");
         }
 
-        var before = $"DisplayName={employee.DisplayName};IsGeynessStaff={employee.IsGeynessStaff}";
+        var existingAccount = await accountManager.GetAccountAsync(employeeId, cancellationToken);
+        var before = $"DisplayName={employee.DisplayName};IsGeynessStaff={employee.IsGeynessStaff};Email={existingAccount?.Email}";
         employee.UpdateProfile(request.DisplayName, request.IsGeynessStaff);
 
         var emailResult = await accountManager.UpdateEmailAsync(employeeId, request.Email, cancellationToken);
@@ -189,6 +191,7 @@ public sealed class AdminUserAppService(
     public async Task<AdminResult<AdminUserDto>> SetActivationAsync(
         Guid actorEmployeeId, Guid employeeId, SetActiveRequestDto request, CancellationToken cancellationToken = default)
     {
+        var wasActive = (await employeeRepository.GetByIdAsync(employeeId, cancellationToken))?.IsActive;
         var result = await activationService.SetActivationAsync(
             employeeId, new ActivationRequestDto(request.IsActive, request.Reason), cancellationToken);
 
@@ -202,7 +205,7 @@ public sealed class AdminUserAppService(
 
         await auditWriter.WriteAsync(
             actorEmployeeId, request.IsActive ? "AdminActivateUser" : "AdminDeactivateUser", "Employee", employeeId.ToString(),
-            beforeValue: null, afterValue: $"IsActive={request.IsActive};Reason={request.Reason}", Guid.NewGuid(), cancellationToken);
+            beforeValue: wasActive is null ? null : $"IsActive={wasActive}", afterValue: $"IsActive={request.IsActive};Reason={request.Reason}", Guid.NewGuid(), cancellationToken);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
         return AdminResult<AdminUserDto>.Success((await GetAsync(employeeId, cancellationToken))!);
@@ -388,6 +391,115 @@ public sealed class AdminUserAppService(
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
         return AdminResult<AdminUserDto>.Success((await GetAsync(employeeId, cancellationToken))!);
+    }
+
+    /// <summary>
+    /// A user's Activity History, newest first, read from the existing audit
+    /// trail and limited to user-administration actions — never the whole trail.
+    /// Entries carry what was recorded; nothing is reconstructed.
+    /// </summary>
+    public async Task<AdminResult<UserActivityPageDto>> GetActivityAsync(
+        Guid employeeId, int page, int pageSize, CancellationToken cancellationToken = default)
+    {
+        if (await employeeRepository.GetByIdAsync(employeeId, cancellationToken) is null)
+        {
+            return AdminResult<UserActivityPageDto>.NotFound();
+        }
+
+        page = Math.Max(page, 1);
+        pageSize = Math.Clamp(pageSize, 1, 50);
+        var (entries, total) = await auditReader.ListForEntityAsync(
+            employeeId.ToString(), UserAuditActions.EntityTypes, UserAuditActions.All, (page - 1) * pageSize, pageSize, cancellationToken);
+
+        var names = new Dictionary<Guid, string>();
+        foreach (var actorId in entries.Where(e => e.ActorEmployeeId is not null).Select(e => e.ActorEmployeeId!.Value).Distinct())
+        {
+            names[actorId] = (await employeeRepository.GetByIdAsync(actorId, cancellationToken))?.DisplayName ?? "Unknown administrator";
+        }
+
+        var items = entries.Select(e =>
+        {
+            var (afterShown, reason) = SplitReason(e.AfterValue);
+            return new UserActivityDto(
+                e.AuditEntryId, e.OccurredAtUtc, e.Action, UserAuditActions.Label(e.Action),
+                e.ActorEmployeeId,
+                e.ActorEmployeeId is { } id ? names[id] : "System (automatic)",
+                e.BeforeValue, afterShown, reason);
+        }).ToList();
+
+        return AdminResult<UserActivityPageDto>.Success(new UserActivityPageDto(items, page, pageSize, total));
+    }
+
+    /// <summary>
+    /// Lock-out status. Identity supplies the end time and failed count; the
+    /// start, cause and last unlock come from audit entries and stay unknown
+    /// (null / "Unknown") when none was recorded — old accounts included.
+    /// </summary>
+    public async Task<AdminResult<UserLockoutDto>> GetLockoutAsync(Guid employeeId, CancellationToken cancellationToken = default)
+    {
+        var account = await accountManager.GetAccountAsync(employeeId, cancellationToken);
+        if (account is null || await employeeRepository.GetByIdAsync(employeeId, cancellationToken) is null)
+        {
+            return AdminResult<UserLockoutDto>.NotFound();
+        }
+
+        var id = employeeId.ToString();
+        var latestLock = await auditReader.GetLatestAsync(id, UserAuditActions.EntityTypes, UserAuditActions.Locks, cancellationToken);
+        var latestClear = await auditReader.GetLatestAsync(id, UserAuditActions.EntityTypes, UserAuditActions.LockClears, cancellationToken);
+        var latestUnlock = await auditReader.GetLatestAsync(id, UserAuditActions.EntityTypes, [UserAuditActions.Unlocked], cancellationToken);
+
+        // The recorded lock explains the CURRENT lock-out only if nothing
+        // cleared it afterwards; otherwise the cause is not known.
+        var explains = account.IsLockedOut && latestLock is not null
+            && (latestClear is null || latestClear.OccurredAtUtc < latestLock.OccurredAtUtc);
+        var reason = !explains ? "Unknown" : latestLock!.Action == UserAuditActions.AutomaticLockout ? "Automatic" : "Manual";
+
+        string? unlockedBy = null;
+        if (latestUnlock?.ActorEmployeeId is { } unlockerId)
+        {
+            unlockedBy = (await employeeRepository.GetByIdAsync(unlockerId, cancellationToken))?.DisplayName ?? "Unknown administrator";
+        }
+
+        return AdminResult<UserLockoutDto>.Success(new UserLockoutDto(
+            account.IsLockedOut,
+            account.IsLockedOut ? account.LockoutEndUtc : null,
+            explains ? latestLock!.OccurredAtUtc : null,
+            account.AccessFailedCount,
+            accountManager.GetLockoutPolicy().MaxFailedAccessAttempts,
+            reason,
+            latestUnlock?.OccurredAtUtc,
+            unlockedBy));
+    }
+
+    /// <summary>Splits the "Reason=…" part off an audit value, so it is shown as the reason and not repeated as a change.</summary>
+    private static (string? Remaining, string? Reason) SplitReason(string? value)
+    {
+        const string key = "Reason=";
+        if (string.IsNullOrEmpty(value))
+        {
+            return (value, null);
+        }
+
+        var start = value.IndexOf(key, StringComparison.Ordinal);
+        if (start < 0 || (start > 0 && value[start - 1] != ';'))
+        {
+            return (value, null);
+        }
+
+        var valueStart = start + key.Length;
+        var end = value.Length;
+        foreach (var marker in new[] { ";LockoutCleared=", ";SecurityStampRotated=" })
+        {
+            var at = value.IndexOf(marker, valueStart, StringComparison.Ordinal);
+            if (at >= 0 && at < end)
+            {
+                end = at;
+            }
+        }
+
+        var reason = value[valueStart..end].Trim();
+        var rest = (value[..start] + (end < value.Length ? value[(end + 1)..] : string.Empty)).Trim(';', ' ');
+        return (string.IsNullOrEmpty(rest) ? null : rest, string.IsNullOrEmpty(reason) ? null : reason);
     }
 
     /// <summary>The live Identity password policy, so the UI never carries its own copy of the rules.</summary>

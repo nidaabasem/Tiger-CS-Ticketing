@@ -47,6 +47,23 @@ public sealed record AddDepartmentMembershipRequestDto(int DepartmentId, bool Is
 /// </summary>
 public sealed record ResetUserPasswordRequestDto(string NewPassword, string? Reason);
 
+/// <summary>One row of a user's Activity History. Values are the audit trail's own, never a credential.</summary>
+public sealed record UserActivityDto(
+    long AuditEntryId, DateTime OccurredAtUtc, string Action, string Label,
+    Guid? PerformedByEmployeeId, string PerformedByName, string? PreviousValue, string? NewValue, string? Reason);
+
+public sealed record UserActivityPageDto(IReadOnlyList<UserActivityDto> Items, int Page, int PageSize, int TotalCount);
+
+/// <summary>
+/// Sign-in lock-out facts. Identity keeps only the lock-out end and the failed
+/// count, so the start time, reason and last unlock come from the audit trail
+/// and are null / "Unknown" for events that predate it — never guessed.
+/// <c>Reason</c> is "Automatic", "Manual" or "Unknown".
+/// </summary>
+public sealed record UserLockoutDto(
+    bool IsLockedOut, DateTime? LockoutEndUtc, DateTime? LockoutStartUtc, int FailedAttemptCount, int MaxFailedAccessAttempts,
+    string Reason, DateTime? LastUnlockedAtUtc, string? LastUnlockedByName);
+
 /// <summary>The password rules ASP.NET Core Identity is currently configured with — what the reset form shows and checks live.</summary>
 public sealed record PasswordPolicyDto(
     int RequiredLength, bool RequireDigit, bool RequireLowercase, bool RequireUppercase, bool RequireNonAlphanumeric, int RequiredUniqueChars);

@@ -238,6 +238,8 @@ public class SwaggerDocumentTests(SwaggerDocumentFixture fixture) : IClassFixtur
         "POST /api/admin/users/{employeeId}/password",
         "POST /api/admin/users/{employeeId}/unlock",
         "GET /api/admin/users/password-policy",
+        "GET /api/admin/users/{employeeId}/activity",
+        "GET /api/admin/users/{employeeId}/lockout",
         "GET /api/admin/departments",
         "GET /api/admin/departments/{departmentId}",
         "POST /api/admin/departments",

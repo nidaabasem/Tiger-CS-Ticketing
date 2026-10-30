@@ -208,6 +208,89 @@ public sealed class UsersManagementPostTests : IDisposable
         Assert.Contains("<li>The two passwords do not match.</li>", html, StringComparison.Ordinal);
     }
 
+    // ------------------------------------------------- manage user: history
+
+    [Fact]
+    public async Task ManageUser_ShowsLockoutFacts_TheUnlockButton_AndTheLatestTenActivities()
+    {
+        var client = Client();
+
+        var html = await (await client.GetAsync($"/Admin/Users/{UserId}")).Content.ReadAsStringAsync();
+
+        // Unlock sits beside the "Sign-in locked" status and asks first.
+        Assert.Matches("Sign-in locked[\\s\\S]*?handler=Unlock[\\s\\S]*?Unlock User</button>", html);
+        Assert.Contains("data-confirm=\"Unlock Alma Hassan?", html, StringComparison.Ordinal);
+
+        // Lock-out facts: cause, expiry, attempts, last unlock — recorded values only.
+        Assert.Contains("id=\"lockout-title\">Sign-in lock-out", html, StringComparison.Ordinal);
+        Assert.Matches(@"<dt>Cause</dt><dd>Automatic</dd>", html);
+        Assert.Contains("<dt>Lock-out expires</dt>", html, StringComparison.Ordinal);
+        Assert.Contains("0 of 5", html, StringComparison.Ordinal);
+        Assert.Contains("by Dana Admin", html, StringComparison.Ordinal);
+
+        // Latest ten, newest first, the cause and the actor in plain words.
+        Assert.Contains("id=\"activity-title\">Activity history", html, StringComparison.Ordinal);
+        Assert.Equal(10, Regex.Matches(html, "<tr>\\s*<td class=\"text-secondary nowrap\">").Count);
+        Assert.Contains("Account locked (automatic)", html, StringComparison.Ordinal);
+        Assert.Contains("System (automatic)", html, StringComparison.Ordinal);
+        Assert.Contains("<summary>Repeated failed sign-in attempts</summary>", html, StringComparison.Ordinal);
+        Assert.Contains("Showing 1–10 of 25", html, StringComparison.Ordinal);
+        Assert.Contains("activityPage=2#activity", html, StringComparison.Ordinal);
+        Assert.Contains("pageSize=10", _api.LastActivityPageRequested, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ManageUser_PagesBackThroughOlderActivity()
+    {
+        var client = Client();
+
+        var html = await (await client.GetAsync($"/Admin/Users/{UserId}?activityPage=3")).Content.ReadAsStringAsync();
+
+        Assert.Contains("Showing 21–25 of 25", html, StringComparison.Ordinal);
+        Assert.Equal(5, Regex.Matches(html, "<tr>\\s*<td class=\"text-secondary nowrap\">").Count);
+        Assert.Contains("page=3", _api.LastActivityPageRequested, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ManageUser_StillRenders_WhenTheHistoryCannotBeLoaded()
+    {
+        _api.HistoryAvailable = false;
+        var client = Client();
+
+        var response = await client.GetAsync($"/Admin/Users/{UserId}");
+        var html = await response.Content.ReadAsStringAsync();
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Contains("The activity history could not be loaded right now.", html, StringComparison.Ordinal);
+        Assert.Contains("id=\"reset-password-title\"", html, StringComparison.Ordinal);   // the rest of the page is untouched
+    }
+
+    [Fact]
+    public async Task ManageUser_SaysWhenNothingIsRecorded()
+    {
+        _api.ActivityTotal = 0;
+        var client = Client();
+
+        var html = await (await client.GetAsync($"/Admin/Users/{UserId}")).Content.ReadAsStringAsync();
+
+        Assert.Contains("No activity is recorded for this account yet.", html, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ManageUser_Unlock_PostsToTheApi_AndRedirectsBackWithTheMessage()
+    {
+        var client = Client();
+        var page = $"/Admin/Users/{UserId}";
+        var token = await TokenAsync(client, page);
+
+        var response = await client.PostAsync($"{page}?handler=Unlock", Form(token));
+
+        Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
+        Assert.Equal([$"api/admin/users/{UserId}/unlock"], _api.Unlocks);
+        var after = await (await client.GetAsync(page)).Content.ReadAsStringAsync();
+        Assert.Contains("Alma Hassan has been unlocked.", after, StringComparison.Ordinal);
+    }
+
     // ------------------------------------------------------------- fake api
 
     private sealed class AuthHandler(IOptionsMonitor<AuthenticationSchemeOptions> options, ILoggerFactory logger, UrlEncoder encoder)
@@ -231,6 +314,9 @@ public sealed class UsersManagementPostTests : IDisposable
         public List<string> Unlocks { get; } = [];
         public int PasswordPosts { get; private set; }
         public HttpStatusCode UnlockStatus { get; set; } = HttpStatusCode.OK;
+        public int ActivityTotal { get; set; } = 25;
+        public bool HistoryAvailable { get; set; } = true;
+        public string? LastActivityPageRequested { get; private set; }
 
         private static readonly JsonSerializerOptions Web = new(JsonSerializerDefaults.Web);
 
@@ -261,10 +347,30 @@ public sealed class UsersManagementPostTests : IDisposable
                 "api/departments" => Json(new List<DepartmentDto> { new(1, "Collections") }),
                 _ when path == $"api/admin/users/{UserId}" => Json(User(true)),
                 _ when path == $"api/admin/users/{UserId}/unlock" && post => Unlock(path),
+                _ when path == $"api/admin/users/{UserId}/lockout" => HistoryAvailable
+                    ? Json(new UserLockoutDto(true, Now.AddMinutes(15), Now, 0, 5, "Automatic", Now.AddDays(-3), "Dana Admin"))
+                    : new HttpResponseMessage(HttpStatusCode.InternalServerError),
+                _ when path == $"api/admin/users/{UserId}/activity" => HistoryAvailable ? Activity(request.RequestUri.Query) : new HttpResponseMessage(HttpStatusCode.InternalServerError),
                 _ when path == $"api/admin/users/{UserId}/password" && post => PasswordRejected(),
                 _ => new HttpResponseMessage(HttpStatusCode.NotFound)
             };
             return Task.FromResult(response);
+        }
+
+        private HttpResponseMessage Activity(string query)
+        {
+            LastActivityPageRequested = query;
+            var page = int.Parse(Regex.Match(query, @"page=(\d+)").Groups[1].Value);
+            var size = int.Parse(Regex.Match(query, @"pageSize=(\d+)").Groups[1].Value);
+            var items = Enumerable.Range((page - 1) * size, Math.Max(0, Math.Min(size, ActivityTotal - (page - 1) * size)))
+                .Select(i => new UserActivityDto(
+                    1000 - i, Now.AddMinutes(-i), i == 0 ? "AutomaticAccountLockout" : "AdminUpdateUserProfile",
+                    i == 0 ? "Account locked (automatic)" : "Profile updated",
+                    i == 0 ? null : UserId, i == 0 ? "System (automatic)" : "Dana Admin",
+                    i == 0 ? null : $"DisplayName=Old {i}", i == 0 ? "Threshold=5;LockoutMinutes=15" : $"DisplayName=New {i}",
+                    i == 0 ? "Repeated failed sign-in attempts" : null))
+                .ToList();
+            return Json(new UserActivityPageDto(items, page, size, ActivityTotal));
         }
 
         private HttpResponseMessage Unlock(string path)

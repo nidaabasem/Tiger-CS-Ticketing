@@ -20,6 +20,7 @@ public sealed class FakeUserAccountManager : IUserAccountManager, IUserRoleReade
         public string Password { get; set; } = "Initial-Pass-1!";
         public string SecurityStamp { get; set; } = Guid.NewGuid().ToString("N");
         public bool IsLockedOut { get; set; }
+        public int AccessFailedCount { get; set; }
         public List<string> Roles { get; } = [];
     }
 
@@ -54,12 +55,12 @@ public sealed class FakeUserAccountManager : IUserAccountManager, IUserRoleReade
     public bool IsLockedOut(Guid employeeId) => _accounts[employeeId].IsLockedOut;
 
     public Task<UserAccountInfo?> GetAccountAsync(Guid employeeId, CancellationToken cancellationToken = default) =>
-        Task.FromResult(_accounts.TryGetValue(employeeId, out var a) ? new UserAccountInfo(a.Id, a.UserName, a.Email, a.IsLockedOut) : null);
+        Task.FromResult(_accounts.TryGetValue(employeeId, out var a) ? new UserAccountInfo(a.Id, a.UserName, a.Email, a.IsLockedOut, a.IsLockedOut ? DateTime.UtcNow.AddMinutes(15) : null, a.AccessFailedCount) : null);
 
     public Task<IReadOnlyDictionary<Guid, UserAccountInfo>> GetAccountsAsync(IReadOnlyCollection<Guid> employeeIds, CancellationToken cancellationToken = default) =>
         Task.FromResult<IReadOnlyDictionary<Guid, UserAccountInfo>>(_accounts.Values
             .Where(a => employeeIds.Contains(a.Id))
-            .ToDictionary(a => a.Id, a => new UserAccountInfo(a.Id, a.UserName, a.Email, a.IsLockedOut)));
+            .ToDictionary(a => a.Id, a => new UserAccountInfo(a.Id, a.UserName, a.Email, a.IsLockedOut, a.IsLockedOut ? DateTime.UtcNow.AddMinutes(15) : null, a.AccessFailedCount)));
 
     public Task<UserAccountResult> CreateAccountAsync(string userName, string? email, string initialPassword, CancellationToken cancellationToken = default)
     {
@@ -128,6 +129,8 @@ public sealed class FakeUserAccountManager : IUserAccountManager, IUserRoleReade
 
     public PasswordPolicyInfo GetPasswordPolicy() => new(8, true, true, true, true, 4);
 
+    public LockoutPolicyInfo GetLockoutPolicy() => new(5, 15);
+
     public Task<bool> UnlockAccountAsync(Guid employeeId, CancellationToken cancellationToken = default)
     {
         if (!_accounts.TryGetValue(employeeId, out var account))
@@ -136,6 +139,7 @@ public sealed class FakeUserAccountManager : IUserAccountManager, IUserRoleReade
         }
 
         account.IsLockedOut = false;
+        account.AccessFailedCount = 0;
         return Task.FromResult(true);
     }
 

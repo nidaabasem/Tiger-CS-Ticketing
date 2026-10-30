@@ -17,7 +17,8 @@ public class AdminUserAppServiceTests
         FakeUserAccountManager Accounts,
         FakeDepartmentRepository Departments,
         FakeUserDepartmentAssignmentRepository Assignments,
-        FakeAuditEntryWriter Audit);
+        FakeAuditEntryWriter Audit,
+        FakeAuditEntryReader Trail);
 
     private static Fixture Create()
     {
@@ -27,12 +28,13 @@ public class AdminUserAppServiceTests
         var assignments = new FakeUserDepartmentAssignmentRepository();
         var unitOfWork = new FakeIdentityUnitOfWork();
         var audit = new FakeAuditEntryWriter();
+        var trail = new FakeAuditEntryReader();
 
         var assignmentService = new DepartmentAssignmentService(employees, departments, assignments, unitOfWork, TimeProvider.System);
         var activation = new UserActivationAppService(employees, accounts, unitOfWork, TimeProvider.System);
         var service = new AdminUserAppService(
-            employees, accounts, accounts, assignments, departments, assignmentService, activation, unitOfWork, audit, TimeProvider.System);
-        return new Fixture(service, employees, accounts, departments, assignments, audit);
+            employees, accounts, accounts, assignments, departments, assignmentService, activation, unitOfWork, audit, trail, TimeProvider.System);
+        return new Fixture(service, employees, accounts, departments, assignments, audit, trail);
     }
 
     private static Guid SeedUser(Fixture f, string name, params string[] roles)
@@ -248,6 +250,74 @@ public class AdminUserAppServiceTests
         Assert.Equal(AdminOutcome.Conflict, (await f.Service.UnlockAsync(Admin, id)).Outcome);
         Assert.Equal(AdminOutcome.NotFound, (await f.Service.UnlockAsync(Admin, Guid.NewGuid())).Outcome);
         Assert.Empty(f.Audit.Entries);
+    }
+
+    [Fact]
+    public async Task Activity_splits_the_reason_from_the_change_and_names_the_actor()
+    {
+        var f = Create();
+        var id = SeedUser(f, "Nour A", Roles.DepartmentEmployee);
+        var adminId = SeedUser(f, "Admin One", Roles.SystemAdministrator);
+        var t = new DateTime(2026, 9, 1, 8, 0, 0, DateTimeKind.Utc);
+        f.Trail.Add(adminId, "AdminResetUserPassword", "User", id, null, "Reason=Forgot it;LockoutCleared=true;SecurityStampRotated=true", t)
+            .Add(adminId, "AdminDeactivateUser", "Employee", id, "IsActive=True", "IsActive=False;Reason=left", t.AddMinutes(1))
+            .Add(adminId, "Assign", "Employee", id, "x", "y", t.AddMinutes(2));   // not a user-administration action
+
+        var page = (await f.Service.GetActivityAsync(id, 1, 10)).Value!;
+
+        Assert.Equal(["AdminDeactivateUser", "AdminResetUserPassword"], page.Items.Select(i => i.Action).ToArray());
+        Assert.Equal("left", page.Items[0].Reason);
+        Assert.Equal("IsActive=False", page.Items[0].NewValue);
+        Assert.Equal("Forgot it", page.Items[1].Reason);
+        Assert.Equal("LockoutCleared=true;SecurityStampRotated=true", page.Items[1].NewValue);
+        Assert.Equal("Admin One", page.Items[0].PerformedByName);
+    }
+
+    [Fact]
+    public async Task Activity_labels_an_automatic_lockout_as_the_system_and_a_missing_actor_as_unknown()
+    {
+        var f = Create();
+        var id = SeedUser(f, "Nour A", Roles.DepartmentEmployee);
+        var t = new DateTime(2026, 9, 1, 8, 0, 0, DateTimeKind.Utc);
+        f.Trail.Add(null, "AutomaticAccountLockout", "User", id, null, "Threshold=5;Reason=Repeated failed sign-in attempts", t)
+            .Add(Guid.NewGuid(), "AdminSetUserRoles", "Employee", id, "A", "B", t.AddMinutes(1));
+
+        var page = (await f.Service.GetActivityAsync(id, 1, 10)).Value!;
+
+        Assert.Equal("Unknown administrator", page.Items[0].PerformedByName);
+        Assert.Equal("System (automatic)", page.Items[1].PerformedByName);
+        Assert.Equal("Account locked (automatic)", page.Items[1].Label);
+    }
+
+    [Fact]
+    public async Task Lockout_cause_is_known_only_while_nothing_cleared_the_recorded_lock()
+    {
+        var f = Create();
+        var id = SeedUser(f, "Nour A", Roles.DepartmentEmployee);
+        var t = new DateTime(2026, 9, 1, 8, 0, 0, DateTimeKind.Utc);
+        f.Accounts.LockOut(id);
+
+        Assert.Equal("Unknown", (await f.Service.GetLockoutAsync(id)).Value!.Reason);          // locked, nothing recorded
+
+        f.Trail.Add(null, "AutomaticAccountLockout", "User", id, null, "Threshold=5", t);
+        var automatic = (await f.Service.GetLockoutAsync(id)).Value!;
+        Assert.Equal("Automatic", automatic.Reason);
+        Assert.Equal(t, automatic.LockoutStartUtc);
+
+        f.Trail.Add(Guid.NewGuid(), "AdminUnlockUser", "User", id, null, null, t.AddMinutes(5));  // cleared, then locked again by other means
+        var afterClear = (await f.Service.GetLockoutAsync(id)).Value!;
+        Assert.Equal("Unknown", afterClear.Reason);
+        Assert.Null(afterClear.LockoutStartUtc);
+        Assert.Equal(t.AddMinutes(5), afterClear.LastUnlockedAtUtc);
+    }
+
+    [Fact]
+    public async Task Activity_and_lockout_of_an_unknown_user_are_not_found()
+    {
+        var f = Create();
+
+        Assert.Equal(AdminOutcome.NotFound, (await f.Service.GetActivityAsync(Guid.NewGuid(), 1, 10)).Outcome);
+        Assert.Equal(AdminOutcome.NotFound, (await f.Service.GetLockoutAsync(Guid.NewGuid())).Outcome);
     }
 
     [Fact]

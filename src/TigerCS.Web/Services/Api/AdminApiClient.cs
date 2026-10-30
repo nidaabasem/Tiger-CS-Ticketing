@@ -58,6 +58,12 @@ public sealed class AdminApiClient(HttpClient httpClient, ILogger<AdminApiClient
     public Task<ApiResult<PasswordPolicyDto>> GetPasswordPolicyAsync(CancellationToken ct) =>
         GetAsync<PasswordPolicyDto>("api/admin/users/password-policy", ct);
 
+    public Task<ApiResult<UserActivityPageDto>> GetUserActivityAsync(Guid employeeId, int page, int pageSize, CancellationToken ct) =>
+        GetAsync<UserActivityPageDto>($"api/admin/users/{employeeId}/activity?page={page}&pageSize={pageSize}", ct);
+
+    public Task<ApiResult<UserLockoutDto>> GetUserLockoutAsync(Guid employeeId, CancellationToken ct) =>
+        GetAsync<UserLockoutDto>($"api/admin/users/{employeeId}/lockout", ct);
+
     public Task<ApiResult<AdminUserDto>> UnlockUserAsync(Guid employeeId, CancellationToken ct) =>
         PostAsync<object, AdminUserDto>($"api/admin/users/{employeeId}/unlock", new { }, ct);
 

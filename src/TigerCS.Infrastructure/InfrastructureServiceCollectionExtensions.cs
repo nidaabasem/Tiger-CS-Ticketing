@@ -162,6 +162,7 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddScoped<DepartmentAssignmentService>();
 
         services.AddScoped<IAuditEntryWriter, AuditEntryWriter>();
+        services.AddScoped<IAuditEntryReader, AuditEntryReader>();
 
         services.AddScoped<IUnitReferenceRepository, UnitReferenceRepository>();
         services.AddScoped<IContactReferenceRepository, ContactReferenceRepository>();

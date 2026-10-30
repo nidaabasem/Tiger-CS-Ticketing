@@ -1,4 +1,6 @@
 using Microsoft.AspNetCore.Identity;
+using TigerCS.Application.Abstractions;
+using TigerCS.Application.Modules.Administration;
 using TigerCS.Application.Modules.IdentityAndAccess.Abstractions;
 using TigerCS.Infrastructure.Identity;
 
@@ -13,7 +15,9 @@ namespace TigerCS.Infrastructure.Modules.IdentityAndAccess.Services;
 public sealed class IdentityAuthenticator(
     UserManager<ApplicationUser> userManager,
     SignInManager<ApplicationUser> signInManager,
-    IEmployeeRepository employeeRepository)
+    IEmployeeRepository employeeRepository,
+    IAuditEntryWriter auditWriter,
+    IIdentityUnitOfWork unitOfWork)
     : IIdentityAuthenticator
 {
     public async Task<CredentialCheckResult> CheckCredentialsAsync(
@@ -25,10 +29,20 @@ public sealed class IdentityAuthenticator(
             return CredentialCheckResult.InvalidCredentials();
         }
 
+        // Asked BEFORE the attempt so the lock-out is recorded once, when this
+        // attempt causes it — later attempts against an already-locked account
+        // find it locked here and write nothing.
+        var wasLockedOut = await userManager.IsLockedOutAsync(user);
+
         var signInResult = await signInManager.CheckPasswordSignInAsync(user, password, lockoutOnFailure: true);
 
         if (signInResult.IsLockedOut)
         {
+            if (!wasLockedOut)
+            {
+                await RecordAutomaticLockoutAsync(user, cancellationToken);
+            }
+
             return CredentialCheckResult.Locked();
         }
 
@@ -51,5 +65,22 @@ public sealed class IdentityAuthenticator(
         // every request — see TigerCsTokenClaims.SecurityStamp.
         var securityStamp = await userManager.GetSecurityStampAsync(user);
         return CredentialCheckResult.Success(employee.EmployeeId, employee.DisplayName, roles.ToList(), securityStamp);
+    }
+
+    /// <summary>
+    /// The sign-in flow itself tripped Identity's lock-out. There is no acting
+    /// administrator (actor null), the policy values are the configured ones
+    /// and nothing about the attempted password is recorded.
+    /// </summary>
+    private async Task RecordAutomaticLockoutAsync(ApplicationUser user, CancellationToken cancellationToken)
+    {
+        var options = userManager.Options.Lockout;
+        var lockoutEnd = (await userManager.GetLockoutEndDateAsync(user))?.UtcDateTime;
+        await auditWriter.WriteAsync(
+            actorEmployeeId: null, UserAuditActions.AutomaticLockout, "User", user.Id.ToString(),
+            beforeValue: null,
+            afterValue: $"Threshold={options.MaxFailedAccessAttempts};LockoutMinutes={(int)options.DefaultLockoutTimeSpan.TotalMinutes};LockoutEndUtc={lockoutEnd:O};Reason=Repeated failed sign-in attempts",
+            Guid.NewGuid(), cancellationToken);
+        await unitOfWork.SaveChangesAsync(cancellationToken);
     }
 }

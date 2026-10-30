@@ -169,6 +169,12 @@ public sealed class UserAccountManager(UserManager<ApplicationUser> userManager,
         return PasswordChangeResult.Success();
     }
 
+    public LockoutPolicyInfo GetLockoutPolicy()
+    {
+        var l = userManager.Options.Lockout;
+        return new(l.MaxFailedAccessAttempts, (int)l.DefaultLockoutTimeSpan.TotalMinutes);
+    }
+
     public PasswordPolicyInfo GetPasswordPolicy()
     {
         var p = userManager.Options.Password;
@@ -224,5 +230,6 @@ public sealed class UserAccountManager(UserManager<ApplicationUser> userManager,
             .FirstOrDefaultAsync(cancellationToken);
 
     private async Task<UserAccountInfo> ToInfoAsync(ApplicationUser user) =>
-        new(user.Id, user.UserName ?? string.Empty, user.Email, await userManager.IsLockedOutAsync(user));
+        new(user.Id, user.UserName ?? string.Empty, user.Email, await userManager.IsLockedOutAsync(user),
+            user.LockoutEnd?.UtcDateTime, user.AccessFailedCount);
 }

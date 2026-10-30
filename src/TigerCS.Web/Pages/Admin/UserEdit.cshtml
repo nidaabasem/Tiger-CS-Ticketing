@@ -160,6 +160,10 @@
                                 <span class="status-note" title="Sign-in is blocked until the lock-out expires or is cleared">
                                     @await Html.PartialAsync("_AdminIcon", "lock") Sign-in locked
                                 </span>
+                                <form method="post" asp-page-handler="Unlock" asp-route-id="@u.EmployeeId" class="inline-form"
+                                      data-confirm="Unlock @u.DisplayName? Their failed sign-in attempts will be cleared and they can sign in again.">
+                                    <button type="submit" class="btn btn-sm">Unlock User</button>
+                                </form>
                             }
                             @if (u.IsGeynessStaff)
                             {
@@ -279,6 +283,114 @@
                 @if (!u.IsActive)
                 {
                     <p class="panel__note">Reactivate the user before changing department membership.</p>
+                }
+            </section>
+
+            @{
+                string When(DateTime? utc) => utc is { } t ? t.ToLocalTime().ToString("MMM d, yyyy HH:mm") : "Not recorded";
+                var lockout = Model.Lockout;
+                var activity = Model.Activity;
+                var shownFrom = activity is null || activity.TotalCount == 0 ? 0 : (activity.Page - 1) * activity.PageSize + 1;
+                var shownTo = activity is null || activity.TotalCount == 0 ? 0 : shownFrom + activity.Items.Count - 1;
+                var activityPages = activity is null ? 1 : Math.Max(1, (int)Math.Ceiling(activity.TotalCount / (double)activity.PageSize));
+                string ActivityUrl(int p) => $"/Admin/Users/{u.EmployeeId}?activityPage={p}#activity";
+            }
+
+            @if (lockout is not null)
+            {
+                <section class="panel admin-form-panel admin-grid__wide" aria-labelledby="lockout-title">
+                    <div class="panel__header">
+                        <h2 class="panel__title" id="lockout-title">Sign-in lock-out</h2>
+                        <span class="panel__hint">@(lockout.IsLockedOut ? "Sign-in is blocked" : "Not locked")</span>
+                    </div>
+                    <dl class="lockout-facts">
+                        <div><dt>Status</dt><dd>@(lockout.IsLockedOut ? "Locked" : "Not locked")</dd></div>
+                        @if (lockout.IsLockedOut)
+                        {
+                            <div><dt>Locked since</dt><dd>@When(lockout.LockoutStartUtc)</dd></div>
+                            <div><dt>Lock-out expires</dt><dd>@When(lockout.LockoutEndUtc)</dd></div>
+                            <div><dt>Cause</dt><dd>@(lockout.Reason == "Unknown" ? "Not recorded" : lockout.Reason)</dd></div>
+                        }
+                        <div><dt>Failed sign-in attempts</dt><dd>@lockout.FailedAttemptCount of @lockout.MaxFailedAccessAttempts <span class="text-secondary">(the count restarts when a lock-out begins or is cleared)</span></dd></div>
+                        <div>
+                            <dt>Last unlocked</dt>
+                            <dd>@(lockout.LastUnlockedAtUtc is null ? "Not recorded" : $"{When(lockout.LastUnlockedAtUtc)}{(lockout.LastUnlockedByName is null ? "" : " by " + lockout.LastUnlockedByName)}")</dd>
+                        </div>
+                    </dl>
+                </section>
+            }
+
+            <section class="panel admin-form-panel admin-grid__wide" aria-labelledby="activity-title" id="activity">
+                <div class="panel__header">
+                    <h2 class="panel__title" id="activity-title">Activity history @if (activity is not null) { <span class="panel__count">@activity.TotalCount</span> }</h2>
+                    <span class="panel__hint">Who changed this account, and when</span>
+                </div>
+                @if (activity is null)
+                {
+                    <p class="panel__note">The activity history could not be loaded right now.</p>
+                }
+                else if (activity.Items.Count == 0)
+                {
+                    <p class="panel__note">No activity is recorded for this account yet. Changes made before activity tracking was introduced are not available.</p>
+                }
+                else
+                {
+                    <div class="table-scroll">
+                        <table class="data-table activity-table">
+                            <thead>
+                                <tr><th>When</th><th>Action</th><th>Performed by</th><th>Details</th></tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var a in activity.Items)
+                                {
+                                    <tr>
+                                        <td class="text-secondary nowrap">@a.OccurredAtUtc.ToLocalTime().ToString("MMM d, yyyy HH:mm")</td>
+                                        <td>@a.Label</td>
+                                        <td>@a.PerformedByName</td>
+                                        <td class="cell-wrap">
+                                            @if (a.PreviousValue is null && a.NewValue is null && a.Reason is null)
+                                            {
+                                                <span class="text-secondary">—</span>
+                                            }
+                                            else
+                                            {
+                                                <details class="activity-details">
+                                                    <summary>@(a.Reason ?? "Details")</summary>
+                                                    @if (a.PreviousValue is not null)
+                                                    {
+                                                        <div><span class="text-secondary">Previous:</span> @a.PreviousValue</div>
+                                                    }
+                                                    @if (a.NewValue is not null)
+                                                    {
+                                                        <div><span class="text-secondary">New:</span> @a.NewValue</div>
+                                                    }
+                                                    @if (a.Reason is not null)
+                                                    {
+                                                        <div><span class="text-secondary">Reason:</span> @a.Reason</div>
+                                                    }
+                                                </details>
+                                            }
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="panel__footer panel__footer--pager">
+                        <span>Showing @shownFrom–@shownTo of @activity.TotalCount</span>
+                        @if (activityPages > 1)
+                        {
+                            <nav class="pagination" aria-label="Activity pages">
+                                <a class="@(activity.Page <= 1 ? "is-disabled" : "")" href="@ActivityUrl(Math.Max(1, activity.Page - 1))" aria-label="Newer activity">‹</a>
+                                @for (var p = 1; p <= activityPages; p++)
+                                {
+                                    if (p == activity.Page) { <span class="is-active" aria-current="page">@p</span> }
+                                    else { <a href="@ActivityUrl(p)">@p</a> }
+                                }
+                                <a class="@(activity.Page >= activityPages ? "is-disabled" : "")" href="@ActivityUrl(Math.Min(activityPages, activity.Page + 1))" aria-label="Older activity">›</a>
+                            </nav>
+                        }
+                    </div>
                 }
             </section>
 
