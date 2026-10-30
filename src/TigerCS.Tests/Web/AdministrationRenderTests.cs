@@ -200,7 +200,8 @@ public sealed class AdministrationRenderTests : IDisposable
         Assert.Contains("name=\"ResetPassword.ConfirmPassword\"", edit, StringComparison.Ordinal);
         Assert.Contains("name=\"ResetPassword.Reason\"", edit, StringComparison.Ordinal);
         Assert.Contains("type=\"password\" required", edit, StringComparison.Ordinal);
-        Assert.Contains(UserEditModel.PasswordPolicyText, edit, StringComparison.Ordinal);
+        Assert.Contains("data-password-new", edit, StringComparison.Ordinal);
+        Assert.Contains("data-password-confirm", edit, StringComparison.Ordinal);
         Assert.Contains(">Reset Password</button>", edit, StringComparison.Ordinal);
         // The password never appears anywhere but the two input fields.
         Assert.DoesNotContain("value=\"\" name=\"ResetPassword.NewPassword\"", edit, StringComparison.Ordinal);
@@ -208,8 +209,48 @@ public sealed class AdministrationRenderTests : IDisposable
         var create = await Ok(await GetAsync("/Admin/Users/New"));
         Assert.DoesNotContain("reset-password-title", create, StringComparison.Ordinal);
         Assert.DoesNotContain("handler=ResetPassword", create, StringComparison.Ordinal);
-        // The same policy wording accompanies the initial password too.
-        Assert.Contains(UserEditModel.PasswordPolicyText, create, StringComparison.Ordinal);
+        // The initial password carries the same live rules and confirm check.
+        Assert.Contains("data-password-new", create, StringComparison.Ordinal);
+        Assert.Contains("data-password-confirm", create, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The shared <c>_PasswordRules</c> partial lists exactly the rules of the
+    /// Api's Identity policy — on Add User and on Reset Password — instead of a
+    /// hardcoded sentence.
+    /// </summary>
+    [Theory]
+    [InlineData("/Admin/Users/New", "create-password-rules")]
+    [InlineData("/Admin/Users/11111111-1111-1111-1111-111111111111", "reset-password-rules")]
+    public async Task PasswordRules_AreRenderedFromTheIdentityPolicy_OnAddUserAndResetPassword(string path, string id)
+    {
+        var html = await Ok(await GetAsync(path));
+
+        Assert.Contains($"id=\"{id}\" data-password-rules", html, StringComparison.Ordinal);
+        Assert.Contains("data-rule=\"length\" data-min=\"8\">At least 8 characters", html, StringComparison.Ordinal);
+        Assert.Contains("data-rule=\"upper\"", html, StringComparison.Ordinal);
+        Assert.Contains("data-rule=\"lower\"", html, StringComparison.Ordinal);
+        Assert.Contains("data-rule=\"digit\"", html, StringComparison.Ordinal);
+        Assert.Contains("data-rule=\"symbol\"", html, StringComparison.Ordinal);
+        Assert.Contains("data-rule=\"unique\" data-min=\"4\">At least 4 different characters", html, StringComparison.Ordinal);
+        Assert.Contains("data-password-match", html, StringComparison.Ordinal);
+        // The rules replace the hardcoded wording.
+        Assert.DoesNotContain(UserEditModel.PasswordPolicyText, html, StringComparison.Ordinal);
+    }
+
+    /// <summary>Unlock appears only on the row of a locked-out user.</summary>
+    [Fact]
+    public async Task UsersList_OffersUnlock_OnlyForLockedOutUsers()
+    {
+        var html = await Ok(await GetAsync("/Admin/Users?includeInactive=true"));
+
+        // Alma is locked out, Ravi is not.
+        Assert.Single(System.Text.RegularExpressions.Regex.Matches(html, "data-unlock-form"));
+        Assert.Matches($"action=\"/Admin/Users\\?[^\"]*handler=Unlock[^\"]*\"", html);
+        Assert.Matches($"action=\"/Admin/Users\\?[^\"]*id={AlmaId}[^\"]*\"", html);
+        Assert.DoesNotContain($"id={RaviId}\" class=\"admin-actions\" data-unlock-form", html, StringComparison.Ordinal);
+        Assert.Contains(">Unlock</button>", html, StringComparison.Ordinal);
+        Assert.Contains("data-lock-note", html, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -443,6 +484,7 @@ public sealed class AdministrationRenderTests : IDisposable
                     new(2, "Finance")
                 }),
                 "api/admin/users" => Json(Users(includeInactive)),
+                "api/admin/users/password-policy" => Json(new PasswordPolicyDto(8, true, true, true, true, 4)),
                 _ when path == $"api/admin/users/{AlmaId}" => Json(Alma),
                 "api/admin/channels" => Json(Channels(includeInactive)),
                 "api/admin/channels/1" => Json(Channels(true)[0]),

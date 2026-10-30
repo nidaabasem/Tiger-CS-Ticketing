@@ -169,6 +169,25 @@ public sealed class UserAccountManager(UserManager<ApplicationUser> userManager,
         return PasswordChangeResult.Success();
     }
 
+    public PasswordPolicyInfo GetPasswordPolicy()
+    {
+        var p = userManager.Options.Password;
+        return new(p.RequiredLength, p.RequireDigit, p.RequireLowercase, p.RequireUppercase, p.RequireNonAlphanumeric, p.RequiredUniqueChars);
+    }
+
+    public async Task<bool> UnlockAccountAsync(Guid employeeId, CancellationToken cancellationToken = default)
+    {
+        var user = await userManager.FindByIdAsync(employeeId.ToString());
+        if (user is null)
+        {
+            return false;
+        }
+
+        await userManager.SetLockoutEndDateAsync(user, null);
+        await userManager.ResetAccessFailedCountAsync(user);
+        return true;
+    }
+
     /// <summary>
     /// <see cref="UserManager{TUser}.ChangePasswordAsync"/> verifies the current
     /// password and runs the registered validators on the new one. Identity
