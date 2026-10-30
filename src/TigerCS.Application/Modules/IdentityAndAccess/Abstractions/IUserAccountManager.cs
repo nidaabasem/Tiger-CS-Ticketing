@@ -3,6 +3,10 @@ namespace TigerCS.Application.Modules.IdentityAndAccess.Abstractions;
 /// <summary>The Identity account behind an employee — the fields ASP.NET Core Identity owns (never the password hash).</summary>
 public sealed record UserAccountInfo(Guid EmployeeId, string UserName, string? Email, bool IsLockedOut);
 
+/// <summary>Identity's password options, as configured.</summary>
+public sealed record PasswordPolicyInfo(
+    int RequiredLength, bool RequireDigit, bool RequireLowercase, bool RequireUppercase, bool RequireNonAlphanumeric, int RequiredUniqueChars);
+
 /// <summary>Outcome of an Identity operation, in Identity's own error wording (password policy, duplicate user name, …).</summary>
 public sealed record UserAccountResult(bool Succeeded, IReadOnlyList<string> Errors, Guid EmployeeId = default)
 {
@@ -75,6 +79,9 @@ public interface IUserAccountManager
     /// once — and every token issued before the reset stops working.
     /// </summary>
     Task<PasswordChangeResult> ResetPasswordAsync(Guid employeeId, string newPassword, CancellationToken cancellationToken = default);
+
+    /// <summary>The password options Identity is configured with (including any "Identity:Password:*" overrides).</summary>
+    PasswordPolicyInfo GetPasswordPolicy();
 
     /// <summary>
     /// Administrative unlock: clears the lockout end date and the failed-attempt

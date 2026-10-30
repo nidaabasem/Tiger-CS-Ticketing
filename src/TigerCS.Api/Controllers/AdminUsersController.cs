@@ -21,6 +21,11 @@ public class AdminUsersController(AdminUserAppService users) : AdminControllerBa
         [FromQuery] int page = 1, [FromQuery] int pageSize = 25, CancellationToken cancellationToken = default) =>
         Ok(await users.ListAsync(search, includeInactive, page, pageSize, cancellationToken));
 
+    /// <summary>The password rules ASP.NET Core Identity is configured with.</summary>
+    [HttpGet("password-policy")]
+    [ProducesResponseType<PasswordPolicyDto>(StatusCodes.Status200OK)]
+    public IActionResult GetPasswordPolicy() => Ok(users.GetPasswordPolicy());
+
     /// <summary>One user with roles, department memberships and whether ticket history references them.</summary>
     [HttpGet("{employeeId:guid}")]
     [ProducesResponseType<AdminUserDto>(StatusCodes.Status200OK)]

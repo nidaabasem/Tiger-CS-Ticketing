@@ -283,17 +283,31 @@
                 <div class="panel__note panel__note--top">
                     <p>Replaces the password without knowing the old one. The user is signed out everywhere and any sign-in lock is lifted, so they can sign in with the new password straight away. The password is never recorded; the reason is.</p>
                 </div>
-                <form method="post" asp-page-handler="ResetPassword" asp-route-id="@u.EmployeeId" class="admin-form" autocomplete="off">
+                <form method="post" asp-page-handler="ResetPassword" asp-route-id="@u.EmployeeId" class="admin-form" autocomplete="off" data-password-form>
                     <div class="form-row">
                         <div class="form-group">
                             <label class="form-label" asp-for="ResetPassword.NewPassword">New password *</label>
-                            <input class="form-control" asp-for="ResetPassword.NewPassword" type="password" required aria-required="true" autocomplete="new-password" minlength="8" />
-                            <span class="field-hint">@UserEditModel.PasswordPolicyText</span>
+                            <input class="form-control" asp-for="ResetPassword.NewPassword" type="password" required aria-required="true" autocomplete="new-password" data-password-new aria-describedby="reset-password-rules" />
+                            @if (Model.PasswordPolicy is { } policy)
+                            {
+                                <ul class="password-rules" id="reset-password-rules" data-password-rules aria-live="polite">
+                                    <li data-rule="length" data-min="@policy.RequiredLength">At least @policy.RequiredLength characters</li>
+                                    @if (policy.RequireUppercase) { <li data-rule="upper">An uppercase letter (A–Z)</li> }
+                                    @if (policy.RequireLowercase) { <li data-rule="lower">A lowercase letter (a–z)</li> }
+                                    @if (policy.RequireDigit) { <li data-rule="digit">A number (0–9)</li> }
+                                    @if (policy.RequireNonAlphanumeric) { <li data-rule="symbol">A special character (for example ! @@ # $ %)</li> }
+                                    @if (policy.RequiredUniqueChars > 1) { <li data-rule="unique" data-min="@policy.RequiredUniqueChars">At least @policy.RequiredUniqueChars different characters</li> }
+                                </ul>
+                            }
+                            else
+                            {
+                                <span class="field-hint">@UserEditModel.PasswordPolicyText</span>
+                            }
                         </div>
                         <div class="form-group">
                             <label class="form-label" asp-for="ResetPassword.ConfirmPassword">Confirm new password *</label>
-                            <input class="form-control" asp-for="ResetPassword.ConfirmPassword" type="password" required aria-required="true" autocomplete="new-password" />
-                            <span class="field-hint">Both entries must match.</span>
+                            <input class="form-control" asp-for="ResetPassword.ConfirmPassword" type="password" required aria-required="true" autocomplete="new-password" data-password-confirm aria-describedby="reset-password-match" />
+                            <span class="field-hint" id="reset-password-match" data-password-match aria-live="polite">Both entries must match.</span>
                         </div>
                     </div>
                     <div class="form-group">

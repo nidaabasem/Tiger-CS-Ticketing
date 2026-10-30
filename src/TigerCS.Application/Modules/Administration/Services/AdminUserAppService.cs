@@ -390,6 +390,13 @@ public sealed class AdminUserAppService(
         return AdminResult<AdminUserDto>.Success((await GetAsync(employeeId, cancellationToken))!);
     }
 
+    /// <summary>The live Identity password policy, so the UI never carries its own copy of the rules.</summary>
+    public PasswordPolicyDto GetPasswordPolicy()
+    {
+        var p = accountManager.GetPasswordPolicy();
+        return new(p.RequiredLength, p.RequireDigit, p.RequireLowercase, p.RequireUppercase, p.RequireNonAlphanumeric, p.RequiredUniqueChars);
+    }
+
     private async Task<AdminUserDto> ToDtoAsync(Employee employee, UserAccountInfo? account, CancellationToken cancellationToken)
     {
         var roles = await roleReader.GetRolesAsync(employee.EmployeeId, cancellationToken);

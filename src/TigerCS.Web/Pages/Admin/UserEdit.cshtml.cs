@@ -20,6 +20,9 @@ public sealed class UserEditModel(AdminApiClient adminApi, DepartmentsApiClient 
     public IReadOnlyCollection<DepartmentDto> ActiveDepartments { get; private set; } = [];
     public string? LoadError { get; private set; }
 
+    /// <summary>Identity's configured password rules; null if they could not be loaded (the server still validates).</summary>
+    public PasswordPolicyDto? PasswordPolicy { get; private set; }
+
     [BindProperty] public CreateInput Create { get; set; } = new();
     [BindProperty] public ProfileInput Profile { get; set; } = new();
     [BindProperty] public RolesInput RolesForm { get; set; } = new();
@@ -51,6 +54,8 @@ public sealed class UserEditModel(AdminApiClient adminApi, DepartmentsApiClient 
             }
 
             UserRecord = result.Value;
+            var policy = await adminApi.GetPasswordPolicyAsync(cancellationToken);
+            PasswordPolicy = policy.IsSuccess ? policy.Value : null;
             Profile = new ProfileInput
             {
                 DisplayName = UserRecord!.DisplayName,
@@ -132,7 +137,7 @@ public sealed class UserEditModel(AdminApiClient adminApi, DepartmentsApiClient 
         }
         else if (ResetPassword.NewPassword != ResetPassword.ConfirmPassword)
         {
-            ErrorMessage = "The two passwords do not match.";
+            ErrorMessage = "The new password and its confirmation do not match.";
         }
         else
         {
@@ -144,7 +149,7 @@ public sealed class UserEditModel(AdminApiClient adminApi, DepartmentsApiClient 
             }
             else
             {
-                ErrorMessage = DescribeFailure(result, "The password could not be reset.");
+                ErrorMessage = "The password was rejected: " + DescribeFailure(result, "The password could not be reset.");
             }
         }
 
