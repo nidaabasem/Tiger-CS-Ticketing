@@ -287,6 +287,8 @@ public sealed class TicketCreationAppService(
                 ticket.PinWorkflowVersion(workflowVersion.WorkflowTemplateId);
             }
 
+            ticket.RecordCreator(callerEmployeeId);
+
             await ticketRepository.AddAsync(ticket, cancellationToken);
             await unitOfWork.SaveChangesAsync(cancellationToken);
         }

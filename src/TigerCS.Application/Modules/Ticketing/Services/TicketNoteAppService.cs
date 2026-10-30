@@ -40,7 +40,7 @@ public sealed class TicketNoteAppService(
             return NoteResult.Failure(NoteOutcome.Forbidden);
         }
 
-        if (!await ticketQueryAppService.CanViewTicketAsync(callerEmployeeId, callerRoles, ticket, cancellationToken))
+        if (!await ticketQueryAppService.CanModifyTicketAsync(callerEmployeeId, callerRoles, ticket, cancellationToken))
         {
             return NoteResult.Failure(NoteOutcome.Forbidden);
         }

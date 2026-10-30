@@ -2,6 +2,7 @@ using TigerCS.Application.Modules.GenesysIntegration.Dto;
 using TigerCS.Application.Modules.Ticketing.Dto;
 using TigerCS.Application.Modules.Ticketing.Services;
 using TigerCS.Domain.Modules.IdentityAndAccess;
+using TigerCS.Domain.Modules.SlaAndEscalation;
 using TigerCS.Domain.Modules.Ticketing;
 using TigerCS.Tests.GenesysIntegration.Fakes;
 
@@ -185,5 +186,36 @@ public class AwaitingHumanAgentClaimTests
         Assert.Equal([h1, h2], await ListedAsync(f, agent, Roles.CsAgent));
         Assert.Equal(TicketQueryOutcome.Forbidden, (await f.StrictTicketQuery.GetDetailAsync(agent, Agent, t1)).Outcome);
         Assert.Equal(TicketQueryOutcome.Forbidden, (await f.StrictTicketQuery.GetDetailAsync(agent, Agent, t2)).Outcome);
+    }
+
+    [Fact]
+    public async Task ACreatorOfATicketInAnotherDepartment_CannotClaimCompleteOrCancelItsWork_AndDoesNotSeeItListed()
+    {
+        var f = new GenesysServiceFixture();
+        var (cs, _) = f.SeedGenesysDepartment("Customer Service", "CS");
+        var (fm, category) = f.SeedGenesysDepartment("Facilities", "FM");
+        var creator = Guid.NewGuid();
+        Member(f, creator, cs.DepartmentId);   // belongs to Customer Service; the ticket lives in Facilities
+        var intake = new IntakeRecord(WellKnownChannels.Phone, "+971500000077", fm.DepartmentId, false, null, null, creator, DateTime.UtcNow);
+        await f.IntakeRecords.AddAsync(intake);
+        var created = await f.ManualTicketCreation.CreateAsync(
+            creator, new CreateTicketRequestDto(intake.IntakeRecordId, null, null, category.CategoryId, (byte)PriorityLevel.High, "Lift out of service"),
+            callerRoles: Agent);
+        var ticketId = created.Response!.TicketId;
+        var interaction = Assert.Single(f.Interactions.All, i => i.TicketId == ticketId);
+        var handoff = new TicketAgentHandoff(
+            ticketId, interaction.TicketInteractionId, fm.DepartmentId, WellKnownChannels.Phone, DateTime.UtcNow, DateTime.UtcNow);
+        await f.Handoffs.AddAsync(handoff);
+
+        Assert.Equal(creator, f.Tickets.All.Single(t => t.TicketId == ticketId).CreatedByEmployeeId);
+        Assert.Equal(TicketQueryOutcome.Success, (await f.StrictTicketQuery.GetDetailAsync(creator, Agent, ticketId)).Outcome); // can read it
+        Assert.Empty(await ListedAsync(f, creator, Roles.CsAgent));                                                           // but it is not work they can take
+        Assert.Equal(AgentHandoffOutcome.Forbidden, (await f.StrictPendingWork.AcceptAsync(creator, Agent, handoff.TicketAgentHandoffId)).Outcome);
+        Assert.Equal(AgentHandoffOutcome.Forbidden, (await f.StrictPendingWork.CompleteAsync(
+            creator, Agent, handoff.TicketAgentHandoffId, new CompleteAgentHandoffRequestDto("done"))).Outcome);
+        Assert.Equal(AgentHandoffOutcome.Forbidden, (await f.StrictPendingWork.CancelAsync(
+            creator, Agent, handoff.TicketAgentHandoffId, new CancelAgentHandoffRequestDto("not needed"))).Outcome);
+        Assert.Equal(AgentHandoffStatus.WaitingForAgent, handoff.Status);
+        Assert.Null(handoff.AssignedEmployeeId);
     }
 }

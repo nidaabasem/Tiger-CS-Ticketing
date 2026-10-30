@@ -518,8 +518,13 @@ public sealed class TicketApprovalAppService(
         // member of the Collections department that owns the ticket).
         // Nothing broader: it grants this view only, only while a cycle
         // addressed to the caller is pending.
-        var canView = await TicketVisibilityRule.CanViewTicketAsync(
+        var access = await TicketVisibilityRule.GetTicketAccessAsync(
             userDepartmentAssignmentRepository, handlerRepository, callerEmployeeId, callerRoles, ticket, serviceIdentities, cancellationToken);
+        var canView = access != TicketAccessLevel.None;
+
+        // A creator who may only READ the ticket (it is in another department) is offered no approval action: every flag below is false
+        // for them, so the page never offers what the API would refuse.
+        var readOnly = access == TicketAccessLevel.ReadOnly;
         if (!canView)
         {
             var isPendingApprover = false;
@@ -540,17 +545,19 @@ public sealed class TicketApprovalAppService(
         var approvalDtos = new List<TicketApprovalDto>(approvals.Count);
         foreach (var approval in approvals)
         {
-            approvalDtos.Add(await ToDtoAsync(approval, callerEmployeeId, callerRoles, cancellationToken));
+            var dto = await ToDtoAsync(approval, callerEmployeeId, callerRoles, cancellationToken);
+            approvalDtos.Add(readOnly ? dto with { CallerCanDecide = false } : dto);
         }
 
-        var canOperate = await IsOperationalActorAsync(callerEmployeeId, callerRoles, ticket, cancellationToken);
+        var canOperate = !readOnly && await IsOperationalActorAsync(callerEmployeeId, callerRoles, ticket, cancellationToken);
 
         // Reopen Approval's offer is computed once per view rather than per
         // requirement: it is the only type whose availability depends on the
         // ticket's reopen eligibility, and the caller not already holding
         // direct Reopen.
         var canRequestReopenApproval =
-            !HoldsDirectReopen(callerRoles)
+            !readOnly
+            && !HoldsDirectReopen(callerRoles)
             && await IsReopenApprovalRequesterAsync(callerEmployeeId, callerRoles, ticket, cancellationToken)
             && await reopenEligibilityService.EvaluateAsync(
                 ticket, timeProvider.GetUtcNow().UtcDateTime, cancellationToken) is ReopenEligibility.Eligible;

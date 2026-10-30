@@ -468,7 +468,7 @@ public sealed class AgentHandoffAppService(
             handoff.ExternalWorkItemId);
 
     /// <summary>
-    /// May the caller see (and so act on) this work item. By its department for everyone except a restricted CS Agent, who sees it only
+    /// May the caller see (and so act on) this work item. Acting needs Full access to its ticket, never just creator read-only access. By its department for everyone except a restricted CS Agent, who sees it only
     /// when they can see its ticket — assigned to them, or handled by them on Genesys.
     ///
     /// <para>
@@ -488,7 +488,9 @@ public sealed class AgentHandoffAppService(
             return await ticketQueryAppService.CanViewDepartmentAsync(callerEmployeeId, callerRoles, handoff.DepartmentId, cancellationToken);
         }
 
-        if (await ticketQueryAppService.CanViewTicketAsync(callerEmployeeId, callerRoles, handoff.TicketId, cancellationToken))
+        // Acting on a work item (claim, complete, cancel) is modifying its ticket: Full access only. A creator's read-only access to a ticket
+        // in another department never lets them touch its work.
+        if (await ticketQueryAppService.CanModifyTicketAsync(callerEmployeeId, callerRoles, handoff.TicketId, cancellationToken))
         {
             return true;
         }

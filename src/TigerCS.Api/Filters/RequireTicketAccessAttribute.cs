@@ -60,18 +60,30 @@ internal sealed class RequireTicketAccessFilter(TicketQueryAppService ticketQuer
         var access = await ticketQueryAppService.CheckAccessAsync(employeeId, roles, ticketId, context.HttpContext.RequestAborted);
         if (access == TicketAccess.Denied)
         {
-            context.Result = new ObjectResult(new ProblemDetails
-            {
-                Status = StatusCodes.Status403Forbidden,
-                Title = "Ticket not accessible.",
-                Detail = "You can only access tickets assigned to you or tickets on which you handled a Genesys interaction."
-            })
-            { StatusCode = StatusCodes.Status403Forbidden };
+            context.Result = Forbidden(
+                "Ticket not accessible.",
+                "You can only access tickets assigned to you, tickets on which you handled a Genesys interaction, or tickets you created.");
+            return;
+        }
+
+        // The creator of a ticket in another department may read it and nothing else: every request that is not a safe read is refused.
+        if (access == TicketAccess.ReadOnly && !IsSafeRead(context.HttpContext.Request.Method))
+        {
+            context.Result = Forbidden(
+                "Read-only access.",
+                "You created this ticket, so you can follow it, but it belongs to another department: you cannot change it.");
             return;
         }
 
         await next();
     }
+
+    private static bool IsSafeRead(string method) =>
+        HttpMethods.IsGet(method) || HttpMethods.IsHead(method) || HttpMethods.IsOptions(method);
+
+    private static ObjectResult Forbidden(string title, string detail) =>
+        new(new ProblemDetails { Status = StatusCodes.Status403Forbidden, Title = title, Detail = detail })
+        { StatusCode = StatusCodes.Status403Forbidden };
 
     private static bool TryGetTicketId(ResourceExecutingContext context, out long ticketId)
     {

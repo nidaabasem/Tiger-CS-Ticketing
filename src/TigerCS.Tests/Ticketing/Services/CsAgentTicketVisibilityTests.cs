@@ -402,4 +402,151 @@ public class CsAgentTicketVisibilityTests
         Assert.Equal(4, supervisorView.OpenTickets);
         Assert.Equal(2, supervisorView.Unassigned);
     }
+
+    // =====================================================================
+    // Ticket creator: read-only access that survives a department transfer
+    // =====================================================================
+
+    /// <summary>A ticket <paramref name="creator"/> created in <paramref name="departmentId"/> and then moved to <paramref name="movedTo"/>.</summary>
+    private static async Task<Ticket> CreatedThenTransferredAsync(Fixture f, Guid creator, int departmentId = CustomerService, int movedTo = Facilities)
+    {
+        var ticket = await SeedAsync(f, departmentId, assignedTo: creator);
+        ticket.RecordCreator(creator);
+        ticket.TransferToDepartment(movedTo); // clears the owner, as a real transfer does
+        return ticket;
+    }
+
+    [Fact]
+    public async Task TheCreator_StillOpensTheTicketAfterItMovedToAnotherDepartment_ReadOnly()
+    {
+        var f = CreateService();
+        var creator = Guid.NewGuid();
+        MemberOf(f, creator, CustomerService);
+        var ticket = await CreatedThenTransferredAsync(f, creator);
+
+        var detail = await f.Query.GetDetailAsync(creator, Agent, ticket.TicketId);
+
+        Assert.Equal(TicketQueryOutcome.Success, detail.Outcome);
+        Assert.True(detail.Response!.IsReadOnlyAccess);
+        Assert.Equal(Facilities, detail.Response.CurrentDepartmentId);   // department, status and owner are all readable
+        Assert.Equal(creator, detail.Response.CreatedByEmployeeId);
+        Assert.Equal(TicketQueryOutcome.Success, (await f.Query.GetLifecycleHistoryAsync(creator, Agent, ticket.TicketId)).Outcome);
+        Assert.Equal([ticket.TicketId], await QueueIdsAsync(f, creator, Roles.CsAgent));
+        Assert.Equal(TicketAccess.ReadOnly, await f.Query.CheckAccessAsync(creator, Agent, ticket.TicketId));
+    }
+
+    [Fact]
+    public async Task BeforeTheTransfer_TheCreatorWhoOwnsTheTicketHasFullAccess_AfterIt_ReadOnly()
+    {
+        var f = CreateService();
+        var creator = Guid.NewGuid();
+        var ticket = await SeedAsync(f, CustomerService, assignedTo: creator);
+        ticket.RecordCreator(creator);
+
+        Assert.Equal(TicketAccess.Allowed, await f.Query.CheckAccessAsync(creator, Agent, ticket.TicketId));
+        Assert.False((await f.Query.GetDetailAsync(creator, Agent, ticket.TicketId)).Response!.IsReadOnlyAccess);
+
+        ticket.TransferToDepartment(Facilities);
+
+        Assert.Equal(TicketAccess.ReadOnly, await f.Query.CheckAccessAsync(creator, Agent, ticket.TicketId));
+        Assert.True((await f.Query.GetDetailAsync(creator, Agent, ticket.TicketId)).Response!.IsReadOnlyAccess);
+    }
+
+    [Fact]
+    public async Task ACreatorWhoIsAlsoAssignedOrWhoHandledTheCall_HasFullAccess_NotReadOnly()
+    {
+        var f = CreateService();
+        var creator = Guid.NewGuid();
+        var assignedBack = await CreatedThenTransferredAsync(f, creator);
+        assignedBack.AssignTo(creator);
+        var handled = await CreatedThenTransferredAsync(f, creator);
+        await HandledOnGenesysAsync(f, handled, creator);
+
+        Assert.Equal(TicketAccess.Allowed, await f.Query.CheckAccessAsync(creator, Agent, assignedBack.TicketId));
+        Assert.Equal(TicketAccess.Allowed, await f.Query.CheckAccessAsync(creator, Agent, handled.TicketId));
+    }
+
+    [Fact]
+    public async Task AnotherAgent_CannotOpenATicketSomeoneElseCreated_EvenInTheSameDepartmentOrAfterTheTransfer()
+    {
+        var f = CreateService();
+        var creator = Guid.NewGuid();
+        var other = Guid.NewGuid();
+        MemberOf(f, other, CustomerService);
+        MemberOf(f, other, Facilities);
+        var ticket = await CreatedThenTransferredAsync(f, creator);
+
+        Assert.Equal(TicketQueryOutcome.Forbidden, (await f.Query.GetDetailAsync(other, Agent, ticket.TicketId)).Outcome);
+        Assert.Equal(TicketAccess.Denied, await f.Query.CheckAccessAsync(other, Agent, ticket.TicketId));
+        Assert.Empty(await QueueIdsAsync(f, other, Roles.CsAgent));
+    }
+
+    [Fact]
+    public async Task CreatedByMe_ListsOnlyTheCallersCreations_WhetherOrNotTheyMoved_AndNeverWidensAnything()
+    {
+        var f = CreateService();
+        var me = Guid.NewGuid();
+        var colleague = Guid.NewGuid();
+        var movedAway = await CreatedThenTransferredAsync(f, me);
+        var stillMine = await SeedAsync(f, assignedTo: me);
+        stillMine.RecordCreator(me);
+        var assignedButCreatedByColleague = await SeedAsync(f, assignedTo: me);
+        assignedButCreatedByColleague.RecordCreator(colleague);
+        var colleaguesOwn = await SeedAsync(f, assignedTo: colleague);
+        colleaguesOwn.RecordCreator(colleague);
+
+        var created = (await f.Query.GetQueueAsync(
+            me, Agent, AllTickets() with { CreatedByMe = true })).Items.Select(i => i.TicketId).Order().ToArray();
+        var notFiltered = await QueueIdsAsync(f, me, Roles.CsAgent);
+
+        Assert.Equal([movedAway.TicketId, stillMine.TicketId], created);
+        Assert.Equal([movedAway.TicketId, stillMine.TicketId, assignedButCreatedByColleague.TicketId], notFiltered);
+        Assert.DoesNotContain(colleaguesOwn.TicketId, notFiltered);
+        // The filter cannot be pointed at someone else: it always means the caller.
+        Assert.DoesNotContain(
+            (await f.Query.GetQueueAsync(colleague, Agent, AllTickets() with { CreatedByMe = true, OwnerEmployeeId = me })).Items,
+            i => i.TicketId == movedAway.TicketId);
+    }
+
+    [Fact]
+    public async Task ASupervisorsCreatedByMe_IsStillJustTheirOwnCreations()
+    {
+        var f = CreateService();
+        var supervisor = Guid.NewGuid();
+        var mine = await SeedAsync(f);
+        mine.RecordCreator(supervisor);
+        var someoneElses = await SeedAsync(f);
+        someoneElses.RecordCreator(Guid.NewGuid());
+
+        var all = (await f.Query.GetQueueAsync(supervisor, [Roles.CsSupervisor], AllTickets())).Items.Count;
+        var created = (await f.Query.GetQueueAsync(supervisor, [Roles.CsSupervisor], AllTickets() with { CreatedByMe = true })).Items;
+
+        Assert.Equal(2, all);
+        Assert.Equal(mine.TicketId, Assert.Single(created).TicketId);
+    }
+
+    [Fact]
+    public async Task TheDashboard_CountsACreatorsMovedTicket_LikeTheListDoes()
+    {
+        var f = CreateService();
+        var creator = Guid.NewGuid();
+        await CreatedThenTransferredAsync(f, creator);
+        await SeedAsync(f); // unrelated
+
+        var summary = await f.Dashboard.GetSummaryAsync(creator, Agent);
+
+        Assert.Equal(1, summary.OpenTickets);
+    }
+
+    [Fact]
+    public void TheTicketRecordsItsCreatorOnce()
+    {
+        var ticket = Ticket.CreateVerified("TG-CS-20261030-9999", CustomerService, 10, 20, 5, (byte)PriorityLevel.High, "Issue", DateTime.UtcNow);
+        var first = Guid.NewGuid();
+
+        Assert.True(ticket.RecordCreator(first));
+        Assert.False(ticket.RecordCreator(Guid.NewGuid()));
+        Assert.Equal(first, ticket.CreatedByEmployeeId);
+        Assert.Throws<ArgumentException>(() => ticket.RecordCreator(Guid.Empty));
+    }
 }

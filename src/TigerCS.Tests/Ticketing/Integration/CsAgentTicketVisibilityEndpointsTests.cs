@@ -416,7 +416,7 @@ public sealed class CsAgentTicketVisibilityEndpointsTests(TigerCsApiFactory fact
     }
 
     [Fact]
-    public async Task WhenTheAgentSelectsTheDepartmentQueue_TheTicketStaysUnassigned_AndIsNotTheirs()
+    public async Task WhenTheAgentSelectsTheDepartmentQueue_TheTicketStaysUnassigned_AndTheCreatorCanOnlyReadIt()
     {
         var department = await DepartmentAsync();
         var (creator, _) = await ClientAsync(departmentId: department);
@@ -424,7 +424,8 @@ public sealed class CsAgentTicketVisibilityEndpointsTests(TigerCsApiFactory fact
         var ticket = await CreateManualTicketAsync(creator, department, departmentQueue: true);
 
         Assert.Null(await _factory.GetTicketCurrentOwnerAsync(ticket.TicketId));
-        Assert.Equal(HttpStatusCode.Forbidden, await DetailStatusAsync(creator, ticket.TicketId));
+        var detail = await (await creator.GetAsync($"/api/tickets/{ticket.TicketId}")).Content.ReadFromJsonAsync<TicketDetailDto>();
+        Assert.True(detail!.IsReadOnlyAccess); // theirs to follow, not to work: it is in the queue, not assigned to them
     }
 
     [Fact]
@@ -543,5 +544,185 @@ public sealed class CsAgentTicketVisibilityEndpointsTests(TigerCsApiFactory fact
 
         Assert.Equal(HttpStatusCode.Forbidden, cancel.StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, complete.StatusCode);
+    }
+
+    // =====================================================================
+    // Ticket creator: read-only access that survives a department transfer
+    // =====================================================================
+
+    /// <summary>A CS Manager moves the ticket to <paramref name="targetDepartmentId"/> — the existing Department Transfer, which also clears the owner.</summary>
+    private static async Task TransferAsync(HttpClient manager, long ticketId, int targetDepartmentId)
+    {
+        var current = await (await manager.GetAsync($"/api/tickets/{ticketId}")).Content.ReadFromJsonAsync<TicketDetailDto>();
+        var response = await manager.PostAsJsonAsync(
+            $"/api/tickets/{ticketId}/transfer",
+            new TransferTicketRequestDto(targetDepartmentId, "Handled by the receiving team.", Convert.FromBase64String(current!.RowVersion)));
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    private async Task<int> NewDepartmentAsync() =>
+        await _factory.CreateDepartmentAsync("Receiving " + Guid.NewGuid(), Guid.NewGuid().ToString("N")[..8]);
+
+    /// <summary>A ticket <paramref name="creator"/> raised in their own department (so it is theirs) and a CS Manager then transferred to another.</summary>
+    private async Task<(long TicketId, int ReceivingDepartmentId, HttpClient Manager)> CreatedThenTransferredAsync(HttpClient creator, int ownDepartment)
+    {
+        var (manager, _) = await ClientAsync(Roles.CsManager);
+        var ticket = await CreateManualTicketAsync(creator, ownDepartment);
+        var receiving = await NewDepartmentAsync();
+        await TransferAsync(manager, ticket.TicketId, receiving);
+        return (ticket.TicketId, receiving, manager);
+    }
+
+    [Fact]
+    public async Task TheCreator_CanOpenFollowAndReadTheTicket_BeforeAndAfterItIsTransferred()
+    {
+        var own = await DepartmentAsync();
+        var (creator, _) = await ClientAsync(departmentId: own);
+        var (manager, _) = await ClientAsync(Roles.CsManager);
+        var ticket = await CreateManualTicketAsync(creator, own);
+
+        // Before: theirs by self-assignment — full access, not read-only.
+        var before = await (await creator.GetAsync($"/api/tickets/{ticket.TicketId}")).Content.ReadFromJsonAsync<TicketDetailDto>();
+        Assert.False(before!.IsReadOnlyAccess);
+        Assert.Equal(HttpStatusCode.Created, (await creator.PostAsJsonAsync($"/api/tickets/{ticket.TicketId}/notes", new CreateNoteRequestDto("Customer called again."))).StatusCode);
+
+        var receiving = await NewDepartmentAsync();
+        await TransferAsync(manager, ticket.TicketId, receiving);
+
+        // After: still readable — status, department, owner, history, updates — and flagged read-only.
+        var after = await (await creator.GetAsync($"/api/tickets/{ticket.TicketId}")).Content.ReadFromJsonAsync<TicketDetailDto>();
+        Assert.True(after!.IsReadOnlyAccess);
+        Assert.Equal(receiving, after.CurrentDepartmentId);
+        Assert.Null(after.CurrentOwnerEmployeeId);
+        foreach (var suffix in new[] { "/history", "/notes", "/interactions", "/sla", "/escalations", "/approvals", "/customer-history", "/reviews" })
+        {
+            Assert.NotEqual(HttpStatusCode.Forbidden, (await creator.GetAsync($"/api/tickets/{ticket.TicketId}{suffix}")).StatusCode);
+        }
+
+        var notes = await (await creator.GetAsync($"/api/tickets/{ticket.TicketId}/notes")).Content.ReadFromJsonAsync<TicketNoteListResultDto>();
+        Assert.Contains(notes!.Items, n => n.NoteText == "Customer called again.");   // the updates are readable too
+
+        // The approvals view the page is built from offers a read-only creator nothing to do.
+        var approvals = await (await creator.GetAsync($"/api/tickets/{ticket.TicketId}/approvals")).Content.ReadFromJsonAsync<TicketApprovalsViewDto>();
+        Assert.False(approvals!.CallerCanRecordEvents);
+        Assert.All(approvals.Approvals, a => Assert.False(a.CallerCanDecide));
+        Assert.All(approvals.RequestableApprovals, r => Assert.False(r.CallerCanRequest));
+        Assert.Contains(ticket.TicketId, await ListedIdsAsync(creator));
+    }
+
+    [Fact]
+    public async Task AnotherAgent_CannotViewATicketTheyDidNotCreate_BeforeOrAfterATransfer()
+    {
+        var own = await DepartmentAsync();
+        var (creator, _) = await ClientAsync(departmentId: own);
+        var (colleague, _) = await ClientAsync(departmentId: own);
+        var ticket = await CreateManualTicketAsync(creator, own);
+        var (manager, _) = await ClientAsync(Roles.CsManager);
+        var receiving = await NewDepartmentAsync();
+        var (receivingAgent, _) = await ClientAsync(departmentId: receiving);
+
+        Assert.Equal(HttpStatusCode.Forbidden, await DetailStatusAsync(colleague, ticket.TicketId));
+        await TransferAsync(manager, ticket.TicketId, receiving);
+        Assert.Equal(HttpStatusCode.Forbidden, await DetailStatusAsync(colleague, ticket.TicketId));
+        Assert.Equal(HttpStatusCode.Forbidden, await DetailStatusAsync(receivingAgent, ticket.TicketId)); // a CS Agent's department grants nothing
+        Assert.DoesNotContain(ticket.TicketId, await ListedIdsAsync(colleague));
+        Assert.DoesNotContain(ticket.TicketId, await ListedIdsAsync(receivingAgent));
+    }
+
+    [Theory]
+    [MemberData(nameof(TicketWrites))]
+    public async Task ACreatorOutsideTheDepartment_GetsReadOnlyAccess_EveryModificationIs403(string suffix)
+    {
+        var own = await DepartmentAsync();
+        var (creator, _) = await ClientAsync(departmentId: own);
+        var (ticketId, _, manager) = await CreatedThenTransferredAsync(creator, own);
+        var before = await (await manager.GetAsync($"/api/tickets/{ticketId}")).Content.ReadFromJsonAsync<TicketDetailDto>();
+
+        var response = await creator.PostAsJsonAsync($"/api/tickets/{ticketId}/{suffix}", new { });
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        var after = await (await manager.GetAsync($"/api/tickets/{ticketId}")).Content.ReadFromJsonAsync<TicketDetailDto>();
+        Assert.Equal(before!.RowVersion, after!.RowVersion);   // nothing changed
+    }
+
+    [Fact]
+    public async Task ACreatorOutsideTheDepartment_CannotAddANote_EvenWithAValidBody()
+    {
+        var own = await DepartmentAsync();
+        var (creator, creatorId) = await ClientAsync(departmentId: own);
+        var (ticketId, _, manager) = await CreatedThenTransferredAsync(creator, own);
+
+        var note = await creator.PostAsJsonAsync($"/api/tickets/{ticketId}/notes", new CreateNoteRequestDto("Still me."));
+
+        Assert.Equal(HttpStatusCode.Forbidden, note.StatusCode);
+        var notes = await (await manager.GetAsync($"/api/tickets/{ticketId}/notes")).Content.ReadFromJsonAsync<TicketNoteListResultDto>();
+        Assert.DoesNotContain(notes!.Items, n => n.NoteText == "Still me.");
+        Assert.Null(await _factory.GetTicketCurrentOwnerAsync(ticketId));
+        Assert.NotEqual(Guid.Empty, creatorId);
+    }
+
+    [Fact]
+    public async Task ACreatorCannotOpenAnotherAgentsTransferredTicket_AndCanStillWorkTheirOwn()
+    {
+        var own = await DepartmentAsync();
+        var (creator, _) = await ClientAsync(departmentId: own);
+        var (other, _) = await ClientAsync(departmentId: own);
+        var (theirTicket, _, _) = await CreatedThenTransferredAsync(other, own);
+        var mine = await CreateManualTicketAsync(creator, own);
+
+        Assert.Equal(HttpStatusCode.Forbidden, await DetailStatusAsync(creator, theirTicket));
+        Assert.Equal(HttpStatusCode.Created, (await creator.PostAsJsonAsync($"/api/tickets/{mine.TicketId}/notes", new CreateNoteRequestDto("Mine."))).StatusCode);
+    }
+
+    [Fact]
+    public async Task CreatedByMe_ListsTheCreatorsTickets_IncludingTheOnesThatMovedDepartment_AndNothingTheyDidNotCreate()
+    {
+        var own = await DepartmentAsync();
+        var (creator, creatorId) = await ClientAsync(departmentId: own);
+        var (colleague, colleagueId) = await ClientAsync(departmentId: own);
+        var (manager, _) = await ClientAsync(Roles.CsManager);
+        var moved = await CreateManualTicketAsync(creator, own);
+        await TransferAsync(manager, moved.TicketId, await NewDepartmentAsync());
+        var stillMine = await CreateManualTicketAsync(creator, own);
+        var colleaguesTicket = await CreateManualTicketAsync(colleague, own);
+        await AssignAsync(manager, colleaguesTicket.TicketId, creatorId);             // now assigned to the creator, created by the colleague
+
+        async Task<long[]> CreatedByMe(HttpClient client)
+        {
+            var page = await (await client.GetAsync("/api/tickets?createdByMe=true&pageSize=200")).Content.ReadFromJsonAsync<TicketListResultDto>();
+            return [.. page!.Items.Select(i => i.TicketId).Order()];
+        }
+
+        Assert.Equal([moved.TicketId, stillMine.TicketId], await CreatedByMe(creator));
+        Assert.Contains(colleaguesTicket.TicketId, await ListedIdsAsync(creator));       // assigned to me: in the normal list, not in "created by me"
+        Assert.Equal([colleaguesTicket.TicketId], await CreatedByMe(colleague));          // the filter is "created by the caller", nothing else
+        Assert.NotEqual(creatorId, colleagueId);
+    }
+
+    [Fact]
+    public async Task ASupervisorsAccess_AndTheirCreatedByMeFilter_AreUnchanged()
+    {
+        var own = await DepartmentAsync();
+        var (supervisor, _) = await ClientAsync(Roles.CsSupervisor, departmentId: own);
+        var (agent, _) = await ClientAsync(departmentId: own);
+        var theirs = await CreateManualTicketAsync(agent, own);
+        var mine = await CreateManualTicketAsync(supervisor, own);
+
+        var created = await (await supervisor.GetAsync("/api/tickets?createdByMe=true&pageSize=200")).Content.ReadFromJsonAsync<TicketListResultDto>();
+
+        Assert.Equal(mine.TicketId, Assert.Single(created!.Items).TicketId);
+        Assert.Equal(HttpStatusCode.OK, await DetailStatusAsync(supervisor, theirs.TicketId));
+        Assert.False((await (await supervisor.GetAsync($"/api/tickets/{theirs.TicketId}")).Content.ReadFromJsonAsync<TicketDetailDto>())!.IsReadOnlyAccess);
+    }
+
+    [Fact]
+    public async Task TheCreatorOfAGenesysTicket_IsTheIntegrationAccount_SoNoAgentGainsAccessThroughCreation()
+    {
+        var (genesys, genesysId) = await ClientAsync();
+        var (agent, _) = await ClientAsync();
+        var (ticketId, _) = await GenesysTicketAsync(genesys);
+
+        Assert.Equal(genesysId, (await _factory.GetTicketAsync(ticketId))!.CreatedByEmployeeId);
+        Assert.Equal(HttpStatusCode.Forbidden, await DetailStatusAsync(agent, ticketId));
     }
 }

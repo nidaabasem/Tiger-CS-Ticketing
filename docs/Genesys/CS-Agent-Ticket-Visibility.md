@@ -3,7 +3,8 @@
 A **CS Agent** no longer sees every ticket. They see a ticket only when **either**
 
 1. the ticket is **currently assigned to them** (`Tickets.CurrentOwnerEmployeeId`), **or**
-2. they **actually handled a Genesys interaction** on it — a call they answered, a chat or other supported interaction they were connected to — recorded in `TicketInteractionHandlers`.
+2. they **actually handled a Genesys interaction** on it — a call they answered, a chat or other supported interaction they were connected to — recorded in `TicketInteractionHandlers`, **or**
+3. they **created** it — then with **read-only** access, even after it has moved to another department (see "Ticket creators" below).
 
 Belonging to the ticket's department, or to the Genesys queue it arrived on, grants nothing. An unassigned ticket nobody handled is visible to no CS Agent. A ticket handled by several agents (a transfer) is visible to each of them. Reassigning a ticket takes away the previous assignee's *assignment* access but never the access of an agent who *handled* the interaction.
 
@@ -78,7 +79,30 @@ Claiming (`POST /api/pending-customer-interactions/{id}/start`) is enforced serv
 * nothing has already decided: no owner yet, and the request type's rule is not an assignment (`AssignedToPrimary`) or an explicit Department Queue rule, and the department's workflow settings do not disable assignment;
 * the creator is an active member of the ticket's current department (the same invariant every assignment honours).
 
-A request type with no rule, no request type, or a rule whose configured assignee went stale fall back to the queue today — those are the cases self-assignment fills. It is written as the creator's own act (`TicketAssignments.AssigningActorEmployeeId` = creator, audit action `SelfAssign`), unlike rule assignment which is a system action. An agent who is not a member of the ticket's department (for example a Call Center agent raising a Facilities ticket) is not self-assigned and cannot open that ticket afterwards.
+A request type with no rule, no request type, or a rule whose configured assignee went stale fall back to the queue today — those are the cases self-assignment fills. It is written as the creator's own act (`TicketAssignments.AssigningActorEmployeeId` = creator, audit action `SelfAssign`), unlike rule assignment which is a system action. An agent who is not a member of the ticket's department (for example a Call Center agent raising a Facilities ticket) is not self-assigned; as its creator they can still open it read-only (below).
+
+## Ticket creators — read-only access that survives a transfer
+
+`Tickets.CreatedByEmployeeId` (new, write-once, set by ticket creation; Genesys-created tickets record the integration account) is never moved by assignment or department transfer. A CS Agent who created a ticket can therefore always **open it and follow it** — status, assigned agent, department, history, notes/updates, SLA, interactions — wherever it now sits.
+
+That access is **read-only** unless the agent also holds a real grant on the ticket (it is assigned to them, they handled its Genesys interaction, or a department role of theirs covers its department). The server computes one access level per ticket — `None`, `ReadOnly` or `Full` (`TicketVisibilityRule.GetTicketAccessAsync`) — and:
+
+* **reads** need `ReadOnly` or better;
+* **every modification** needs `Full`: the API refuses any non-GET request on `api/tickets/{id}/…`, SLA and downgrade routes with **403 before the body is read** (`[RequireTicketAccess]`), and the services behind it (add note, close, reopen, classify, request downgrade, claim/complete/cancel work) re-check it;
+* the Awaiting Human Agent list never includes work that is visible only because the agent created the ticket, and claiming still requires membership of the work item's department.
+
+`TicketDetailDto.IsReadOnlyAccess` tells the UI; the details page hides every action and shows a notice, but nothing depends on that.
+
+Nothing else changes: Admin, Supervisor, Manager and executive access, department membership rules, the exclusive Claim, automatic self-assignment of manually created tickets, and Genesys creation/routing behave as before. Self-assignment still happens first, so within their own department the creator has full access until the ticket is transferred; the transfer clears the owner and the access becomes read-only.
+
+### "Created by Me"
+
+`GET /api/tickets?createdByMe=true` (and the **Created by** filter on the Tickets page) narrows the caller's own scope to tickets they created, including ones now in another department. It always means the caller — it cannot be pointed at someone else — and never widens what they can see.
+
+### Existing tickets
+
+Migration `AddTicketCreatedBy` adds the column and fills it from the first "Create" audit entry of each ticket (tickets with no such entry stay NULL and give nobody creator access). Only the new column is written. Script: `AddTicketCreatedBy.sql`.
+
 
 ## Other consequences
 

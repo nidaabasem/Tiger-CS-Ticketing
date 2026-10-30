@@ -183,13 +183,14 @@ public sealed class FakeTicketRepository : ITicketRepository
 
     /// <summary>Whether the ticket is inside the scope — the join the real handoff repository does against <c>Tickets</c>.</summary>
     public bool IsVisibleTo(long ticketId, IReadOnlyCollection<int>? departmentIds, Guid? agentEmployeeId) =>
-        _tickets.TryGetValue(ticketId, out var ticket) && IsVisible(ticket, departmentIds, agentEmployeeId);
+        _tickets.TryGetValue(ticketId, out var ticket) && IsVisible(ticket, departmentIds, agentEmployeeId, includeCreated: false);
 
     /// <summary>Mirrors <c>TicketQueryFilters.VisibleTo</c>: department scope for everyone; for a restricted CS Agent, assigned-to-me OR handled-by-me OR a department their other role grants.</summary>
-    private bool IsVisible(Ticket t, IReadOnlyCollection<int>? departmentIds, Guid? agentEmployeeId) =>
+    private bool IsVisible(Ticket t, IReadOnlyCollection<int>? departmentIds, Guid? agentEmployeeId, bool includeCreated = true) =>
         agentEmployeeId is not { } agentId
             ? departmentIds is null || departmentIds.Contains(t.CurrentDepartmentId)
             : t.CurrentOwnerEmployeeId == agentId
+                || (includeCreated && t.CreatedByEmployeeId == agentId)
                 || Handlers.HasHandledSync(t.TicketId, agentId)
                 || (departmentIds?.Contains(t.CurrentDepartmentId) ?? false);
 
@@ -211,6 +212,11 @@ public sealed class FakeTicketRepository : ITicketRepository
         var filtered = _tickets.Values.AsEnumerable();
 
         filtered = filtered.Where(t => IsVisible(t, query.VisibleDepartmentIds, query.AgentScopeEmployeeId));
+
+        if (query.CreatedByEmployeeId is { } createdBy)
+        {
+            filtered = filtered.Where(t => t.CreatedByEmployeeId == createdBy);
+        }
 
         if (query.DepartmentId is { } departmentId)
         {

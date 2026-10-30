@@ -86,7 +86,8 @@ public sealed class TicketQueryAppService(
             ClosedFromUtc: request.ClosedFrom?.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc),
             ClosedToUtc: request.ClosedTo?.AddDays(1).ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc),
             ReviewsAreTest: notificationMode?.IsTest == true,
-            AgentScopeEmployeeId: agentScope);
+            AgentScopeEmployeeId: agentScope,
+            CreatedByEmployeeId: request.CreatedByMe == true ? callerEmployeeId : null);
 
         var result = await ticketRepository.SearchAsync(query, cancellationToken);
 
@@ -105,7 +106,8 @@ public sealed class TicketQueryAppService(
             return TicketQueryResultDto<TicketDetailDto>.Failure(TicketQueryOutcome.NotFound);
         }
 
-        if (!await CanViewTicketAsync(callerEmployeeId, callerRoles, ticket, cancellationToken))
+        var accessLevel = await GetTicketAccessAsync(callerEmployeeId, callerRoles, ticket, cancellationToken);
+        if (accessLevel == TicketAccessLevel.None)
         {
             return TicketQueryResultDto<TicketDetailDto>.Failure(TicketQueryOutcome.Forbidden);
         }
@@ -130,6 +132,7 @@ public sealed class TicketQueryAppService(
 
         var detail = ToDetailDto(ticket) with
         {
+            IsReadOnlyAccess = accessLevel == TicketAccessLevel.ReadOnly,
             ResolvedAtUtc = currentResolution?.ResolvedAtUtc,
             ClosedAtUtc = closedAt,
             IsReopenEligible = reopenPolicy.IsReopenEligible(
@@ -312,7 +315,19 @@ public sealed class TicketQueryAppService(
     public bool IsRestrictedAgent(Guid callerEmployeeId, IReadOnlyCollection<string> callerRoles) =>
         TicketVisibilityRule.IsRestrictedCsAgent(callerRoles, callerEmployeeId, serviceIdentities);
 
-    /// <summary>May the caller see this ticket — by department, or (CS Agent) because it is assigned to them or they handled one of its Genesys interactions.</summary>
+    /// <summary>How much of the ticket the caller may use: Full, ReadOnly (the creator outside the department) or None.</summary>
+    internal Task<TicketAccessLevel> GetTicketAccessAsync(
+        Guid callerEmployeeId, IReadOnlyCollection<string> callerRoles, Ticket ticket, CancellationToken cancellationToken) =>
+        TicketVisibilityRule.GetTicketAccessAsync(
+            userDepartmentAssignmentRepository, handlerRepository, callerEmployeeId, callerRoles, ticket, serviceIdentities, cancellationToken);
+
+    /// <summary>May the caller MODIFY this ticket (add a note, claim, close…): Full access only — a creator's read-only access does not qualify.</summary>
+    internal Task<bool> CanModifyTicketAsync(
+        Guid callerEmployeeId, IReadOnlyCollection<string> callerRoles, Ticket ticket, CancellationToken cancellationToken) =>
+        TicketVisibilityRule.CanModifyTicketAsync(
+            userDepartmentAssignmentRepository, handlerRepository, callerEmployeeId, callerRoles, ticket, serviceIdentities, cancellationToken);
+
+    /// <summary>May the caller see this ticket — by department, because it is assigned to them or they handled one of its Genesys interactions, or (read-only) because they created it.</summary>
     internal Task<bool> CanViewTicketAsync(
         Guid callerEmployeeId, IReadOnlyCollection<string> callerRoles, Ticket ticket, CancellationToken cancellationToken) =>
         TicketVisibilityRule.CanViewTicketAsync(
@@ -331,7 +346,12 @@ public sealed class TicketQueryAppService(
             return TicketAccess.NotFound;
         }
 
-        return await CanViewTicketAsync(callerEmployeeId, callerRoles, ticket, cancellationToken) ? TicketAccess.Allowed : TicketAccess.Denied;
+        return await GetTicketAccessAsync(callerEmployeeId, callerRoles, ticket, cancellationToken) switch
+        {
+            TicketAccessLevel.Full => TicketAccess.Allowed,
+            TicketAccessLevel.ReadOnly => TicketAccess.ReadOnly,
+            _ => TicketAccess.Denied
+        };
     }
 
     /// <summary>Ticket-level visibility for a caller holding only a ticket id: loads the ticket and applies <see cref="CanViewTicketAsync(Guid, IReadOnlyCollection{string}, Ticket, CancellationToken)"/>. A ticket that does not exist is reported as not visible.</summary>
@@ -340,6 +360,14 @@ public sealed class TicketQueryAppService(
     {
         var ticket = await ticketRepository.GetByIdAsync(ticketId, cancellationToken);
         return ticket is not null && await CanViewTicketAsync(callerEmployeeId, callerRoles, ticket, cancellationToken);
+    }
+
+    /// <summary>Modify-level check for a caller holding only a ticket id (a work item's ticket): false for a missing ticket and for read-only access.</summary>
+    internal async Task<bool> CanModifyTicketAsync(
+        Guid callerEmployeeId, IReadOnlyCollection<string> callerRoles, long ticketId, CancellationToken cancellationToken)
+    {
+        var ticket = await ticketRepository.GetByIdAsync(ticketId, cancellationToken);
+        return ticket is not null && await CanModifyTicketAsync(callerEmployeeId, callerRoles, ticket, cancellationToken);
     }
 
     internal Task<bool> CanViewDepartmentAsync(
@@ -396,14 +424,18 @@ public sealed class TicketQueryAppService(
         ticket.ExternalUnitId,
         RequestTypeId: ticket.RequestTypeId,
         WorkflowTemplateId: ticket.WorkflowTemplateId,
-        IsClassified: ticket.IsClassified);
+        IsClassified: ticket.IsClassified,
+        CreatedByEmployeeId: ticket.CreatedByEmployeeId);
 }
 
 /// <summary>The answer to <see cref="TicketQueryAppService.CheckAccessAsync"/>.</summary>
 public enum TicketAccess
 {
-    /// <summary>The caller may see the ticket.</summary>
+    /// <summary>The caller may see and use the ticket.</summary>
     Allowed,
+
+    /// <summary>The caller may open and read the ticket but not change it (the creator, outside its department).</summary>
+    ReadOnly,
 
     /// <summary>No such ticket — the endpoint answers it as it always has.</summary>
     NotFound,

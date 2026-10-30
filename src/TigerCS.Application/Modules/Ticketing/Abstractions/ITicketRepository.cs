@@ -33,6 +33,7 @@ public enum TicketSortBy
 /// <item><see cref="ClosureCategory"/> — Closed tickets in one Dashboard closure KPI (Reviewed, NotReviewed, ClosedByAi, ClosedByAgent). <see cref="ReviewsAreTest"/> says which kind of review counts as feedback: Test-mode reviews while customer notifications run in test mode, real ones otherwise.</item>
 /// <item><see cref="ClosedFromUtc"/>/<see cref="ClosedToUtc"/> — Closed tickets whose latest closure falls within [from, to).</item>
 /// </list>
+/// <see cref="CreatedByEmployeeId"/> ("Created by Me") narrows the already-scoped result to tickets that employee created; the application service sets it from the caller, never from the request. A restricted CS Agent always sees their own created tickets, whatever department they now belong to.
 /// <see cref="NowUtc"/> is the evaluation instant for the time-relative filters — supplied by the application service, never read from the clock inside the repository.
 ///
 /// <para>
@@ -70,7 +71,8 @@ public sealed record TicketQuery(
     DateTime? ClosedFromUtc = null,
     DateTime? ClosedToUtc = null,
     bool ReviewsAreTest = false,
-    Guid? AgentScopeEmployeeId = null);
+    Guid? AgentScopeEmployeeId = null,
+    Guid? CreatedByEmployeeId = null);
 
 public sealed record TicketQueryResult(IReadOnlyList<Ticket> Items, int TotalCount);
 

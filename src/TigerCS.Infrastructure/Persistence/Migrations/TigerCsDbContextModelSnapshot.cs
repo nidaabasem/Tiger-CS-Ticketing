@@ -2360,6 +2360,9 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                     b.Property<DateTime>("CreatedAtUtc")
                         .HasColumnType("datetime2");
 
+                    b.Property<Guid?>("CreatedByEmployeeId")
+                        .HasColumnType("uniqueidentifier");
+
                     b.Property<int?>("CrmBuyerCustomerId")
                         .HasColumnType("int");
 
@@ -2500,6 +2503,8 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("CustomerVerificationSource", "ExternalCustomerId")
                         .HasFilter("[ExternalCustomerId] IS NOT NULL");
+
+                    b.HasIndex(new[] { "CreatedByEmployeeId" }, "IX_Tickets_CreatedByEmployeeId");
 
                     b.ToTable("Tickets", (string)null);
                 });

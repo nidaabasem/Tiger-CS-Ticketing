@@ -79,7 +79,7 @@ public static class TicketVisibilityRule
     /// <summary>
     /// For an operation whose role gate has already passed (Close, Classify, Reopen, request a downgrade…): everyone but a restricted CS
     /// Agent passes unchanged — their authority was decided by that role gate — and a restricted CS Agent additionally needs the ticket to
-    /// be visible to them. This is what stops the CS Agent's cross-department <i>action</i> rights reaching tickets they cannot see.
+    /// be one they may <b>modify</b> (Full access — a creator's read-only access does not count). This is what stops the CS Agent's cross-department <i>action</i> rights reaching tickets they cannot see.
     /// </summary>
     public static async Task<bool> PassesAgentScopeAsync(
         IUserDepartmentAssignmentRepository userDepartmentAssignmentRepository,
@@ -90,7 +90,7 @@ public static class TicketVisibilityRule
         IServiceIdentityRegistry? serviceIdentities = null,
         CancellationToken cancellationToken = default) =>
         !IsRestrictedCsAgent(callerRoles, callerEmployeeId, serviceIdentities)
-        || await CanViewTicketAsync(
+        || await CanModifyTicketAsync(
             userDepartmentAssignmentRepository, handlerRepository, callerEmployeeId, callerRoles, ticket, serviceIdentities, cancellationToken);
 
     /// <summary>Department-level visibility. A restricted CS Agent has none from CS Agent itself — their access is per ticket (<see cref="CanViewTicketAsync"/>), so this fails closed for them.</summary>
@@ -113,11 +113,18 @@ public static class TicketVisibilityRule
     }
 
     /// <summary>
-    /// Ticket-level visibility: everything <see cref="CanViewDepartmentAsync"/> grants, and — for a restricted CS Agent — the ticket being
-    /// assigned to them or one of its Genesys interactions having been handled by them. Reads the ticket's CURRENT owner and the recorded
-    /// handlers at the moment of the call, never a cached session fact.
+    /// How much of a ticket the caller may use. <see cref="TicketAccessLevel.Full"/> is everything the caller's roles allow on it;
+    /// <see cref="TicketAccessLevel.ReadOnly"/> is open-and-read only (details, status, owner, department, history, updates) with no
+    /// modification of any kind; <see cref="TicketAccessLevel.None"/> is no access.
+    ///
+    /// <para>
+    /// For a restricted CS Agent: Full when the ticket is assigned to them, they handled a Genesys interaction on it, or a department role
+    /// of theirs covers its department; otherwise ReadOnly when <b>they created it</b> — which is how a creator keeps following a ticket
+    /// after it has moved to another department — otherwise None. Everyone else keeps exactly their department-based answer (Full or None):
+    /// roles that can see tickets across departments, and department members, are unchanged.
+    /// </para>
     /// </summary>
-    public static Task<bool> CanViewTicketAsync(
+    public static Task<TicketAccessLevel> GetTicketAccessAsync(
         IUserDepartmentAssignmentRepository userDepartmentAssignmentRepository,
         ITicketInteractionHandlerRepository? handlerRepository,
         Guid callerEmployeeId,
@@ -129,27 +136,76 @@ public static class TicketVisibilityRule
         ArgumentNullException.ThrowIfNull(userDepartmentAssignmentRepository);
         ArgumentNullException.ThrowIfNull(ticket);
 
-        return AuthorizationGate.EvaluateAsync(callerRoles, async () =>
+        if (AuthorizationOverride.AppliesTo(callerRoles))
+        {
+            return Task.FromResult(TicketAccessLevel.Full);
+        }
+
+        return ResolveAsync();
+
+        async Task<TicketAccessLevel> ResolveAsync()
         {
             if (!IsRestrictedCsAgent(callerRoles, callerEmployeeId, serviceIdentities))
             {
                 return await CanViewDepartmentAsync(
-                    userDepartmentAssignmentRepository, callerEmployeeId, callerRoles, ticket.CurrentDepartmentId, serviceIdentities, cancellationToken);
+                    userDepartmentAssignmentRepository, callerEmployeeId, callerRoles, ticket.CurrentDepartmentId, serviceIdentities, cancellationToken)
+                    ? TicketAccessLevel.Full
+                    : TicketAccessLevel.None;
             }
 
-            if (ticket.CurrentOwnerEmployeeId == callerEmployeeId)
+            if (ticket.CurrentOwnerEmployeeId == callerEmployeeId
+                || (handlerRepository is not null
+                    && await handlerRepository.HasHandledAsync(ticket.TicketId, callerEmployeeId, cancellationToken))
+                || await CanViewDepartmentAsync(
+                    userDepartmentAssignmentRepository, callerEmployeeId, callerRoles, ticket.CurrentDepartmentId, serviceIdentities, cancellationToken))
             {
-                return true;
+                return TicketAccessLevel.Full;
             }
 
-            if (handlerRepository is not null
-                && await handlerRepository.HasHandledAsync(ticket.TicketId, callerEmployeeId, cancellationToken))
-            {
-                return true;
-            }
-
-            return await CanViewDepartmentAsync(
-                userDepartmentAssignmentRepository, callerEmployeeId, callerRoles, ticket.CurrentDepartmentId, serviceIdentities, cancellationToken);
-        });
+            return ticket.CreatedByEmployeeId == callerEmployeeId ? TicketAccessLevel.ReadOnly : TicketAccessLevel.None;
+        }
     }
+
+    /// <summary>May the caller open and read the ticket — Full or ReadOnly access. Reads (details, history, notes list, SLA, interactions…) use this.</summary>
+    public static async Task<bool> CanViewTicketAsync(
+        IUserDepartmentAssignmentRepository userDepartmentAssignmentRepository,
+        ITicketInteractionHandlerRepository? handlerRepository,
+        Guid callerEmployeeId,
+        IReadOnlyCollection<string> callerRoles,
+        Ticket ticket,
+        IServiceIdentityRegistry? serviceIdentities = null,
+        CancellationToken cancellationToken = default) =>
+        await GetTicketAccessAsync(
+            userDepartmentAssignmentRepository, handlerRepository, callerEmployeeId, callerRoles, ticket, serviceIdentities, cancellationToken)
+        != TicketAccessLevel.None;
+
+    /// <summary>
+    /// May the caller change the ticket (add a note, close, reopen, classify, claim, assign…): only Full access. A creator who is outside the
+    /// ticket's department and holds no other grant is ReadOnly and is refused here — the server-side half of "view only", beneath any hidden
+    /// button.
+    /// </summary>
+    public static async Task<bool> CanModifyTicketAsync(
+        IUserDepartmentAssignmentRepository userDepartmentAssignmentRepository,
+        ITicketInteractionHandlerRepository? handlerRepository,
+        Guid callerEmployeeId,
+        IReadOnlyCollection<string> callerRoles,
+        Ticket ticket,
+        IServiceIdentityRegistry? serviceIdentities = null,
+        CancellationToken cancellationToken = default) =>
+        await GetTicketAccessAsync(
+            userDepartmentAssignmentRepository, handlerRepository, callerEmployeeId, callerRoles, ticket, serviceIdentities, cancellationToken)
+        == TicketAccessLevel.Full;
+}
+
+/// <summary>What a caller may do with one ticket. See <see cref="TicketVisibilityRule.GetTicketAccessAsync"/>.</summary>
+public enum TicketAccessLevel
+{
+    /// <summary>No access: the ticket is not visible to the caller.</summary>
+    None,
+
+    /// <summary>The ticket creator outside the ticket's department with no other grant: may open and read it, may change nothing.</summary>
+    ReadOnly,
+
+    /// <summary>Everything the caller's roles allow on the ticket.</summary>
+    Full
 }

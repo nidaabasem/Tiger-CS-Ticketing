@@ -26,9 +26,17 @@ internal static class TicketQueryFilters
     /// <paramref name="departmentIds"/>. A null/empty department set grants nothing here: department or queue membership alone never
     /// shows a CS Agent a ticket. The handler test is a correlated EXISTS on (HandledByUserId, TicketId), so a ticket handled by several
     /// agents is still one row.
+    ///
+    /// <para>
+    /// <paramref name="includeCreated"/> adds the ticket creator's <b>read-only</b> access: tickets the agent created stay visible after a
+    /// transfer to another department. Lists, search, dashboard and customer views include them; the actionable work list does not (a
+    /// creator can read a ticket but never act on its work), so it passes false. Nothing about creation widens modify rights — see
+    /// <c>TicketVisibilityRule.GetTicketAccessAsync</c>.
+    /// </para>
     /// </summary>
     public static IQueryable<Ticket> VisibleTo(
-        this IQueryable<Ticket> tickets, TigerCsDbContext dbContext, IReadOnlyCollection<int>? departmentIds, Guid? agentEmployeeId)
+        this IQueryable<Ticket> tickets, TigerCsDbContext dbContext, IReadOnlyCollection<int>? departmentIds, Guid? agentEmployeeId,
+        bool includeCreated = true)
     {
         if (agentEmployeeId is not { } agentId)
         {
@@ -36,6 +44,15 @@ internal static class TicketQueryFilters
         }
 
         var departments = departmentIds?.ToList() ?? [];
+        if (includeCreated)
+        {
+            return tickets.Where(t =>
+                t.CurrentOwnerEmployeeId == agentId
+                || t.CreatedByEmployeeId == agentId
+                || dbContext.TicketInteractionHandlers.Any(h => h.TicketId == t.TicketId && h.HandledByUserId == agentId)
+                || departments.Contains(t.CurrentDepartmentId));
+        }
+
         return tickets.Where(t =>
             t.CurrentOwnerEmployeeId == agentId
             || dbContext.TicketInteractionHandlers.Any(h => h.TicketId == t.TicketId && h.HandledByUserId == agentId)

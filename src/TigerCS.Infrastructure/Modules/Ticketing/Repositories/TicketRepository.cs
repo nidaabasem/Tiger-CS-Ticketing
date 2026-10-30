@@ -27,6 +27,11 @@ public sealed class TicketRepository(TigerCsDbContext dbContext) : ITicketReposi
             filtered = filtered.Where(t => t.CurrentDepartmentId == departmentId);
         }
 
+        if (query.CreatedByEmployeeId is { } createdBy)
+        {
+            filtered = filtered.Where(t => t.CreatedByEmployeeId == createdBy);
+        }
+
         if (query.CategoryId is { } categoryId)
         {
             filtered = filtered.Where(t => t.CategoryId == categoryId);

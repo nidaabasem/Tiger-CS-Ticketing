@@ -457,4 +457,119 @@ public sealed class CsAgentTicketVisibilitySqliteTests : IDisposable
         // ...and the agent then sees exactly that ticket.
         Assert.Equal([withHandler], await QueueAsync(_agentA, Agent));
     }
+
+    // =====================================================================
+    // Ticket creator: read-only access, "Created by Me", creator backfill
+    // =====================================================================
+
+    private Ticket AddCreatedTicket(TigerCsDbContext context, Guid creator, int departmentId, Guid? owner = null)
+    {
+        var ticket = _db.AddTicket(context, departmentId, owner: owner);
+        ticket.RecordCreator(creator);
+        context.SaveChanges();
+        return ticket;
+    }
+
+    [Fact]
+    public async Task ACreatorKeepsTheTicketAfterItMovesDepartment_AsReadOnly_InTheQueueDashboardAndDetail()
+    {
+        long id;
+        using (var context = _db.CreateContext())
+        {
+            id = AddCreatedTicket(context, _agentA, _db.CustomerServiceId, owner: _agentA).TicketId;
+            AddCreatedTicket(context, _agentB, _db.CustomerServiceId, owner: _agentB);  // someone else's
+        }
+
+        using (var context = _db.CreateContext())
+        {
+            context.Tickets.Find(id)!.TransferToDepartment(_db.CollectionsId);
+            context.SaveChanges();
+        }
+
+        Assert.Equal([id], await QueueAsync(_agentA, Agent));
+        Assert.Empty(await QueueAsync(Guid.NewGuid(), Agent));
+
+        using var read = _db.CreateContext();
+        var detail = await _db.CreateQueryService(read).GetDetailAsync(_agentA, Agent, id);
+        Assert.Equal(TicketQueryOutcome.Success, detail.Outcome);
+        Assert.True(detail.Response!.IsReadOnlyAccess);
+        Assert.Equal(_db.CollectionsId, detail.Response.CurrentDepartmentId);
+        Assert.Equal(TicketQueryOutcome.Forbidden, (await _db.CreateQueryService(read).GetDetailAsync(_agentB, Agent, id)).Outcome);
+
+        var overview = await _db.CreateService(read).GetOverviewAsync(_agentA, Agent, new DashboardOverviewRequestDto());
+        Assert.Equal(1, overview.Kpis.OpenTickets);
+        Assert.Equal(0, overview.Kpis.MyTickets);   // the owner was cleared by the transfer
+    }
+
+    [Fact]
+    public async Task CreatedByMe_NarrowsToTheCallersCreations_AndNeverToSomeoneElses()
+    {
+        long mineMoved, mineAssigned, assignedButNotMine;
+        using (var context = _db.CreateContext())
+        {
+            mineMoved = AddCreatedTicket(context, _agentA, _db.CollectionsId).TicketId;
+            mineAssigned = AddCreatedTicket(context, _agentA, _db.CustomerServiceId, owner: _agentA).TicketId;
+            assignedButNotMine = AddCreatedTicket(context, _agentB, _db.CustomerServiceId, owner: _agentA).TicketId;
+        }
+
+        Assert.Equal([mineMoved, mineAssigned], await QueueAsync(_agentA, Agent, Everything() with { CreatedByMe = true }));
+        Assert.Equal([mineMoved, mineAssigned, assignedButNotMine], await QueueAsync(_agentA, Agent));
+        Assert.Equal([assignedButNotMine], await QueueAsync(_agentB, Agent, Everything() with { CreatedByMe = true }));
+    }
+
+    [Fact]
+    public async Task ACreatorsOwnTicketInAnotherDepartment_IsNotClaimableWork_AndIsNeverListedAsPendingWork()
+    {
+        long handoffId, ticketId;
+        using (var context = _db.CreateContext())
+        {
+            var work = AddWaitingWork(context, _db.CollectionsId);
+            ticketId = work.TicketId;
+            context.Tickets.Find(work.TicketId)!.RecordCreator(_agentA);
+            context.SaveChanges();
+            handoffId = work.TicketAgentHandoffId;
+        }
+
+        using var read = _db.CreateContext();
+        var list = await new TicketAgentHandoffRepository(read).SearchAsync(new AgentHandoffQuery(
+            [], AgentScopeEmployeeId: _agentA, ClaimableDepartmentIds: [_db.CustomerServiceId]));
+
+        Assert.DoesNotContain(list.Items, i => i.Handoff.TicketAgentHandoffId == handoffId);
+        // ...while the ticket itself is still theirs to read.
+        Assert.Contains(ticketId, await QueueAsync(_agentA, Agent));
+    }
+
+    [Fact]
+    public async Task TheCreatorBackfill_FillsFromTheCreateAudit_AndOnlyThere()
+    {
+        long audited, unaudited, alreadySet, doubleAudited;
+        var original = Guid.NewGuid();
+        using (var context = _db.CreateContext())
+        {
+            audited = _db.AddTicket(context, _db.CustomerServiceId).TicketId;
+            unaudited = _db.AddTicket(context, _db.CustomerServiceId).TicketId;
+            alreadySet = AddCreatedTicket(context, original, _db.CustomerServiceId).TicketId;
+            doubleAudited = _db.AddTicket(context, _db.CustomerServiceId).TicketId;
+            void Audit(long ticket, Guid? actor, string action = "Create") => context.AuditEntries.Add(
+                new TigerCS.Domain.Audit.AuditEntry(actor, action, "Ticket", ticket.ToString(), null, null, Guid.NewGuid(), DashboardSqliteFixture.Now));
+            Audit(audited, _agentA);
+            Audit(alreadySet, _agentB);                 // must not overwrite a creator that is already recorded
+            Audit(doubleAudited, _agentA);
+            Audit(doubleAudited, _agentB);              // two Create rows: the first wins, and the statement does not fail
+            Audit(unaudited, _agentB, action: "Update"); // not a creation
+            context.SaveChanges();
+        }
+
+        using (var context = _db.CreateContext())
+        {
+            context.Database.ExecuteSqlRaw(TigerCS.Infrastructure.Persistence.Migrations.AddTicketCreatedBy.BackfillSql);
+        }
+
+        using var read = _db.CreateContext();
+        Guid? CreatorOf(long id) => read.Tickets.Single(t => t.TicketId == id).CreatedByEmployeeId;
+        Assert.Equal(_agentA, CreatorOf(audited));
+        Assert.Null(CreatorOf(unaudited));
+        Assert.Equal(original, CreatorOf(alreadySet));
+        Assert.Equal(_agentA, CreatorOf(doubleAudited));
+    }
 }
