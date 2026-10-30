@@ -30,14 +30,29 @@ public sealed class TicketQueryAppService(
     ITicketAgentHandoffRepository? agentHandoffRepository = null,
     CustomerNotificationModePolicy? notificationMode = null,
     ITicketInteractionHandlerRepository? handlerRepository = null,
-    IServiceIdentityRegistry? serviceIdentities = null)
+    IServiceIdentityRegistry? serviceIdentities = null,
+    ITicketWorkflowEventRepository? workflowEventRepository = null,
+    IEmployeeRepository? employeeRepository = null)
 {
+    /// <summary>Whether the caller may use the supervisor escalation-review filter (<c>escalated=true</c>).</summary>
+    public static bool CanReviewEscalations(IReadOnlyCollection<string> callerRoles) =>
+        AuthorizationGate.Evaluate(callerRoles, () => callerRoles.Any(TicketRoleSets.ReviewEscalations.Contains));
+
     public async Task<TicketListResultDto> GetQueueAsync(
         Guid callerEmployeeId,
         IReadOnlyCollection<string> callerRoles,
         TicketListRequestDto request,
         CancellationToken cancellationToken = default)
     {
+        var page0 = request.Page < 1 ? 1 : request.Page;
+        var pageSize0 = request.PageSize is < 1 or > 200 ? 50 : request.PageSize;
+        if (request.Escalated == true && !CanReviewEscalations(callerRoles))
+        {
+            // Defence in depth: the API answers 403 before getting here. A caller without the review role never
+            // receives an escalation list, and never silently falls back to the unfiltered queue.
+            return new TicketListResultDto([], 0, page0, pageSize0);
+        }
+
         var visibleDepartmentIds = await ResolveVisibleDepartmentIdsAsync(callerEmployeeId, callerRoles, cancellationToken);
         var agentScope = ResolveAgentScope(callerEmployeeId, callerRoles);
 
@@ -86,6 +101,7 @@ public sealed class TicketQueryAppService(
             ClosedFromUtc: request.ClosedFrom?.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc),
             ClosedToUtc: request.ClosedTo?.AddDays(1).ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc),
             ReviewsAreTest: notificationMode?.IsTest == true,
+            Escalated: request.Escalated == true,
             AgentScopeEmployeeId: agentScope,
             CreatedByEmployeeId: request.CreatedByMe == true ? callerEmployeeId : null);
 
@@ -181,6 +197,25 @@ public sealed class TicketQueryAppService(
             }
         }
 
+        // Ticket transfer tracking: the resolver comes from the current resolution row, and the transfer/escalation
+        // counts from the typed TicketTransferred events — nothing is stored on the ticket, so nothing can drift.
+        if (currentResolution is not null)
+        {
+            detail = detail with { ResolvedByEmployeeId = currentResolution.ResolvingEmployeeId };
+        }
+
+        if (workflowEventRepository is not null)
+        {
+            var transfers = (await workflowEventRepository.ListByTicketIdAsync(ticketId, cancellationToken))
+                .Where(e => e.EventType == WorkflowEventType.TicketTransferred)
+                .ToList();
+            detail = detail with
+            {
+                TransferCount = transfers.Count(e => e.TransferReasonCode != (byte)TicketTransferReason.SystemRouting),
+                EscalationCount = transfers.Count(e => e.IsEscalation)
+            };
+        }
+
         // Originating channel (Channel Management phase): the channel the
         // ticket ENTERED the system on, read from its originating
         // interaction and resolved by name — including a channel that has
@@ -195,9 +230,25 @@ public sealed class TicketQueryAppService(
                 detail = detail with
                 {
                     OriginatingChannelId = originating.ChannelId,
-                    OriginatingChannelName = channel?.Name
+                    OriginatingChannelName = channel?.Name,
+                    // The first agent who actually handled the Genesys interaction. Apply-if-absent on the interaction, so
+                    // later transfers of the call or the ticket never move it; null when no mapped agent was ever recorded.
+                    FirstHandledByEmployeeId = originating.HandledByUserId
                 };
             }
+        }
+
+        // Names come from the employee directory itself, not from department membership lists, so a first handler or
+        // resolver who has since left the department (or been deactivated) is still named.
+        if (employeeRepository is not null)
+        {
+            detail = detail with
+            {
+                FirstHandledByName = detail.FirstHandledByEmployeeId is { } handler
+                    ? (await employeeRepository.GetByIdAsync(handler, cancellationToken))?.DisplayName : null,
+                ResolvedByName = detail.ResolvedByEmployeeId is { } resolver
+                    ? (await employeeRepository.GetByIdAsync(resolver, cancellationToken))?.DisplayName : null
+            };
         }
 
         return TicketQueryResultDto<TicketDetailDto>.Success(detail);

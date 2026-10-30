@@ -291,6 +291,7 @@ public sealed class DepartmentUxTests
         {
             TargetDepartmentId = registration.DepartmentId,
             Reason = "Misrouted",
+            ReasonCode = TigerCS.Domain.Modules.Ticketing.TicketTransferReason.WrongDepartment,
             RowVersionBase64 = model.Ticket!.RowVersion
         };
 
@@ -302,6 +303,26 @@ public sealed class DepartmentUxTests
         using var body = JsonDocument.Parse(post.Body!);
         Assert.Equal(RegistrationId, body.RootElement.GetProperty("targetDepartmentId").GetInt32());
         Assert.Equal("Misrouted", body.RootElement.GetProperty("reason").GetString());
+        Assert.Equal((int)TigerCS.Domain.Modules.Ticketing.TicketTransferReason.WrongDepartment, body.RootElement.GetProperty("reasonCode").GetInt32());
+    }
+
+    [Fact]
+    public async Task TicketDetails_TransferWithoutAReasonCode_IsRefusedBeforeCallingTheApi()
+    {
+        var (model, handler) = CreateTicketDetails(Api(), Roles.CsManager);
+        await model.OnGetAsync(1, null, CancellationToken.None);
+
+        var registration = Assert.Single(model.TransferTargets, d => d.Name == "Registration");
+        model.Transfer = new TicketDetailsModel.TransferInput
+        {
+            TargetDepartmentId = registration.DepartmentId,
+            Reason = "Misrouted",
+            RowVersionBase64 = model.Ticket!.RowVersion
+        };
+
+        await model.OnPostTransferAsync(1, CancellationToken.None);
+
+        Assert.DoesNotContain(handler.Requests, r => r.Method == HttpMethod.Post && r.RequestUri.EndsWith("/api/tickets/1/transfer", StringComparison.Ordinal));
     }
 
     // ---------------------------------------------------------------

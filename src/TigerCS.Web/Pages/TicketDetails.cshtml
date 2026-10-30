@@ -1,5 +1,6 @@
 @page "/Tickets/{id:long}"
 @model TigerCS.Web.Pages.TicketDetailsModel
+@using TigerCS.Domain.Modules.Ticketing
 @{
     ViewData["ActiveNav"] = "tickets";
     Layout = "_Layout";
@@ -205,6 +206,18 @@ else
                                             }
                                         </div>
                                     }
+                                    <div class="field-group">
+                                        <label class="field-label" asp-for="Assign.ReasonCode">Why is it changing hands? (required when the ticket already has an owner)</label>
+                                        <select class="field-select" asp-for="Assign.ReasonCode">
+                                            <option value="">— not needed for a first assignment —</option>
+                                            <option value="@((byte)TicketTransferReason.UnableToResolve)">Unable to resolve</option>
+                                            <option value="@((byte)TicketTransferReason.NeedsEscalation)">Needs escalation</option>
+                                            <option value="@((byte)TicketTransferReason.WrongDepartment)">Wrong department</option>
+                                            <option value="@((byte)TicketTransferReason.CustomerRequest)">Customer request</option>
+                                            <option value="@((byte)TicketTransferReason.Other)">Other</option>
+                                        </select>
+                                        <span class="field-hint">Reassigning an owned ticket needs a reason; assigning from the department queue does not.</span>
+                                    </div>
                                     <div class="action-form__footer"><button type="submit" class="btn btn-gold btn-sm">Assign</button></div>
                                 </form>
                             </div>
@@ -315,6 +328,17 @@ else
                                             {
                                                 <span class="field-hint">No other active department is available to transfer to.</span>
                                             }
+                                        </div>
+                                        <div class="field-group">
+                                            <label class="field-label" asp-for="Transfer.ReasonCode">Why is it being transferred?</label>
+                                            <select class="field-select" asp-for="Transfer.ReasonCode">
+                                                <option value="">— choose a reason —</option>
+                                                <option value="@((byte)TicketTransferReason.UnableToResolve)">Unable to resolve</option>
+                                                <option value="@((byte)TicketTransferReason.NeedsEscalation)">Needs escalation</option>
+                                                <option value="@((byte)TicketTransferReason.WrongDepartment)">Wrong department</option>
+                                                <option value="@((byte)TicketTransferReason.CustomerRequest)">Customer request</option>
+                                                <option value="@((byte)TicketTransferReason.Other)">Other</option>
+                                            </select>
                                         </div>
                                         <div class="field-group">
                                             <label class="field-label" asp-for="Transfer.Reason">Reason</label>
@@ -694,6 +718,39 @@ else
                     }
                             </section>
 
+                            @* ---- Handling & escalation: who first handled the customer, who owns it now, how often it changed
+                                   hands and who resolved it. Read from the interaction, the typed transfer events and the
+                                   resolution row — nothing here is stored on the ticket. ---- *@
+                            <section class="facts-panel" aria-label="Handling and escalation">
+                                <div class="facts-section__title">Handling &amp; Escalation</div>
+                                <dl class="request-facts">
+                                    <div class="facts-row"><dt>First handled by</dt><dd>@(Model.FirstHandledByName ?? "Not recorded")</dd></div>
+                                    <div class="facts-row"><dt>Current owner</dt><dd>@TicketDisplay.AssignedToLabel(t.CurrentOwnerEmployeeId, Model.OwnerName, t.CurrentDepartmentId, Model.DepartmentName)</dd></div>
+                                    <div class="facts-row"><dt>Times transferred</dt><dd>@t.TransferCount</dd></div>
+                                    <div class="facts-row">
+                                        <dt>Escalated</dt>
+                                        <dd>
+                                            @if (t.EscalationCount > 0)
+                                            {
+                                                <span class="badge badge-warning">Escalated @(t.EscalationCount == 1 ? "once" : $"{t.EscalationCount} times") — unable to resolve / needs escalation</span>
+                                            }
+                                            else
+                                            {
+                                                <text>No</text>
+                                            }
+                                        </dd>
+                                    </div>
+                                    @if (t.ResolvedByEmployeeId is not null)
+                                    {
+                                        <div class="facts-row"><dt>Resolved by</dt><dd>@Model.ResolvedByName</dd></div>
+                                        @if (t.ResolvedAtUtc is { } resolvedAt)
+                                        {
+                                            <div class="facts-row"><dt>Resolved on</dt><dd>@TicketDisplay.UaeTime(resolvedAt)</dd></div>
+                                        }
+                                    }
+                                </dl>
+                            </section>
+
                             @* ---- 7. Latest Activity ---- *@
                             <section class="facts-panel" aria-label="Latest activity">
                                 <div class="facts-section__title">Latest Activity</div>
@@ -706,7 +763,7 @@ else
                                     <ol class="timeline">
                                         @foreach (var entry in Model.ActivityFeed.Take(3))
                                         {
-                                            var iconCss = entry.Kind switch { "escalation" => "icon-critical", "note" => "icon-info", "reopen" => "icon-warning", "approval" => "icon-info", _ => "icon-quiet" };
+                                            var iconCss = entry.Kind switch { "escalation" => "icon-critical", "transfer" => "icon-warning", "note" => "icon-info", "reopen" => "icon-warning", "approval" => "icon-info", _ => "icon-quiet" };
                                             <li class="timeline-item">
                                                 <span class="timeline-icon @iconCss"><svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="4" fill="currentColor" /></svg></span>
                                                 <div class="timeline-row">

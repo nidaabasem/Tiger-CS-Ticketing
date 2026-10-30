@@ -69,6 +69,17 @@ public static class TicketRoleSets
     public static readonly IReadOnlyCollection<string> AssignWithinOwnDepartment = [Roles.CsSupervisor, Roles.DepartmentHead];
 
     /// <summary>
+    /// Review of tickets escalated because the handling agent could not
+    /// resolve them (the <c>escalated</c> queue filter). Supervisory roles
+    /// only; it narrows the list and never widens visibility — the caller's
+    /// department scope still applies, so a Department Head reviews only
+    /// their own department's escalations. System Administrator is
+    /// authorized by the ADR-0024 override, not listed here.
+    /// </summary>
+    public static readonly IReadOnlyCollection<string> ReviewEscalations =
+        [Roles.CsSupervisor, Roles.CsManager, Roles.DepartmentHead, Roles.GeneralManager, Roles.ChairmanCeo];
+
+    /// <summary>
     /// Assign/reassign, cross-department (PR correction): CS Manager only.
     /// General Manager, Chairman/CEO, and System Administrator explicitly
     /// hold no operational assignment capability, despite being

@@ -688,9 +688,12 @@ public sealed class TicketLifecycleAppService(
             ticket.ReopenCount);
 
         await workflowEventRepository.AddAsync(
+            // Where ownership landed is also carried in the typed columns (the type, Reopened, already says why). No
+            // transfer reason: a reopen is a lifecycle event, never an escalation and never a counted transfer.
             new TicketWorkflowEvent(
                 ticketId, WorkflowEventType.Reopened, now, callerEmployeeId,
-                ticketApprovalId: null, facts.Format(), correlationId),
+                ticketApprovalId: null, facts.Format(), correlationId)
+                .WithOwnership(previousDepartmentId, ticket.CurrentDepartmentId, ticket.CurrentOwnerEmployeeId),
             cancellationToken);
 
         await auditWriter.WriteAsync(

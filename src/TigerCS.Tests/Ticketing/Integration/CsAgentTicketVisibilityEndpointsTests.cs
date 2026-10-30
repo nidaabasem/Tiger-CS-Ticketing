@@ -87,7 +87,10 @@ public sealed class CsAgentTicketVisibilityEndpointsTests(TigerCsApiFactory fact
         var current = await (await manager.GetAsync($"/api/tickets/{ticketId}")).Content.ReadFromJsonAsync<TicketDetailDto>();
         var response = await manager.PostAsJsonAsync(
             $"/api/tickets/{ticketId}/assignment",
-            new AssignTicketRequestDto(assignee, Convert.FromBase64String(current!.RowVersion)));
+            new AssignTicketRequestDto(
+                assignee, Convert.FromBase64String(current!.RowVersion),
+                // Reassigning an owned ticket must say why (ticket transfer tracking); the first assignment out of the queue needs none.
+                current.CurrentOwnerEmployeeId is null ? null : TigerCS.Domain.Modules.Ticketing.TicketTransferReason.Other));
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
 

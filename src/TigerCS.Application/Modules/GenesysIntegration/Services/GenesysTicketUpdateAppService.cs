@@ -67,6 +67,7 @@ public sealed class GenesysTicketUpdateAppService(
     TimeProvider timeProvider,
     GenesysRequestTypeClassificationAppService classificationAppService,
     TicketLifecycleAppService lifecycleAppService,
+    GenesysAgentHandlingHistory handlingHistory,
     GenesysInteractionHandlerRecorder? handlerRecorder = null)
 {
     /// <summary>The exact closure reason recorded when the AI finishes the conversation.</summary>
@@ -356,6 +357,7 @@ public sealed class GenesysTicketUpdateAppService(
             && interaction.RecordHandlingAgentIfAbsent(agent.Agent!.GenesysUserId, agent.Agent.UserId))
         {
             await using var ownershipTransaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
+            await handlingHistory.RecordFirstHandlerAsync(ticketId, conversationId, agent.Agent!, cancellationToken);
             await unitOfWork.SaveChangesAsync(cancellationToken);
             await ownershipTransaction.CommitAsync(cancellationToken);
         }
@@ -644,6 +646,8 @@ public sealed class GenesysTicketUpdateAppService(
         Guid callerEmployeeId, TicketInteraction interaction, GenesysTicketUpdateDto request, CancellationToken cancellationToken)
     {
         var before = DescribeRouting(interaction);
+        var previousAgentId = interaction.GenesysAgentId;
+        var previousAgentName = interaction.GenesysAgentName;
 
         var routingChanged = request.Routing is { } routing
             && interaction.RecordRouting(routing.QueueId, routing.QueueName, routing.AgentId, routing.AgentName);
@@ -664,6 +668,22 @@ public sealed class GenesysTicketUpdateAppService(
             afterValue: DescribeRouting(interaction),
             correlationId: Guid.NewGuid(),
             cancellationToken);
+
+        // A real call transfer between agents: the conversation was with one agent and Genesys has now connected another.
+        // The first agent naming (previous agent absent) is not a transfer. Recorded as handling history only — it says
+        // nothing about whether the first agent could resolve the issue, so it is never an escalation.
+        if (routingChanged
+            && !string.IsNullOrWhiteSpace(previousAgentId)
+            && !string.IsNullOrWhiteSpace(interaction.GenesysAgentId)
+            && !string.Equals(previousAgentId, interaction.GenesysAgentId, StringComparison.Ordinal))
+        {
+            await handlingHistory.RecordCallTransferAsync(
+                interaction.TicketId, interaction.GenesysConversationId,
+                previousAgentId, previousAgentName,
+                interaction.GenesysAgentId, interaction.GenesysAgentName,
+                interaction.GenesysQueueName, cancellationToken);
+        }
+
         await unitOfWork.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
     }

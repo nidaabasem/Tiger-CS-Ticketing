@@ -22,7 +22,8 @@ public sealed class TicketAssignmentAppService(
     IAuditEntryWriter auditWriter,
     TimeProvider timeProvider,
     IDepartmentWorkflowSettingsRepository departmentWorkflowSettingsRepository,
-    TicketAutoAssignmentService autoAssignmentService)
+    TicketAutoAssignmentService autoAssignmentService,
+    ITicketWorkflowEventRepository? workflowEventRepository = null)
 {
     /// <summary>
     /// PR correction — the caller's role alone decides Assign authority now;
@@ -79,6 +80,16 @@ public sealed class TicketAssignmentAppService(
             return TicketMutationResult.Failure(TicketMutationOutcome.DisabledByDepartmentSettings);
         }
 
+        // Taking a ticket out of the department queue stays a plain assignment. Handing an OWNED ticket to someone else
+        // is a hand-over and must say why — the reason is what lets "unable to resolve" be reviewed later, so it is
+        // never defaulted or inferred. (Assigning to the current owner changes nothing and needs no reason.)
+        if (ticket.CurrentOwnerEmployeeId is { } currentOwner
+            && currentOwner != request.AssignedEmployeeId
+            && request.ReasonCode is (null or TicketTransferReason.Unspecified or TicketTransferReason.SystemRouting))
+        {
+            return TicketMutationResult.Failure(TicketMutationOutcome.TransferReasonRequired);
+        }
+
         // MVP-API-Contracts.md §3.5's own validation: AssignedEmployeeId
         // must be an active member of the ticket's CurrentDepartmentId —
         // checked against the department the assignment target actually
@@ -104,10 +115,23 @@ public sealed class TicketAssignmentAppService(
             new TicketAssignment(ticketId, request.AssignedEmployeeId, ticket.CurrentDepartmentId, now, callerEmployeeId),
             cancellationToken);
 
+        var correlationId = Guid.NewGuid();
         await auditWriter.WriteAsync(
             callerEmployeeId, "Assign", "Ticket", ticketId.ToString(),
             beforeValue: previousOwnerEmployeeId?.ToString(), afterValue: request.AssignedEmployeeId.ToString(),
-            Guid.NewGuid(), cancellationToken);
+            correlationId, cancellationToken);
+
+        // Ticket transfer tracking: only a REassignment is a hand-over. Taking a ticket out of the department queue
+        // (no previous owner) is the ordinary first assignment, and giving it to its current owner again changes nothing.
+        if (previousOwnerEmployeeId is { } previousOwner && previousOwner != request.AssignedEmployeeId && workflowEventRepository is not null)
+        {
+            await workflowEventRepository.AddAsync(
+                TicketWorkflowEvent.ForTransfer(
+                    ticketId, now, callerEmployeeId, request.ReasonCode ?? TicketTransferReason.Unspecified,
+                    ticket.CurrentDepartmentId, ticket.CurrentDepartmentId, request.AssignedEmployeeId,
+                    request.Reason, correlationId),
+                cancellationToken);
+        }
 
         try
         {
@@ -241,6 +265,19 @@ public sealed class TicketAssignmentAppService(
             // queue — audited, and never a randomly picked employee.
             await autoAssignmentService.ApplyAsync(
                 ticket, now, correlationId, AutoAssignmentTrigger.DepartmentTransfer, cancellationToken);
+        }
+
+        // Ticket transfer tracking: one typed event per transfer — who moved it, to which department and (when one took
+        // it, explicitly or by the target department's rule) which employee, why, and when. Same transaction and
+        // correlation id as the Transfer/Assign audit entries above.
+        if (workflowEventRepository is not null)
+        {
+            await workflowEventRepository.AddAsync(
+                TicketWorkflowEvent.ForTransfer(
+                    ticketId, now, callerEmployeeId, request.ReasonCode ?? TicketTransferReason.Unspecified,
+                    previousDepartmentId, request.TargetDepartmentId, ticket.CurrentOwnerEmployeeId,
+                    request.Reason, correlationId),
+                cancellationToken);
         }
 
         try

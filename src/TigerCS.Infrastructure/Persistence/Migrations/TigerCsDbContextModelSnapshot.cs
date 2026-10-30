@@ -3176,6 +3176,9 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                     b.Property<byte>("EventType")
                         .HasColumnType("tinyint");
 
+                    b.Property<int?>("FromDepartmentId")
+                        .HasColumnType("int");
+
                     b.Property<string>("Note")
                         .HasMaxLength(500)
                         .HasColumnType("nvarchar(500)");
@@ -3189,11 +3192,22 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                     b.Property<long>("TicketId")
                         .HasColumnType("bigint");
 
+                    b.Property<int?>("ToDepartmentId")
+                        .HasColumnType("int");
+
+                    b.Property<Guid?>("ToEmployeeId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<byte?>("TransferReasonCode")
+                        .HasColumnType("tinyint");
+
                     b.HasKey("TicketWorkflowEventId");
 
                     b.HasIndex("ActorEmployeeId");
 
                     b.HasIndex("TicketApprovalId");
+
+                    b.HasIndex("EventType", "TransferReasonCode");
 
                     b.HasIndex("TicketId", "EventType");
 

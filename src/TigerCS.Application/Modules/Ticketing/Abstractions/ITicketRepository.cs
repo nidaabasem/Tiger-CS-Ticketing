@@ -72,7 +72,8 @@ public sealed record TicketQuery(
     DateTime? ClosedToUtc = null,
     bool ReviewsAreTest = false,
     Guid? AgentScopeEmployeeId = null,
-    Guid? CreatedByEmployeeId = null);
+    Guid? CreatedByEmployeeId = null,
+    bool Escalated = false);
 
 public sealed record TicketQueryResult(IReadOnlyList<Ticket> Items, int TotalCount);
 

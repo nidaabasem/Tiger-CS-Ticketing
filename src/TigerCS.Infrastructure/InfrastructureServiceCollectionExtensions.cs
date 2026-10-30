@@ -333,6 +333,7 @@ public static class InfrastructureServiceCollectionExtensions
         // over Identity's store; nothing provisions a user.
         services.AddScoped<IGenesysAgentMappingRepository, GenesysAgentMappingRepository>();
         services.AddScoped<GenesysAgentResolutionAppService>();
+        services.AddScoped<GenesysAgentHandlingHistory>();
         services.AddScoped<GenesysInteractionHandlerRecorder>();
         services.AddScoped<GenesysAgentContextAppService>();
         // Secure Screen Pop — one-time, one-hour launch tokens (hash stored

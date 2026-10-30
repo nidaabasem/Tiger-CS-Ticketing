@@ -1,4 +1,5 @@
 using TigerCS.Application.Modules.Ticketing.Abstractions;
+using TigerCS.Domain.Modules.Ticketing;
 
 namespace TigerCS.Application.Modules.Ticketing.Dto;
 
@@ -31,6 +32,7 @@ namespace TigerCS.Application.Modules.Ticketing.Dto;
 /// <param name="ClosedFrom">Only Closed tickets whose latest closure was on or after this UTC calendar day (Dashboard closure KPIs).</param>
 /// <param name="ClosedTo">Only Closed tickets whose latest closure was on or before this UTC calendar day.</param>
 /// <param name="CreatedByMe">True ("Created by Me"): only tickets the caller created — including ones that have since moved to another department, which a CS Agent keeps read-only access to. Never widens visibility: it only narrows the caller's own scope.</param>
+/// <param name="Escalated">Supervisor review: only tickets an agent passed up as UnableToResolve or NeedsEscalation. Requires a supervisory role (CS Supervisor, CS Manager, Department Head, General Manager, Chairman/CEO); other callers get 403. Narrows the caller's normal visibility, never widens it.</param>
 public sealed record TicketListRequestDto(
     int? DepartmentId,
     int? CategoryId,
@@ -57,7 +59,8 @@ public sealed record TicketListRequestDto(
     string? ClosureCategory = null,
     DateOnly? ClosedFrom = null,
     DateOnly? ClosedTo = null,
-    bool? CreatedByMe = null);
+    bool? CreatedByMe = null,
+    bool? Escalated = null);
 
 /// <summary>One row of the ticket queue (MVP-API-Contracts.md §3.2).</summary>
 /// <param name="TicketId">The ticket.</param>
@@ -132,6 +135,12 @@ public sealed record TicketListResultDto(IReadOnlyList<TicketSummaryDto> Items, 
 /// <param name="IsReadOnlyAccess">True when the caller may open this ticket but change nothing on it: they created it, it is outside their department, and they hold no other grant on it. The server refuses every modification (403) regardless; the UI uses this to hide the actions. Populated on detail reads.</param>
 /// <param name="CreatedByEmployeeId">The employee who created the ticket. Populated on detail reads.</param>
 /// <param name="IsClassified">False while the ticket has no Category yet — an inquiry captured before anyone read the request. The UI shows "Unclassified" and offers the classify action rather than rendering a missing category.</param>
+/// <param name="FirstHandledByEmployeeId">The first mapped Genesys agent who handled the originating interaction; null for non-Genesys tickets and when no agent was recorded. Never changes after it is set, and is separate from <c>CurrentOwnerEmployeeId</c>.</param>
+/// <param name="ResolvedByEmployeeId">Who recorded the current resolution; null until resolved (and for system closures this is the system actor on the resolution row).</param>
+/// <param name="TransferCount">How many times the ticket changed hands by a person's action (department transfers and reassignments). Automatic request-type routing is not counted.</param>
+/// <param name="EscalationCount">How many of those were recorded as UnableToResolve or NeedsEscalation.</param>
+/// <param name="FirstHandledByName">Display name of <c>FirstHandledByEmployeeId</c>, read from the employee directory itself — so it resolves even when that person has since left the department or been deactivated.</param>
+/// <param name="ResolvedByName">Display name of <c>ResolvedByEmployeeId</c>, resolved the same way.</param>
 /// <param name="HandoffState">
 /// Whether this ticket is waiting on a human agent, <b>derived</b> from the
 /// one open <c>TicketAgentHandoff</c> row: WaitingForAgent, Assigned or
@@ -189,7 +198,13 @@ public sealed record TicketDetailDto(
     string? OriginatingChannelName = null,
     bool IsClassified = true,
     bool IsReadOnlyAccess = false,
-    Guid? CreatedByEmployeeId = null);
+    Guid? CreatedByEmployeeId = null,
+    Guid? FirstHandledByEmployeeId = null,
+    Guid? ResolvedByEmployeeId = null,
+    int TransferCount = 0,
+    int EscalationCount = 0,
+    string? FirstHandledByName = null,
+    string? ResolvedByName = null);
 
 public enum TicketQueryOutcome
 {
@@ -209,7 +224,9 @@ public sealed record TicketQueryResultDto<T>(TicketQueryOutcome Outcome, T? Resp
 /// <summary>Assign or reassign a ticket (MVP-API-Contracts.md §3.5).</summary>
 /// <param name="AssignedEmployeeId">Required. Must be an active member of the ticket's current department.</param>
 /// <param name="RowVersion">Required. The <c>rowVersion</c> from the ticket you read. A stale value is answered with 409.</param>
-public sealed record AssignTicketRequestDto(Guid AssignedEmployeeId, byte[] RowVersion);
+/// <param name="ReasonCode">Required (422 <c>transfer-reason-required</c> otherwise) when this REASSIGNS a ticket that already has a different owner: 1=UnableToResolve, 2=NeedsEscalation, 3=WrongDepartment, 4=CustomerRequest, 6=Other. Not needed for the first assignment out of the department queue. 1 and 2 record an escalation.</param>
+/// <param name="Reason">Optional free-text context for <paramref name="ReasonCode"/>.</param>
+public sealed record AssignTicketRequestDto(Guid AssignedEmployeeId, byte[] RowVersion, TicketTransferReason? ReasonCode = null, string? Reason = null);
 
 /// <summary>Transfer a ticket to another department (MVP-API-Contracts.md §3.6).</summary>
 /// <param name="TargetDepartmentId">Required. Must be an active department, and not the ticket's current one.</param>
@@ -224,7 +241,8 @@ public sealed record AssignTicketRequestDto(Guid AssignedEmployeeId, byte[] RowV
 /// omitted the existing behaviour applies: the owner is cleared and the
 /// target department's rules decide.
 /// </param>
-public sealed record TransferTicketRequestDto(int TargetDepartmentId, string Reason, byte[] RowVersion, Guid? AssignToEmployeeId = null);
+/// <param name="ReasonCode">Optional structured reason (1=UnableToResolve, 2=NeedsEscalation, 3=WrongDepartment, 4=CustomerRequest, 6=Other). Omitted is recorded as Unspecified; <c>Reason</c> stays the required free text.</param>
+public sealed record TransferTicketRequestDto(int TargetDepartmentId, string Reason, byte[] RowVersion, Guid? AssignToEmployeeId = null, TicketTransferReason? ReasonCode = null);
 
 public enum TicketMutationOutcome
 {
@@ -265,6 +283,9 @@ public enum TicketMutationOutcome
 
     /// <summary>Approved rule: Reopen requires the department that takes the reopened work on.</summary>
     TargetDepartmentRequired,
+
+    /// <summary>Reassigning a ticket that already has a different owner needs an explicit transfer reason (Unable to Resolve, Needs Escalation, Wrong Department, Customer Request or Other). The first assignment out of the department queue needs none.</summary>
+    TransferReasonRequired,
 
     /// <summary>Reconciliation-specific: the session's raw unit context doesn't match the ticket's originating raw unit number.</summary>
     ReconciliationUnitMismatch,

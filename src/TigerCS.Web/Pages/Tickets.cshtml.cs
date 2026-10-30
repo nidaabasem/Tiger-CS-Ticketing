@@ -82,6 +82,9 @@ public sealed class TicketsModel(
 
     /// <summary>"Created by Me": only tickets the viewer created — including ones that have moved to another department, which a CS Agent can still open read-only. Narrows the viewer's own scope; never widens it.</summary>
     public bool CreatedByMe { get; set; }
+
+    /// <summary>Supervisor review: only tickets an agent escalated as Unable to Resolve / Needs Escalation. Offered, and accepted by the Api, only for supervisory roles.</summary>
+    public bool Escalated { get; set; }
     public DateOnly? CreatedFrom { get; set; }
     public DateOnly? CreatedTo { get; set; }
 
@@ -100,7 +103,7 @@ public sealed class TicketsModel(
     /// <summary>True when any dashboard drill-down criterion is active — the page then shows what it is filtering by, with a way to clear it.</summary>
     public bool HasDrilldown =>
         ChannelId is not null || RequestTypeId is not null || ActiveOnly || InDepartmentQueue || SlaBreached
-        || DueToday || BacklogAge is not null || PendingApproval || Unclassified || ClosureCategory is not null || ClosedFrom is not null || ClosedTo is not null || CreatedFrom is not null || CreatedTo is not null;
+        || DueToday || BacklogAge is not null || PendingApproval || Unclassified || Escalated || ClosureCategory is not null || ClosedFrom is not null || ClosedTo is not null || CreatedFrom is not null || CreatedTo is not null;
 
     /// <summary>The channel/request-type names behind the drill-down ids, resolved from the same directories the New Ticket wizard reads — never a raw id on screen.</summary>
     public string? ChannelName { get; private set; }
@@ -118,6 +121,7 @@ public sealed class TicketsModel(
             if (DueToday) labels.Add("Due today");
             if (PendingApproval) labels.Add("Pending my approval");
             if (Unclassified) labels.Add("Unclassified (no request type)");
+            if (Escalated) labels.Add("Escalated (unable to resolve / needs escalation)");
             if (ClosureCategory is { } closure) labels.Add(TicketDisplay.ClosureCategoryLabel(closure));
             if (ClosedFrom is not null || ClosedTo is not null)
             {
@@ -208,7 +212,7 @@ public sealed class TicketsModel(
         CancellationToken cancellationToken,
         byte? channelId = null, int? requestTypeId = null, bool activeOnly = false, bool inDepartmentQueue = false,
         bool slaBreached = false, bool dueToday = false, string? backlogAge = null, bool pendingApproval = false,
-        DateOnly? createdFrom = null, DateOnly? createdTo = null, bool unclassified = false, string? closureCategory = null, DateOnly? closedFrom = null, DateOnly? closedTo = null,
+        DateOnly? createdFrom = null, DateOnly? createdTo = null, bool unclassified = false, bool escalated = false, string? closureCategory = null, DateOnly? closedFrom = null, DateOnly? closedTo = null,
         string? view = null, string? sla = null, string? assignee = null,
         bool mineOnly = false, bool unassignedOnly = false, bool includeResolved = false, bool createdByMe = false)
     {
@@ -267,6 +271,8 @@ public sealed class TicketsModel(
         PendingApproval = pendingApproval;
         Unclassified = unclassified;
         CreatedByMe = createdByMe;
+        // Only a reviewer may filter by it; anyone else's value is dropped here, and the Api refuses it independently.
+        Escalated = escalated && TicketActions.CanReviewEscalations(Viewer?.Roles);
         ClosureCategory = Enum.TryParse<TicketClosureCategory>(closureCategory, ignoreCase: true, out var parsedClosure) && Enum.IsDefined(parsedClosure)
             ? parsedClosure.ToString()
             : null;
@@ -379,7 +385,7 @@ public sealed class TicketsModel(
             ChannelId, RequestTypeId,
             ActiveOnly ? true : null, InDepartmentQueue ? true : null, SlaBreached ? true : null, DueToday ? true : null,
             BacklogAge, PendingApproval ? true : null, CreatedFrom, CreatedTo, Unclassified ? true : null, ClosureCategory, ClosedFrom, ClosedTo,
-            CreatedByMe ? true : null);
+            CreatedByMe ? true : null, Escalated ? true : null);
 
         var result = await ticketsApiClient.GetQueueAsync(request, cancellationToken);
         Outcome = result.Outcome;

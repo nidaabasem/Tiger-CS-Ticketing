@@ -259,12 +259,34 @@ public sealed class AgentHandoffAppService(
         // so a repeated accept by the holder does not append a second line.
         if (claimed)
         {
+            var started = new TicketWorkflowEvent(
+                handoff.TicketId, WorkflowEventType.HandoffStarted, now, callerEmployeeId,
+                ticketApprovalId: null,
+                note: FormatWaitNote(handoff),
+                correlationId);
+
+            // The accepting agent became the owner: carry where ownership landed in the typed columns of this same event.
+            // HandoffStarted already says why; no transfer reason, so it is never an escalation or a counted transfer.
+            if (assignedTicket)
+            {
+                started.WithOwnership(ticket.CurrentDepartmentId, ticket.CurrentDepartmentId, callerEmployeeId);
+            }
+
+            await workflowEventRepository.AddAsync(started, cancellationToken);
+        }
+        else if (assignedTicket)
+        {
+            // The rare repeat: the same agent who already holds the work item accepts again AFTER the ticket was moved to someone
+            // else, and the approved "accepting agent owns the ticket" rule takes it back. No second claim happened, but ownership
+            // really changed, so it is recorded - once, with where it landed. A plain repeat (the agent still owns it) changes
+            // nothing and writes nothing, so every actual ownership change has exactly one event.
             await workflowEventRepository.AddAsync(
                 new TicketWorkflowEvent(
                     handoff.TicketId, WorkflowEventType.HandoffStarted, now, callerEmployeeId,
                     ticketApprovalId: null,
-                    note: FormatWaitNote(handoff),
-                    correlationId),
+                    note: "Accepted again: the accepting agent took the ticket back.",
+                    correlationId)
+                    .WithOwnership(ticket.CurrentDepartmentId, ticket.CurrentDepartmentId, callerEmployeeId),
                 cancellationToken);
         }
 

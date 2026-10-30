@@ -77,9 +77,18 @@ public class TicketWorkflowEventConfiguration : IEntityTypeConfiguration<TicketW
         builder.Property(e => e.EventType).HasConversion<byte>().IsRequired();
         builder.Property(e => e.Note).HasMaxLength(500);
 
+        // Ticket transfer tracking: structured facts of a TicketTransferred event, null for every other type.
+        builder.Property(e => e.TransferReasonCode);
+        builder.Property(e => e.FromDepartmentId);
+        builder.Property(e => e.ToDepartmentId);
+        builder.Property(e => e.ToEmployeeId);
+
         // The phase-4 read path: "the first event of this type for this
         // ticket" (a conditional SLA trigger's clock-start lookup).
         builder.HasIndex(e => new { e.TicketId, e.EventType });
+
+        // Supervisor review of escalated tickets: "every TicketTransferred event with an escalation reason".
+        builder.HasIndex(e => new { e.EventType, e.TransferReasonCode });
 
         builder.HasOne<Ticket>()
             .WithMany()

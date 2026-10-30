@@ -130,6 +130,18 @@ public static class TicketDisplay
     /// when Genesys stated no trigger), so the sentence follows the stated
     /// initiator instead of always claiming the customer asked.
     /// </summary>
+    /// <summary>The label for a recorded transfer reason (the <c>TicketTransferReason</c> name the Api returns).</summary>
+    public static string TransferReasonLabel(string? reason) => reason switch
+    {
+        "UnableToResolve" => "Unable to resolve",
+        "NeedsEscalation" => "Needs escalation",
+        "WrongDepartment" => "Wrong department",
+        "CustomerRequest" => "Customer request",
+        "SystemRouting" => "Automatic routing",
+        "Other" => "Other reason",
+        _ => "Reason not recorded"
+    };
+
     public static string HandoffRequestedActivity(string? note)
     {
         var trigger = note?.Split(" — ", 2)[0].Trim();

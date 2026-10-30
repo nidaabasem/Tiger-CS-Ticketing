@@ -109,6 +109,7 @@ public sealed class GenesysInquiryIngestionAppService(
     GenesysAgentResolutionAppService agentResolution,
     GenesysDefaultPriorityResolver defaultPriorityResolver,
     GenesysRequestTypeClassificationAppService classificationAppService,
+    GenesysAgentHandlingHistory handlingHistory,
     GenesysInteractionHandlerRecorder? handlerRecorder = null)
 {
     public async Task<GenesysIngestionResult> IngestAsync(
@@ -320,9 +321,13 @@ public sealed class GenesysInquiryIngestionAppService(
         if (agent is { IsResolved: true }
             && await conversationRepository.GetByConversationAndTicketAsync(conversationId, creation.Response.TicketId, cancellationToken) is { } originating)
         {
-            originating.RecordHandlingAgentIfAbsent(agent.Agent!.GenesysUserId, agent.Agent.UserId);
+            if (originating.RecordHandlingAgentIfAbsent(agent.Agent!.GenesysUserId, agent.Agent.UserId))
+            {
+                // The first handler is also preserved in the ticket's event timeline, beside any later call transfers.
+                await handlingHistory.RecordFirstHandlerAsync(creation.Response.TicketId, conversationId, agent.Agent, cancellationToken);
+            }
 
-            // Also the per-agent history ticket visibility rests on. Staged here and saved with the audit entry below.
+            // Also the per-agent history ticket visibility rests on (TicketInteractionHandlers). Staged here and saved with the audit entry below.
             if (handlerRecorder is not null)
             {
                 await handlerRecorder.StageAsync(

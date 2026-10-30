@@ -103,6 +103,11 @@ public class TicketsController(
             return Unauthorized();
         }
 
+        if (request.Escalated == true && !TicketQueryAppService.CanReviewEscalations(GetRoles()))
+        {
+            return Forbid();
+        }
+
         var result = await ticketQueryAppService.GetQueueAsync(employeeId.Value, GetRoles(), request, cancellationToken);
         return Ok(result);
     }
@@ -986,6 +991,12 @@ public class TicketsController(
             type: "https://tigercs.internal/problems/employee-not-in-department",
             title: "Employee not in department",
             detail: "The assignee is not an active member of the ticket's resulting department (its current department for Assign; the target department for a transfer with assignToEmployeeId).",
+            statusCode: StatusCodes.Status422UnprocessableEntity),
+
+        TicketMutationOutcome.TransferReasonRequired => Problem(
+            type: "https://tigercs.internal/problems/transfer-reason-required",
+            title: "A transfer reason is required",
+            detail: "This ticket already has an owner. Reassigning it needs a reason: Unable to Resolve, Needs Escalation, Wrong Department, Customer Request or Other.",
             statusCode: StatusCodes.Status422UnprocessableEntity),
 
         TicketMutationOutcome.TargetDepartmentInactive => Problem(

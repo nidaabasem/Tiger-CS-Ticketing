@@ -73,7 +73,8 @@ public sealed class TicketApprovalAppService(
     TimeProvider timeProvider,
     ReopenEligibilityService reopenEligibilityService,
     ITicketInteractionHandlerRepository? handlerRepository = null,
-    IServiceIdentityRegistry? serviceIdentities = null)
+    IServiceIdentityRegistry? serviceIdentities = null,
+    IEmployeeRepository? employeeRepository = null)
 {
     /// <summary>Provisional: which department-side roles may decide a department-targeted approval when the requirement names no narrowing role. Deliberately the two department-scoped roles only — never CS-layer, never broad.</summary>
     public static readonly IReadOnlyCollection<string> DepartmentTargetDefaultApproverRoles =
@@ -602,10 +603,31 @@ public sealed class TicketApprovalAppService(
             .OrderBy(e => e.OccurredAtUtc)
             .FirstOrDefault()?.OccurredAtUtc;
 
+        // Display names for the people the transfer/handling events name, read from the employee directory itself so
+        // someone who has since left the department (or been deactivated) is still named.
+        var names = new Dictionary<Guid, string?>();
+        if (employeeRepository is not null)
+        {
+            foreach (var id in events
+                .Where(e => e.EventType is WorkflowEventType.TicketTransferred or WorkflowEventType.GenesysAgentConnected
+                    or WorkflowEventType.GenesysCallTransferred or WorkflowEventType.Reopened or WorkflowEventType.HandoffStarted)
+                .SelectMany(e => new[] { e.ActorEmployeeId, e.ToEmployeeId })
+                .OfType<Guid>().Distinct())
+            {
+                names[id] = (await employeeRepository.GetByIdAsync(id, cancellationToken))?.DisplayName;
+            }
+        }
+
+        string? NameOf(Guid? id) => id is { } known && names.TryGetValue(known, out var name) ? name : null;
+
         return TicketQueryResultDto<TicketApprovalsViewDto>.Success(new TicketApprovalsViewDto(
             approvalDtos,
             requestable,
-            events.Select(e => new TicketWorkflowEventDto(e.EventType.ToString(), e.OccurredAtUtc, e.ActorEmployeeId, e.Note)).ToList(),
+            events.Select(e => new TicketWorkflowEventDto(
+                e.EventType.ToString(), e.OccurredAtUtc, e.ActorEmployeeId, e.Note,
+                e.TransferReasonCode is { } reasonCode ? ((TicketTransferReason)reasonCode).ToString() : null,
+                e.FromDepartmentId, e.ToDepartmentId, e.ToEmployeeId,
+                NameOf(e.ActorEmployeeId), NameOf(e.ToEmployeeId))).ToList(),
             maintenanceState,
             prerequisitesCompletedAt,
             CallerCanRecordEvents: canOperate && ticket.TicketStatus != TicketStatus.Closed));

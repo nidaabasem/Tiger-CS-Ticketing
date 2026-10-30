@@ -1195,4 +1195,66 @@ public class TicketLifecycleAppServiceTests
         Assert.True(f.Resolutions.Added[1].IsCurrent);
         Assert.Equal(1, ticket.ReopenCount);
     }
+
+    // ---- Ticket transfer tracking: a reopen records where ownership landed on its own event type, never as an escalation ----
+
+    [Fact]
+    public async Task ReopenAsync_RecordsWhereOwnershipLanded_OnTheReopenedEvent_NotAsATransferOrEscalation()
+    {
+        var now = new DateTime(2026, 9, 1, 10, 0, 0, DateTimeKind.Utc);
+        var f = CreateService(new FakeTimeProvider(now));
+        SeedDepartments(f);
+
+        var template = f.WorkflowTemplates.Add(TestWorkflows.PublishedPending(workflowId: 100));
+        var requestType = f.RequestTypes.Add(new RequestType(
+            departmentId: OtherDepartmentId, "NOC for Resale", template.WorkflowId, (byte)PriorityLevel.Medium,
+            allowAgentPriorityChange: true, allowPendingCustomer: true, allowPendingInternal: true, allowReopen: true));
+        var configuredAssignee = Guid.NewGuid();
+        f.AssignmentRules.Add(RequestTypeAssignmentRule.ForSpecificEmployee(requestType.RequestTypeId, configuredAssignee));
+        f.DepartmentAssignments.Assignments.Add(new UserDepartmentAssignment(
+            configuredAssignee, OtherDepartmentId, isPrimary: true, now.AddYears(-1), assignedByEmployeeId: null));
+
+        var previousOwner = Guid.NewGuid();
+        var ticket = await SeedInProgressTicketAsync(f.Tickets, previousOwner, ClosingDepartmentId);
+        ticket.ClassifyRequestType(requestType.RequestTypeId);
+        ticket.PinWorkflowVersion(template.WorkflowTemplateId);
+        ticket.Resolve(ResolutionOutcome.Resolved, duplicateOfTicketId: null);
+        await f.Resolutions.AddAsync(new TicketResolution(
+            ticket.TicketId, ResolutionOutcome.Resolved, "Issued.", null, null, previousOwner, now.AddDays(-1)));
+        ticket.Close();
+        await f.StatusHistory.AddAsync(new TicketStatusHistory(
+            ticket.TicketId, TicketStatusDimension.TicketStatus, (byte)TicketStatus.Resolved, (byte)TicketStatus.Closed,
+            previousOwner, actorIsSystem: false, note: null, Guid.NewGuid(), now.AddDays(-1)));
+
+        var agent = Guid.NewGuid();
+        var result = await f.Service.ReopenAsync(agent, [Roles.CsAgent], ticket.TicketId, ReopenRequest());
+
+        Assert.Equal(TicketMutationOutcome.Success, result.Outcome);
+        var reopened = Assert.Single(f.WorkflowEvents.All);
+        Assert.Equal(WorkflowEventType.Reopened, reopened.EventType);
+        Assert.Equal(agent, reopened.ActorEmployeeId);
+        Assert.Equal(ClosingDepartmentId, reopened.FromDepartmentId);
+        Assert.Equal(OtherDepartmentId, reopened.ToDepartmentId);
+        Assert.Equal(configuredAssignee, reopened.ToEmployeeId);
+        Assert.Null(reopened.TransferReasonCode);
+        Assert.False(reopened.IsEscalation);
+        Assert.DoesNotContain(f.WorkflowEvents.All, e => e.EventType == WorkflowEventType.TicketTransferred);
+    }
+
+    [Fact]
+    public async Task ReopenAsync_IntoADepartmentQueue_RecordsNoReceivingEmployee_AndStillNoEscalation()
+    {
+        var now = new DateTime(2026, 9, 1, 10, 0, 0, DateTimeKind.Utc);
+        var f = CreateService(new FakeTimeProvider(now));
+        var (ticket, _) = await SeedClosedTicketAsync(f, closedAtUtc: now.AddDays(-2));
+
+        var result = await f.Service.ReopenAsync(Guid.NewGuid(), [Roles.CsAgent], ticket.TicketId, ReopenRequest());
+
+        Assert.Equal(TicketMutationOutcome.Success, result.Outcome);
+        var reopened = Assert.Single(f.WorkflowEvents.All);
+        Assert.Equal(WorkflowEventType.Reopened, reopened.EventType);
+        Assert.Equal(OtherDepartmentId, reopened.ToDepartmentId);
+        Assert.Null(reopened.ToEmployeeId);
+        Assert.False(reopened.IsEscalation);
+    }
 }
