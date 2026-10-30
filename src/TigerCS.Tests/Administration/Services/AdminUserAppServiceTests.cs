@@ -210,6 +210,37 @@ public class AdminUserAppServiceTests
     }
 
     [Fact]
+    public async Task Unlock_lifts_the_lockout_keeps_the_password_and_audits()
+    {
+        var f = Create();
+        var id = SeedUser(f, "Nour A", Roles.DepartmentEmployee);
+        f.Accounts.WithPassword(id, "Forgotten-1!").LockOut(id);
+        var stampBefore = f.Accounts.SecurityStampOf(id);
+
+        var result = await f.Service.UnlockAsync(Admin, id);
+
+        Assert.Equal(AdminOutcome.Success, result.Outcome);
+        Assert.False(result.Value!.IsLockedOut);
+        Assert.False(f.Accounts.IsLockedOut(id));
+        Assert.Equal("Forgotten-1!", f.Accounts.PasswordOf(id));
+        Assert.Equal(stampBefore, f.Accounts.SecurityStampOf(id));
+        var entry = Assert.Single(f.Audit.Entries, e => e.Action == "AdminUnlockUser");
+        Assert.Equal(Admin, entry.ActorEmployeeId);
+        Assert.Equal(id.ToString(), entry.EntityId);
+    }
+
+    [Fact]
+    public async Task Unlock_rejects_an_unlocked_or_unknown_user_without_auditing()
+    {
+        var f = Create();
+        var id = SeedUser(f, "Nour A", Roles.DepartmentEmployee);
+
+        Assert.Equal(AdminOutcome.Conflict, (await f.Service.UnlockAsync(Admin, id)).Outcome);
+        Assert.Equal(AdminOutcome.NotFound, (await f.Service.UnlockAsync(Admin, Guid.NewGuid())).Outcome);
+        Assert.Empty(f.Audit.Entries);
+    }
+
+    [Fact]
     public async Task Search_matches_display_name_user_name_and_email()
     {
         var f = Create();

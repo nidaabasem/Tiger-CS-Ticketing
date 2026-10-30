@@ -61,6 +61,43 @@
     });
   });
 
+  // Unlock a locked-out user in place (Admin > Users): post with fetch, then
+  // drop the "Sign-in locked" note and the button and show the outcome. The
+  // data-confirm prompt below still runs first. Without JS the form posts and
+  // redirects back with a status message.
+  document.querySelectorAll("form[data-unlock-form]").forEach(function (form) {
+    form.addEventListener("submit", function (event) {
+      if (event.defaultPrevented) return;
+      event.preventDefault();
+      var flash = document.getElementById("users-flash");
+      var show = function (ok, message) {
+        if (!flash) return;
+        flash.className = "alert " + (ok ? "alert-success" : "alert-error");
+        flash.textContent = message;
+        flash.hidden = false;
+      };
+      var button = form.querySelector("button");
+      if (button) button.disabled = true;
+      fetch(form.action, {
+        method: "POST", body: new FormData(form), credentials: "same-origin",
+        headers: { "X-Requested-With": "fetch", "Accept": "application/json" }
+      }).then(function (r) { return r.json(); }).then(function (data) {
+        show(data.success, data.message);
+        if (data.success) {
+          var row = form.closest("tr");
+          var note = row && row.querySelector("[data-lock-note]");
+          if (note) note.remove();
+          form.remove();
+        } else if (button) {
+          button.disabled = false;
+        }
+      }).catch(function () {
+        show(false, "The user could not be unlocked.");
+        if (button) button.disabled = false;
+      });
+    });
+  });
+
   // Confirmation before a deactivation/archive/delete/publish action:
   // forms marked data-confirm ask first. Without JS the form submits
   // directly — the Api still enforces every rule server-side.

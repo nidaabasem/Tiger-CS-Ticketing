@@ -354,6 +354,42 @@ public sealed class AdminUserAppService(
         return AdminResult.Success();
     }
 
+    /// <summary>
+    /// Lifts a sign-in lock-out (lockout end date and failed-attempt count)
+    /// through Identity without touching the password, roles or active status.
+    /// Audited as <c>AdminUnlockUser</c>. Returns the refreshed user.
+    /// </summary>
+    public async Task<AdminResult<AdminUserDto>> UnlockAsync(
+        Guid actorEmployeeId, Guid employeeId, CancellationToken cancellationToken = default)
+    {
+        var employee = await employeeRepository.GetByIdAsync(employeeId, cancellationToken);
+        if (employee is null)
+        {
+            return AdminResult<AdminUserDto>.NotFound();
+        }
+
+        var account = await accountManager.GetAccountAsync(employeeId, cancellationToken);
+        if (account is null)
+        {
+            return AdminResult<AdminUserDto>.NotFound();
+        }
+
+        if (!account.IsLockedOut)
+        {
+            return AdminResult<AdminUserDto>.Conflict("This account is not locked.");
+        }
+
+        await accountManager.UnlockAccountAsync(employeeId, cancellationToken);
+
+        await auditWriter.WriteAsync(
+            actorEmployeeId, "AdminUnlockUser", "User", employeeId.ToString(),
+            beforeValue: "IsLockedOut=true", afterValue: "IsLockedOut=false;LockoutEnd=null;AccessFailedCount=0",
+            Guid.NewGuid(), cancellationToken);
+        await unitOfWork.SaveChangesAsync(cancellationToken);
+
+        return AdminResult<AdminUserDto>.Success((await GetAsync(employeeId, cancellationToken))!);
+    }
+
     private async Task<AdminUserDto> ToDtoAsync(Employee employee, UserAccountInfo? account, CancellationToken cancellationToken)
     {
         var roles = await roleReader.GetRolesAsync(employee.EmployeeId, cancellationToken);

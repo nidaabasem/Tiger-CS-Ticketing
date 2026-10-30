@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Mvc;
 using TigerCS.Application.Modules.Administration.Dto;
 using TigerCS.Web.Services.Api;
 
@@ -29,5 +30,26 @@ public sealed class UsersModel(AdminApiClient adminApi) : AdminPageModel
         {
             LoadError = DescribeFailure(result, "The user list could not be loaded.");
         }
+    }
+
+    /// <summary>
+    /// Unlock a locked-out user. The script posts this with fetch and updates the
+    /// row from the JSON; without JS it is a plain form post that redirects back
+    /// with the outcome message. The Api enforces the Admin policy and audits it.
+    /// </summary>
+    public async Task<IActionResult> OnPostUnlockAsync(Guid id, string? search, bool includeInactive, int page, CancellationToken cancellationToken)
+    {
+        var result = await adminApi.UnlockUserAsync(id, cancellationToken);
+        var message = result.IsSuccess
+            ? $"{result.Value!.DisplayName} has been unlocked."
+            : DescribeFailure(result, "The user could not be unlocked.");
+
+        if (Request.Headers["X-Requested-With"] == "fetch")
+        {
+            return new JsonResult(new { success = result.IsSuccess, message });
+        }
+
+        if (result.IsSuccess) StatusMessage = message; else ErrorMessage = message;
+        return RedirectToPage("/Admin/Users", new { search, includeInactive, page });
     }
 }

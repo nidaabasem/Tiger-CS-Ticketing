@@ -77,6 +77,13 @@ public interface IUserAccountManager
     Task<PasswordChangeResult> ResetPasswordAsync(Guid employeeId, string newPassword, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Administrative unlock: clears the lockout end date and the failed-attempt
+    /// count through Identity. Touches nothing else — not the password, roles,
+    /// security stamp or active status. Returns false when no account exists.
+    /// </summary>
+    Task<bool> UnlockAccountAsync(Guid employeeId, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Self-service change: Identity verifies the current password and runs its
     /// validators on the new one; on success the security stamp is rotated so
     /// every previously issued token stops working.

@@ -55,6 +55,9 @@ public sealed class AdminApiClient(HttpClient httpClient, ILogger<AdminApiClient
     public Task<ApiResult> ResetUserPasswordAsync(Guid employeeId, ResetUserPasswordRequestDto request, CancellationToken ct) =>
         PostAsync($"api/admin/users/{employeeId}/password", request, ct);
 
+    public Task<ApiResult<AdminUserDto>> UnlockUserAsync(Guid employeeId, CancellationToken ct) =>
+        PostAsync<object, AdminUserDto>($"api/admin/users/{employeeId}/unlock", new { }, ct);
+
     public Task<ApiResult<IReadOnlyCollection<RoleDto>>> GetRolesAsync(CancellationToken ct) =>
         GetAsync<IReadOnlyCollection<RoleDto>>("api/roles", ct);
 
