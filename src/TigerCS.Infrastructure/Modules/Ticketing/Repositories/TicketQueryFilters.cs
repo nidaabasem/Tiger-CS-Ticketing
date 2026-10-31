@@ -33,14 +33,22 @@ internal static class TicketQueryFilters
     /// creator can read a ticket but never act on its work), so it passes false. Nothing about creation widens modify rights — see
     /// <c>TicketVisibilityRule.GetTicketAccessAsync</c>.
     /// </para>
+    /// <paramref name="createdOnly"/> (the Genesys integration account) replaces all of the above with <c>CreatedByEmployeeId == agent</c>.
     /// </summary>
     public static IQueryable<Ticket> VisibleTo(
         this IQueryable<Ticket> tickets, TigerCsDbContext dbContext, IReadOnlyCollection<int>? departmentIds, Guid? agentEmployeeId,
-        bool includeCreated = true)
+        bool includeCreated = true, bool createdOnly = false)
     {
         if (agentEmployeeId is not { } agentId)
         {
             return tickets.InScope(departmentIds);
+        }
+
+        if (createdOnly)
+        {
+            // The Genesys integration account: only the tickets it created. Ownership and handled interactions grant nothing, so a manually
+            // created ticket is never exposed because the account touched it.
+            return tickets.Where(t => t.CreatedByEmployeeId == agentId);
         }
 
         var departments = departmentIds?.ToList() ?? [];

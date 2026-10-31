@@ -53,8 +53,8 @@ public sealed class TicketQueryAppService(
             return new TicketListResultDto([], 0, page0, pageSize0);
         }
 
-        var visibleDepartmentIds = await ResolveVisibleDepartmentIdsAsync(callerEmployeeId, callerRoles, cancellationToken);
-        var agentScope = ResolveAgentScope(callerEmployeeId, callerRoles);
+        var visibleDepartmentIds = await ResolveTicketViewDepartmentIdsAsync(callerEmployeeId, callerRoles, cancellationToken);
+        var agentScope = ResolveTicketViewAgentScope(callerEmployeeId, callerRoles);
 
         var page = request.Page < 1 ? 1 : request.Page;
         var pageSize = request.PageSize is < 1 or > 200 ? 50 : request.PageSize;
@@ -103,7 +103,8 @@ public sealed class TicketQueryAppService(
             ReviewsAreTest: notificationMode?.IsTest == true,
             Escalated: request.Escalated == true,
             AgentScopeEmployeeId: agentScope,
-            CreatedByEmployeeId: request.CreatedByMe == true ? callerEmployeeId : null);
+            CreatedByEmployeeId: request.CreatedByMe == true ? callerEmployeeId : null,
+            CreatedOnlyScope: IsGenesysIntegration(callerEmployeeId, callerRoles));
 
         var result = await ticketRepository.SearchAsync(query, cancellationToken);
 
@@ -361,6 +362,26 @@ public sealed class TicketQueryAppService(
     /// </summary>
     public Guid? ResolveAgentScope(Guid callerEmployeeId, IReadOnlyCollection<string> callerRoles) =>
         IsRestrictedAgent(callerEmployeeId, callerRoles) ? callerEmployeeId : null;
+
+    /// <summary>
+    /// <see cref="ResolveVisibleDepartmentIdsAsync"/> for the surfaces that <b>show tickets</b> (queue, search, dashboard): additionally scopes the
+    /// Genesys integration account to its Genesys-created tickets (empty department set; pair with <see cref="ResolveTicketViewAgentScope"/>).
+    /// The customer directory/history lookups keep the plain resolver — the integration account resolves customers across all of their tickets
+    /// there, which is a lookup, not a ticket view.
+    /// </summary>
+    internal async Task<IReadOnlyCollection<int>?> ResolveTicketViewDepartmentIdsAsync(
+        Guid callerEmployeeId, IReadOnlyCollection<string> callerRoles, CancellationToken cancellationToken) =>
+        IsGenesysIntegration(callerEmployeeId, callerRoles)
+            ? Array.Empty<int>()
+            : await ResolveVisibleDepartmentIdsAsync(callerEmployeeId, callerRoles, cancellationToken);
+
+    /// <summary>The ticket-view counterpart of <see cref="ResolveAgentScope"/>: the caller themselves for a restricted CS Agent and for the Genesys integration account.</summary>
+    public Guid? ResolveTicketViewAgentScope(Guid callerEmployeeId, IReadOnlyCollection<string> callerRoles) =>
+        IsGenesysIntegration(callerEmployeeId, callerRoles) ? callerEmployeeId : ResolveAgentScope(callerEmployeeId, callerRoles);
+
+    /// <summary>True when the caller is the Genesys integration account: it sees the Genesys-created tickets of every department (see <see cref="TicketVisibilityRule.IsGenesysIntegration"/>).</summary>
+    public bool IsGenesysIntegration(Guid callerEmployeeId, IReadOnlyCollection<string> callerRoles) =>
+        TicketVisibilityRule.IsGenesysIntegration(callerRoles, callerEmployeeId, serviceIdentities);
 
     /// <summary>True when the caller is a human CS Agent whose ticket visibility is the narrow per-ticket rule (never a service identity, never Admin/Supervisor/Manager).</summary>
     public bool IsRestrictedAgent(Guid callerEmployeeId, IReadOnlyCollection<string> callerRoles) =>

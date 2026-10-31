@@ -94,6 +94,7 @@ public class TicketsController(
     /// </param>
     /// <response code="200">A page of ticket summaries, with the total matching count.</response>
     [HttpGet]
+    [AllowServiceIdentity]
     [ProducesResponseType<TicketListResultDto>(StatusCodes.Status200OK)]
     public async Task<IActionResult> GetQueue([FromQuery] TicketListRequestDto request, CancellationToken cancellationToken)
     {
@@ -124,6 +125,7 @@ public class TicketsController(
     /// <response code="200">The ticket.</response>
     /// <response code="404">No such ticket, or it is not visible to the caller.</response>
     [HttpGet("{ticketId:long}")]
+    [AllowServiceIdentity]
     [ProducesResponseType<TicketDetailDto>(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> GetDetail(long ticketId, CancellationToken cancellationToken)

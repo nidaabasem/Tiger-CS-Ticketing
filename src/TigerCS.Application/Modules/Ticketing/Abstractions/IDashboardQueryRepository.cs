@@ -51,6 +51,7 @@ namespace TigerCS.Application.Modules.Ticketing.Abstractions;
 /// <param name="AgentScopeEmployeeId">Set only for a restricted CS Agent: every count and list is then limited to tickets assigned to, or handled on Genesys by, that employee (plus <paramref name="ScopeDepartmentIds"/>, empty for a CS Agent). See <c>TicketQuery</c>.</param>
 /// <param name="DepartmentId">Department filter applied on top of the scope (the current department). Used when the scope is not itself a department set, i.e. for a restricted CS Agent; for everyone else the requested department is already folded into <paramref name="ScopeDepartmentIds"/>.</param>
 /// <param name="ReviewsAreTest">Which reviews count as customer feedback for the Reviewed / Not Reviewed KPIs: Test-mode reviews while customer notifications run in test mode (UAT), real reviews otherwise. Production satisfaction statistics are unaffected.</param>
+/// <param name="CreatedOnlyScope">The Genesys integration account: with <paramref name="AgentScopeEmployeeId"/>, only tickets that employee created.</param>
 public sealed record DashboardOverviewQuery(
     IReadOnlyCollection<int>? ScopeDepartmentIds,
     Guid CallerEmployeeId,
@@ -68,7 +69,8 @@ public sealed record DashboardOverviewQuery(
     int RecentLimit,
     bool ReviewsAreTest = false,
     Guid? AgentScopeEmployeeId = null,
-    int? DepartmentId = null);
+    int? DepartmentId = null,
+    bool CreatedOnlyScope = false);
 
 /// <summary>One aggregated row: a dimension value (null key = the value is not recorded on the ticket, e.g. no originating channel, no request type, Unclassified priority) with its display label and count.</summary>
 public sealed record DashboardCountRow<TKey>(TKey? Key, string Label, int Count) where TKey : struct;

@@ -186,9 +186,11 @@ public sealed class FakeTicketRepository : ITicketRepository
         _tickets.TryGetValue(ticketId, out var ticket) && IsVisible(ticket, departmentIds, agentEmployeeId, includeCreated: false);
 
     /// <summary>Mirrors <c>TicketQueryFilters.VisibleTo</c>: department scope for everyone; for a restricted CS Agent, assigned-to-me OR handled-by-me OR a department their other role grants.</summary>
-    private bool IsVisible(Ticket t, IReadOnlyCollection<int>? departmentIds, Guid? agentEmployeeId, bool includeCreated = true) =>
+    private bool IsVisible(Ticket t, IReadOnlyCollection<int>? departmentIds, Guid? agentEmployeeId, bool includeCreated = true, bool createdOnly = false) =>
         agentEmployeeId is not { } agentId
             ? departmentIds is null || departmentIds.Contains(t.CurrentDepartmentId)
+            : createdOnly
+            ? t.CreatedByEmployeeId == agentId
             : t.CurrentOwnerEmployeeId == agentId
                 || (includeCreated && t.CreatedByEmployeeId == agentId)
                 || Handlers.HasHandledSync(t.TicketId, agentId)
@@ -211,7 +213,7 @@ public sealed class FakeTicketRepository : ITicketRepository
     {
         var filtered = _tickets.Values.AsEnumerable();
 
-        filtered = filtered.Where(t => IsVisible(t, query.VisibleDepartmentIds, query.AgentScopeEmployeeId));
+        filtered = filtered.Where(t => IsVisible(t, query.VisibleDepartmentIds, query.AgentScopeEmployeeId, createdOnly: query.CreatedOnlyScope));
 
         if (query.CreatedByEmployeeId is { } createdBy)
         {
@@ -366,7 +368,7 @@ public sealed class FakeTicketRepository : ITicketRepository
         DashboardSnapshotQuery query, CancellationToken cancellationToken = default)
     {
         var visible = _tickets.Values.AsEnumerable();
-        visible = visible.Where(t => IsVisible(t, query.VisibleDepartmentIds, query.AgentScopeEmployeeId));
+        visible = visible.Where(t => IsVisible(t, query.VisibleDepartmentIds, query.AgentScopeEmployeeId, createdOnly: query.CreatedOnlyScope));
 
         var visibleList = visible.ToList();
         var active = visibleList

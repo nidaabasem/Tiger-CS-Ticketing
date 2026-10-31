@@ -59,9 +59,9 @@ public sealed class DashboardAppService(
         IReadOnlyCollection<string> callerRoles,
         CancellationToken cancellationToken = default)
     {
-        var visibleDepartmentIds = await ticketQueryAppService.ResolveVisibleDepartmentIdsAsync(
+        var visibleDepartmentIds = await ticketQueryAppService.ResolveTicketViewDepartmentIdsAsync(
             callerEmployeeId, callerRoles, cancellationToken);
-        var agentScope = ticketQueryAppService.ResolveAgentScope(callerEmployeeId, callerRoles);
+        var agentScope = ticketQueryAppService.ResolveTicketViewAgentScope(callerEmployeeId, callerRoles);
 
         var nowUtc = timeProvider.GetUtcNow().UtcDateTime;
         var snapshot = await ticketRepository.GetDashboardSnapshotAsync(
@@ -75,7 +75,8 @@ public sealed class DashboardAppService(
                 nowUtc.Date,
                 AtRiskWindow,
                 AttentionLimit,
-                agentScope),
+                agentScope,
+                ticketQueryAppService.IsGenesysIntegration(callerEmployeeId, callerRoles)),
             cancellationToken);
 
         return new DashboardSummaryDto(
@@ -97,9 +98,9 @@ public sealed class DashboardAppService(
         DashboardOverviewRequestDto request,
         CancellationToken cancellationToken = default)
     {
-        var visibleDepartmentIds = await ticketQueryAppService.ResolveVisibleDepartmentIdsAsync(
+        var visibleDepartmentIds = await ticketQueryAppService.ResolveTicketViewDepartmentIdsAsync(
             callerEmployeeId, callerRoles, cancellationToken);
-        var agentScope = ticketQueryAppService.ResolveAgentScope(callerEmployeeId, callerRoles);
+        var agentScope = ticketQueryAppService.ResolveTicketViewAgentScope(callerEmployeeId, callerRoles);
 
         // The approver scope needs the caller's actual memberships even for a
         // cross-department view role: a department-targeted approval is
@@ -141,7 +142,8 @@ public sealed class DashboardAppService(
             RecentLimit,
             ReviewsAreTest: notificationMode?.IsTest == true,
             AgentScopeEmployeeId: agentScope,
-            DepartmentId: request.DepartmentId);
+            DepartmentId: request.DepartmentId,
+            CreatedOnlyScope: ticketQueryAppService.IsGenesysIntegration(callerEmployeeId, callerRoles));
 
         var snapshot = await dashboardQueryRepository.GetOverviewAsync(query, cancellationToken);
 

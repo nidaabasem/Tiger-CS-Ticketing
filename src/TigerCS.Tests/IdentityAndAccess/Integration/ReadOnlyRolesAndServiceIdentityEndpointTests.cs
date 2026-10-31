@@ -70,9 +70,9 @@ public class ReadOnlyRolesAndServiceIdentityEndpointTests : IClassFixture<ReadOn
         return (client, employeeId);
     }
 
-    private async Task<TicketDetailDto> CreateTicketAsync()
+    private async Task<TicketDetailDto> CreateTicketAsync(HttpClient? creator = null)
     {
-        var (client, _) = await ClientForAsync(Roles.CsAgent);
+        var client = creator ?? (await ClientForAsync(Roles.CsAgent)).Client;
 
         await _factory.SeedPrioritiesAsync();
         var departmentId = await _factory.CreateDepartmentAsync("Facilities " + Guid.NewGuid(), Guid.NewGuid().ToString("N")[..8]);
@@ -273,8 +273,6 @@ public class ReadOnlyRolesAndServiceIdentityEndpointTests : IClassFixture<ReadOn
         // Human-only reads: refused for the service account, open to a human CS Agent.
         foreach (var url in new[]
                  {
-                     "/api/tickets",
-                     $"/api/tickets/{ticket.TicketId}",
                      $"/api/tickets/{ticket.TicketId}/notes",
                      "/api/dashboard/overview",
                      "/api/reports/team-performance",
@@ -307,6 +305,44 @@ public class ReadOnlyRolesAndServiceIdentityEndpointTests : IClassFixture<ReadOn
         }
 
         Assert.Equal(HttpStatusCode.Forbidden, (await SendAsync(service, "POST", "/api/admin/users")).StatusCode);
+    }
+
+    [Fact]
+    public async Task ServiceIdentity_SeesAllItsGenesysTickets_AcrossDepartments_AndNoOthers_WhileCsManagerAndAdminSeeEverything()
+    {
+        var (service, serviceId) = await ClientForAsync(Roles.CsAgent);
+        _registry.Ids.Add(serviceId);
+        var genesysA = await CreateTicketAsync(service);   // each call opens its own department, so these are cross-department
+        var genesysB = await CreateTicketAsync(service);
+        var manual = await CreateTicketAsync();            // created by a human agent in a third department
+        Assert.NotEqual(genesysA.CurrentDepartmentId, genesysB.CurrentDepartmentId);
+
+        async Task<long[]> ListAsync(HttpClient client) =>
+            [.. (await client.GetFromJsonAsync<TicketListResultDto>("/api/tickets?pageSize=200"))!.Items.Select(i => i.TicketId).Order()];
+
+        // genesys.integration: its own tickets in every department, never the human-created one - list, search and detail alike.
+        Assert.Equal(new[] { genesysA.TicketId, genesysB.TicketId }.Order(), await ListAsync(service));
+        Assert.Equal(HttpStatusCode.OK, (await service.GetAsync($"/api/tickets/{genesysB.TicketId}")).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await service.GetAsync($"/api/tickets/{manual.TicketId}")).StatusCode);
+        var searched = await service.GetFromJsonAsync<TicketListResultDto>(
+            $"/api/tickets?departmentId={manual.CurrentDepartmentId}");
+        Assert.Empty(searched!.Items);
+
+        // Visibility is not modification: it still cannot work a ticket it can see.
+        Assert.Equal(HttpStatusCode.Forbidden, (await SendAsync(service, "POST", $"/api/tickets/{genesysA.TicketId}/close")).StatusCode);
+
+        // CS Manager and System Administrator: everything, from no department at all.
+        var everything = new[] { genesysA.TicketId, genesysB.TicketId, manual.TicketId };
+        foreach (var role in new[] { Roles.CsManager, Roles.SystemAdministrator })
+        {
+            var (client, _) = await ClientForAsync(role);
+            var listed = await ListAsync(client);
+            Assert.All(everything, id => Assert.Contains(id, listed));
+            foreach (var id in everything)
+            {
+                Assert.Equal(HttpStatusCode.OK, (await client.GetAsync($"/api/tickets/{id}")).StatusCode);
+            }
+        }
     }
 
     [Fact]
@@ -350,7 +386,8 @@ public class ReadOnlyRolesAndServiceIdentityEndpointTests : IClassFixture<ReadOn
         _registry.Ids.Add(serviceId);
 
         Assert.Equal(HttpStatusCode.OK, (await human.GetAsync("/api/tickets")).StatusCode);
-        Assert.Equal(HttpStatusCode.Forbidden, (await service.GetAsync("/api/tickets")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await service.GetAsync("/api/tickets")).StatusCode); // list/detail are visibility-scoped reads
+        Assert.Equal(HttpStatusCode.Forbidden, (await service.GetAsync("/api/dashboard/overview")).StatusCode);
     }
 
     [Fact]

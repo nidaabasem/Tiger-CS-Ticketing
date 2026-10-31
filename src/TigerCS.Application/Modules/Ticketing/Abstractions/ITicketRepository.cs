@@ -40,6 +40,7 @@ public enum TicketSortBy
 /// <see cref="AgentScopeEmployeeId"/> is set only for a restricted CS Agent (<c>TicketVisibilityRule.IsRestrictedCsAgent</c>): the ticket
 /// must then be assigned to that employee, or one they handled on Genesys, <i>or</i> in <see cref="VisibleDepartmentIds"/> (empty for a CS
 /// Agent). Like the department scope it is resolved by the application service from the caller, never client-supplied.
+/// <see cref="CreatedOnlyScope"/> (the Genesys integration account) narrows that scope to tickets <i>created by</i> <see cref="AgentScopeEmployeeId"/> only — not owned or handled ones.
 /// </para>
 /// </remarks>
 public sealed record TicketQuery(
@@ -73,7 +74,8 @@ public sealed record TicketQuery(
     bool ReviewsAreTest = false,
     Guid? AgentScopeEmployeeId = null,
     Guid? CreatedByEmployeeId = null,
-    bool Escalated = false);
+    bool Escalated = false,
+    bool CreatedOnlyScope = false);
 
 public sealed record TicketQueryResult(IReadOnlyList<Ticket> Items, int TotalCount);
 
@@ -152,6 +154,7 @@ public sealed record CustomerHistoryQueryResult(
 /// <param name="AtRiskWindow">How far ahead of a pending SLA deadline counts as "at risk".</param>
 /// <param name="AttentionLimit">Maximum attention rows to return.</param>
 /// <param name="AgentScopeEmployeeId">Set only for a restricted CS Agent: every count and attention row is limited to tickets assigned to, or handled on Genesys by, that employee (plus <paramref name="VisibleDepartmentIds"/>, empty for a CS Agent).</param>
+/// <param name="CreatedOnlyScope">The Genesys integration account: with <paramref name="AgentScopeEmployeeId"/>, only tickets that employee created.</param>
 public sealed record DashboardSnapshotQuery(
     IReadOnlyCollection<int>? VisibleDepartmentIds,
     Guid CallerEmployeeId,
@@ -159,7 +162,8 @@ public sealed record DashboardSnapshotQuery(
     DateTime ResolvedTodayStartUtc,
     TimeSpan AtRiskWindow,
     int AttentionLimit,
-    Guid? AgentScopeEmployeeId = null);
+    Guid? AgentScopeEmployeeId = null,
+    bool CreatedOnlyScope = false);
 
 /// <summary>One "requiring attention" row: the ticket plus its current SLA period's pending resolution deadline (null when no current period or the resolution clock already breached).</summary>
 public sealed record DashboardAttentionTicket(Ticket Ticket, DateTime? SlaDueAtUtc);
