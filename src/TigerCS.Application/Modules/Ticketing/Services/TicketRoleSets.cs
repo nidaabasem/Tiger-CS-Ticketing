@@ -139,4 +139,12 @@ public static class TicketRoleSets
     /// </para>
     /// </summary>
     public static readonly IReadOnlyCollection<string> Reopen = [Roles.CsAgent, Roles.CsSupervisor, Roles.CsManager];
+
+    /// <summary>
+    /// Roles whose holders may be handed tickets automatically (Round Robin): the operational roles that work tickets. Read-only
+    /// roles (Chairman/CEO, Reporting User) and the management/technical roles with no operational ticket authority
+    /// (General Manager, System Administrator) are never rotation targets.
+    /// </summary>
+    public static readonly IReadOnlyCollection<string> RoundRobinEligible =
+        [Roles.CsAgent, Roles.CsSupervisor, Roles.CsManager, Roles.DepartmentEmployee, Roles.DepartmentHead];
 }

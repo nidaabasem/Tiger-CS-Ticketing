@@ -1305,4 +1305,66 @@ public class TicketLifecycleAppServiceTests
             owner, [Roles.ChairmanCeo], ticket.TicketId, new ResolveTicketRequestDto("Resolved", "x", null, null, []));
         Assert.Equal(TicketMutationOutcome.Forbidden, resolve.Outcome);
     }
+
+    // ---- Reopen of an AI-closed ticket (Closed by AI -> Resolved/Closed, no human owner) ----
+
+    private static async Task<Ticket> SeedAiClosedTicketAsync(Fixture f, DateTime now)
+    {
+        SeedDepartments(f);
+        var ticket = Ticket.CreateVerified(
+            "TG-CS-20260831-0777", ClosingDepartmentId, unitReferenceId: 10, contactReferenceId: 20,
+            categoryId: 5, priorityId: (byte)PriorityLevel.High, "Chatbot inquiry", now.AddDays(-2));
+        await f.Tickets.AddAsync(ticket);
+
+        var closed = await f.Service.CloseForAiCompletionAsync(Guid.NewGuid(), ticket.TicketId, "Closed by AI", "Conversation=abc");
+        Assert.Equal(TicketMutationOutcome.Success, closed.Outcome);
+        Assert.Equal(TicketStatus.Closed, ticket.TicketStatus);
+        return ticket;
+    }
+
+    [Fact]
+    public async Task ReopenAsync_OfAnAiClosedTicket_ByACallCenterUser_SucceedsWithReason_AndIsAudited()
+    {
+        var now = new DateTime(2026, 9, 1, 10, 0, 0, DateTimeKind.Utc);
+        var f = CreateService(new FakeTimeProvider(now));
+        var ticket = await SeedAiClosedTicketAsync(f, now);
+        var agent = Guid.NewGuid();
+
+        var result = await f.Service.ReopenAsync(agent, [Roles.CsAgent], ticket.TicketId, ReopenRequest(reason: "Bot answer was wrong."));
+
+        Assert.Equal(TicketMutationOutcome.Success, result.Outcome);
+        Assert.Equal(TicketStatus.InProgress, ticket.TicketStatus);
+        var audit = Assert.Single(f.Audit.Entries, e => e.Action == "Reopen");
+        Assert.Equal(agent, audit.ActorEmployeeId);
+        Assert.Contains("Closed", audit.BeforeValue);
+        Assert.Contains("InProgress", audit.AfterValue);
+        Assert.Contains("Reason=Bot answer was wrong.", audit.AfterValue);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task ReopenAsync_OfAnAiClosedTicket_WithoutAReason_IsRejected(string reason)
+    {
+        var now = new DateTime(2026, 9, 1, 10, 0, 0, DateTimeKind.Utc);
+        var f = CreateService(new FakeTimeProvider(now));
+        var ticket = await SeedAiClosedTicketAsync(f, now);
+
+        var result = await f.Service.ReopenAsync(Guid.NewGuid(), [Roles.CsAgent], ticket.TicketId, ReopenRequest(reason: reason));
+
+        Assert.Equal(TicketMutationOutcome.ReopenReasonRequired, result.Outcome);
+        Assert.Equal(TicketStatus.Closed, ticket.TicketStatus);
+    }
+
+    [Fact]
+    public async Task ReopenAsync_OfAnAiClosedTicket_ByANonCsRole_IsForbidden()
+    {
+        var now = new DateTime(2026, 9, 1, 10, 0, 0, DateTimeKind.Utc);
+        var f = CreateService(new FakeTimeProvider(now));
+        var ticket = await SeedAiClosedTicketAsync(f, now);
+
+        var forbidden = await f.Service.ReopenAsync(Guid.NewGuid(), [Roles.DepartmentEmployee], ticket.TicketId, ReopenRequest());
+        Assert.Equal(TicketMutationOutcome.Forbidden, forbidden.Outcome);
+
+    }
 }

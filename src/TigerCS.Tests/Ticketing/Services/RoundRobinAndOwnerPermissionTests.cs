@@ -37,6 +37,8 @@ public class RoundRobinAndOwnerPermissionTests
         }
     }
 
+    private static readonly FakeUserRoleReader Roleplay = new();
+
     private sealed record RrFixture(
         TicketAutoAssignmentService Service,
         FakeUserDepartmentAssignmentRepository Members,
@@ -52,13 +54,15 @@ public class RoundRobinAndOwnerPermissionTests
         var audit = new FakeAuditEntryWriter();
         var service = new TicketAutoAssignmentService(
             new FakeRequestTypeAssignmentRuleRepository(), new FakeDepartmentWorkflowSettingsRepository(),
-            members, assignments, audit, rotation);
+            members, assignments, audit, rotation, Roleplay);
         return new RrFixture(service, members, assignments, audit, rotation);
     }
 
-    private static Guid AddMember(FakeUserDepartmentAssignmentRepository members, int departmentId = DepartmentId)
+    private static Guid AddMember(
+        FakeUserDepartmentAssignmentRepository members, int departmentId = DepartmentId, string role = Roles.DepartmentEmployee)
     {
         var id = Guid.NewGuid();
+        Roleplay.Add(id, role);
         members.Assignments.Add(new UserDepartmentAssignment(id, departmentId, isPrimary: true, Now, assignedByEmployeeId: null));
         return id;
     }
@@ -142,6 +146,62 @@ public class RoundRobinAndOwnerPermissionTests
         Assert.Null(ticket.CurrentOwnerEmployeeId);
     }
 
+    [Theory]
+    [InlineData(Roles.ReportingUser)]
+    [InlineData(Roles.ChairmanCeo)]
+    [InlineData(Roles.GeneralManager)]
+    [InlineData(Roles.SystemAdministrator)]
+    public async Task RoundRobin_NeverAssignsReadOnlyOrNonOperationalUsers(string role)
+    {
+        var f = CreateRr();
+        AddMember(f.Members, role: role);
+        var eligible = AddMember(f.Members, role: Roles.DepartmentEmployee);
+
+        for (var i = 1; i <= 3; i++)
+        {
+            var t = NewTicket(i);
+            await RoundRobinAsync(f, t);
+            Assert.Equal(eligible, t.CurrentOwnerEmployeeId);
+        }
+    }
+
+    [Fact]
+    public async Task RoundRobin_OnlyIneligibleMembers_LeavesTheTicketUnassigned()
+    {
+        var f = CreateRr();
+        AddMember(f.Members, role: Roles.ReportingUser);
+        var t = NewTicket(1);
+
+        Assert.Equal(AutoAssignmentOutcome.NoEligibleEmployee, (await RoundRobinAsync(f, t)).Outcome);
+        Assert.Null(t.CurrentOwnerEmployeeId);
+    }
+
+    [Fact]
+    public async Task RoundRobin_ReadOnlyRoleCombinedWithAnOperationalRole_IsEligible()
+    {
+        var f = CreateRr();
+        var id = AddMember(f.Members, role: Roles.DepartmentHead);
+        Roleplay.Add(id, Roles.ReportingUser, Roles.DepartmentHead);
+        var t = NewTicket(1);
+
+        await RoundRobinAsync(f, t);
+        Assert.Equal(id, t.CurrentOwnerEmployeeId);
+    }
+
+    [Fact]
+    public async Task RoundRobin_FailsClosedWithoutARoleReader()
+    {
+        var members = new FakeUserDepartmentAssignmentRepository();
+        AddMember(members);
+        var service = new TicketAutoAssignmentService(
+            new FakeRequestTypeAssignmentRuleRepository(), new FakeDepartmentWorkflowSettingsRepository(),
+            members, new FakeTicketAssignmentRepository(), new FakeAuditEntryWriter(), new FakeRotationRepository());
+        var t = NewTicket(1);
+
+        var result = await service.ApplyCategoryRoutingAsync(t, new AutoAssignmentResult(AutoAssignmentOutcome.NoRequestType), Now, Guid.NewGuid());
+        Assert.Equal(AutoAssignmentOutcome.NoEligibleEmployee, result.Outcome);
+    }
+
     [Fact]
     public async Task RoundRobin_ADecidedRuleOutcomeIsNotOverridden()
     {
@@ -208,7 +268,7 @@ public class RoundRobinAndOwnerPermissionTests
 
         var auto = new TicketAutoAssignmentService(
             new FakeRequestTypeAssignmentRuleRepository(), new FakeDepartmentWorkflowSettingsRepository(),
-            members, new FakeTicketAssignmentRepository(), audit, new FakeRotationRepository());
+            members, new FakeTicketAssignmentRepository(), audit, new FakeRotationRepository(), Roleplay);
         var service = new TicketClassificationAppService(
             tickets, categories, new FakePriorityRepository(), new FakeRequestTypeRepository(), new FakeWorkflowTemplateRepository(),
             members, statusHistory, unitOfWork, audit, sla.DueDates, new FakeTimeProvider(Now),
@@ -255,7 +315,7 @@ public class RoundRobinAndOwnerPermissionTests
         var category = categories.Seed(collections.DepartmentId, "Collection");
         var auto = new TicketAutoAssignmentService(
             new FakeRequestTypeAssignmentRuleRepository(), new FakeDepartmentWorkflowSettingsRepository(),
-            members, new FakeTicketAssignmentRepository(), audit, new FakeRotationRepository());
+            members, new FakeTicketAssignmentRepository(), audit, new FakeRotationRepository(), Roleplay);
         var service = new TicketClassificationAppService(
             tickets, categories, new FakePriorityRepository(), new FakeRequestTypeRepository(), new FakeWorkflowTemplateRepository(),
             members, statusHistory, unitOfWork, audit, sla.DueDates, new FakeTimeProvider(Now),
@@ -271,5 +331,34 @@ public class RoundRobinAndOwnerPermissionTests
 
         Assert.Equal(TicketMutationOutcome.CategoryDepartmentMismatch, result.Outcome);
         Assert.Equal(cs.DepartmentId, ticket.CurrentDepartmentId);
+    }
+
+    // ---- Category/Request Type -> workflow; Department -> assignment pool ----
+
+    [Fact]
+    public async Task RoundRobinRule_DrawsFromTheTicketsDepartmentPool_NotFromWhereverTheTicketStarted()
+    {
+        const int OriginDepartment = 2;
+        const int RequestTypeDepartment = 5;
+        var rules = new FakeRequestTypeAssignmentRuleRepository();
+        rules.Add(RequestTypeAssignmentRule.ForRoundRobin(requestTypeId: 10));
+        var members = new FakeUserDepartmentAssignmentRepository();
+        var inOrigin = AddMember(members, OriginDepartment);
+        var inRequestTypeDepartment = AddMember(members, RequestTypeDepartment);
+        var audit = new FakeAuditEntryWriter();
+        var service = new TicketAutoAssignmentService(
+            rules, new FakeDepartmentWorkflowSettingsRepository(), members, new FakeTicketAssignmentRepository(), audit,
+            new FakeRotationRepository(), Roleplay);
+
+        var ticket = NewTicket(1, OriginDepartment);
+        ticket.ClassifyRequestType(10);
+        ticket.TransferToDepartment(RequestTypeDepartment); // what routing does: the request type's department owns the pool
+
+        var result = await service.ApplyAsync(ticket, Now, Guid.NewGuid(), AutoAssignmentTrigger.DepartmentTransfer);
+
+        Assert.Equal(AutoAssignmentOutcome.AssignedRoundRobin, result.Outcome);
+        Assert.Equal(inRequestTypeDepartment, ticket.CurrentOwnerEmployeeId);
+        Assert.NotEqual(inOrigin, ticket.CurrentOwnerEmployeeId);
+        Assert.Equal(OriginDepartment, ticket.OriginatingDepartmentId); // origin untouched
     }
 }

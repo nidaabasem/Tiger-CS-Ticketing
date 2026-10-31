@@ -19,3 +19,9 @@
 ## Permissions
 * **Resolve / Close:** the ticket's current assignee may always do both, regardless of role or department. Existing role rules (Department Head, CS layer, ADR-0024 override) still apply to everyone else. Read-only roles never qualify through ownership. All lifecycle validations and audit are unchanged.
 * **Reopen:** unchanged rule — Call Center users (CS Agent/Supervisor/Manager) with ticket access; a non-blank reason is mandatory (service + controller); audit stores user, timestamp, previous status (`Closed`) and new status (`InProgress`) plus the reason. Inactivity-closure and reopen-window rules are untouched.
+
+## Round Robin eligibility (UAT hardening)
+Eligible = active member of the ticket's current department **and** holds at least one of CS Agent, CS Supervisor, CS Manager, Department Employee, Department Head (`TicketRoleSets.RoundRobinEligible`), **and** is not read-only-only (Chairman/CEO, Reporting User), **and** is not a configured service identity. General Manager / System Administrator are not rotation targets. Fails closed: with no role information nobody is assigned and the ticket stays in the department queue as Unassigned.
+
+## SQL Server verification
+`RoundRobinSqlServerTests` (set `TIGERCS_TEST_SQL_SERVER` to a server whose login can create/drop databases; skipped otherwise) applies the real migrations to a throw-away database and runs 30 concurrent assignments starting with no cursor row: each of 3 employees must receive exactly 10. Removing the lock hints makes it fail.

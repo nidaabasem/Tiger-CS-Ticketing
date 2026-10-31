@@ -1,8 +1,10 @@
 using TigerCS.Application.Abstractions;
+using TigerCS.Application.Authorization;
 using TigerCS.Application.Modules.IdentityAndAccess.Abstractions;
 using TigerCS.Application.Modules.Reporting.Services;
 using TigerCS.Application.Modules.Ticketing.Abstractions;
 using TigerCS.Application.Modules.WorkflowConfiguration.Abstractions;
+using TigerCS.Domain.Modules.IdentityAndAccess;
 using TigerCS.Domain.Modules.Ticketing;
 using TigerCS.Domain.Modules.WorkflowConfiguration;
 
@@ -96,7 +98,9 @@ public sealed class TicketAutoAssignmentService(
     IUserDepartmentAssignmentRepository userDepartmentAssignmentRepository,
     ITicketAssignmentRepository ticketAssignmentRepository,
     IAuditEntryWriter auditWriter,
-    IAssignmentRotationRepository? rotationRepository = null)
+    IAssignmentRotationRepository? rotationRepository = null,
+    IUserRoleReader? roleReader = null,
+    IServiceIdentityRegistry? serviceIdentities = null)
 {
     /// <summary>
     /// Runs inside the caller's creation transaction, after the ticket row
@@ -230,7 +234,23 @@ public sealed class TicketAutoAssignmentService(
 
         var members = await userDepartmentAssignmentRepository.GetByDepartmentIdAsync(
             ticket.CurrentDepartmentId, activeEmployeesOnly: true, cancellationToken);
-        var eligible = members.Select(m => m.EmployeeId).Distinct().ToList();
+        var eligible = new List<Guid>();
+        foreach (var employeeId in members.Select(m => m.EmployeeId).Distinct())
+        {
+            // Fail closed: without a role reader nobody can be shown to be authorized, so nobody is picked.
+            if (roleReader is null
+                || (serviceIdentities?.IsServiceIdentity(employeeId) ?? false))
+            {
+                continue;
+            }
+
+            var roles = await roleReader.GetRolesAsync(employeeId, cancellationToken);
+            if (!Roles.IsReadOnlyCaller(roles) && roles.Any(TicketRoleSets.RoundRobinEligible.Contains))
+            {
+                eligible.Add(employeeId);
+            }
+        }
+
         if (eligible.Count == 0)
         {
             return await QueueAsync(ticket, AutoAssignmentOutcome.NoEligibleEmployee,
